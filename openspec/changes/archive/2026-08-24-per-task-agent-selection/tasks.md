@@ -1,0 +1,24 @@
+## 1. Config & shared resolver (pure core)
+
+- [x] 1.1 Add `agents` field to config: write a failing test that `resolveConfig` parses `opencode.agents` as a string list (e.g. `["build","review"]`) and defaults to `[]` when absent; then implement — add `agents: string[]` to `OpencodeConfig` and `DEFAULTS.opencode.agents` (empty array) in `src/config/config-types.ts`, and parse it via `asStringList` in `src/config/resolver.ts`. Confirm config-view auto-surfaces it (no change needed).
+- [x] 1.2 Create `src/shared/agent-resolver.ts` with `resolveAgent(task, config)`: write failing tests covering the resolution rules — (a) `agent:review` + catalogue `["Build","Review"]` → `Review` (catalogue casing, case-insensitive match); (b) `agent:foo` + non-empty catalogue without `foo` → warn + fallback to `opencode.agent`; (c) empty catalogue + `agent:review` → `review` (label value, lowercased); (d) no `agent:` label → `opencode.agent`; (e) two `agent:` labels → first match deterministically. Then implement the pure function (returns `{ agent: string; warned: boolean }`). Export from `src/shared/index.ts`.
+
+## 2. Worker per-turn agent resolution
+
+- [x] 2.1 Wire `resolveAgent` into the `runAttempt` turn loop: write a failing test (using the injectable `spawnRunner` seam) that a task carrying `agent:review` with a non-empty `opencode.agents` spawns a command containing `--agent Review` on turn 1, and that when `trackerStateChecker` returns a refreshed task whose label changed to `agent:build`, the turn-2 spawned command contains `--agent Build` (proving re-resolution each turn, no scheduler change). Then implement — in `src/worker/runner.ts`, inside the turn loop, compute `const resolved = resolveAgent(currentTask, config)` and pass `{ ...config.opencode, agent: resolved.agent }` into `buildOpencodeCommand`; log a warning when `resolved.warned`. Leave `buildOpencodeCommand` signature unchanged.
+
+## 3. Jira tracker label-mutation op
+
+- [x] 3.1 Add `updateIssue(issueKey, fields)` to `JiraTracker`: write a failing test against `tests/helpers/mock-http-server.ts` that the method issues `PUT /rest/api/2/issue/<key>` with body `{ fields }` and maps non-2xx to `jira_api_status` / network failure to `jira_api_request` (consistent with existing read ops). Then implement in `src/adapters/jira/tracker.ts` (reuse the private `request` helper, `PUT` method).
+
+## 4. Feishu bridge commands
+
+- [x] 4.1 Add `/agent` parsing: write failing tests for `parseAgent(text)` — `/agent` → `{ kind: "list" }`; `/agent review` → `{ kind: "switch", name: "review" }`; `/agent default` and `/agent -` → `{ kind: "reset" }`; non-`/agent` text → `null`. Then implement `parseAgent` + `isAgent` in `src/bridge/commands.ts` and extend `HELP_TEXT` with the `/agent` usage lines.
+- [x] 4.2 Implement `/agent` (list) handler: write a failing test that in the intake group `/agent` replies with the default agent + catalogue (and "未配置" when catalogue empty), and in a bound thread replies with the task's current resolved agent (via `resolveAgent` from the refreshed issue labels + config). Then implement the handler in `src/bridge/comment-bridge.ts` (intake path in `discoverIntake`, in-thread path in `handleInThreadCommand`).
+- [x] 4.3 Implement `/agent <name>` (switch) handler: write a failing test that in a bound thread `/agent review` reads the issue's current labels (via `fetchIssueStatesByIds`), removes any existing `agent:*`, adds `agent:review`, writes via `updateIssue`, and replies confirming the switch takes effect at the next turn boundary; and that `/agent review` in the intake group is rejected with a "use in thread" reply. Then implement in `src/bridge/comment-bridge.ts` (read-modify-write; `/agent default`/`-` clears the label).
+- [x] 4.4 Add `--agent <name>` to `/issue`: write a failing test that `parseIssue` parses `--agent review` (alongside `--type`) into a `agentOverride`, and that `executeIssue` adds `agent:review` to the created issue's labels (merged with `required_labels`); and that an unknown agent (not in a non-empty catalogue) still creates the issue with the label but the reply carries a friendly warning. Then implement — extend `parseIssue` (mirror the existing `--type` parsing) and inject the label in `executeIssue`'s `fields.labels`.
+
+## 5. Docs & gates
+
+- [x] 5.1 Sync docs: add an `opencode.agents` row to the `opencode` block table in `docs/configuration.md` (type `string[]`, default `[]`, advisory catalogue semantics); add `/agent` and `/issue --agent` usage to `docs/usage.md`. Verify `CONTEXT.md` agent-selection terms and `docs/adr/0011` are consistent (already drafted).
+- [x] 5.2 Run the full gate: `npm run lint && npm run typecheck && npm test`. Fix any failures. Ensure no behavioural regression when no `agent:` label and no `agents` catalogue are present (default-identical to today).

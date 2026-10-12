@@ -1,0 +1,362 @@
+---
+interface_language: zh
+# ============================================================================
+# tracker: structured task source (Jira)
+# ============================================================================
+tracker:
+  # Required. Only "jira" is supported.
+  kind: jira
+
+  # Jira REST API endpoint. Cloud: https://your-domain.atlassian.net/rest/api/3
+  # Self-hosted: http://your-host:port/rest/api/2
+  endpoint: https://your-domain.atlassian.net/rest/api/3
+
+  # Required. Jira API token. Prefer a $VAR environment-variable reference; never commit plaintext.
+  # Cloud: Account settings → Security → Create API token
+  # Self-hosted: User management → Generate PAT
+  api_key: $JIRA_API_TOKEN
+
+  # Required in basic mode (Cloud email or self-hosted username). Omit in bearer mode.
+  api_user: you@example.com
+
+  # Auth mode. "basic" = email + token (common on Cloud); "bearer" = token only (self-hosted PAT)
+  auth_mode: basic
+
+  # Name of the review handoff state (e.g. "In Review").
+  # Keep this state out of active_states and terminal_states — it automatically becomes an implicit intermediate state.
+  # The agent transitions here after creating an MR; the scheduler stops the worker but preserves the workspace.
+  review_state: 代码评审中
+
+  # Required. Jira project key (e.g. "ENG"). Mutually exclusive with project_slug.
+  project_key: ENG
+
+  # Alternative to project_key; set either one.
+  project_slug: null
+
+  # Filter by assignee. null = no filter (pull all matching issues in the project). "me" = currentUser() (current API user).
+  assignee: null
+
+  # Required-label filter. Empty = no filter. E.g. ["tothemax"] dispatches only issues carrying that label.
+  required_labels: []
+
+  # Candidate states. Only issues currently in these states are pulled as dispatch candidates.
+  # NOTE: State names differ across Jira deployments — adjust them to match YOUR Jira instance
+  # (these placeholder values are Chinese because the canonical zh deployment uses them).
+  # Three-tier state model: active (dispatch) / neither-review (stop worker, keep workspace) / terminal (clean up workspace).
+  # The review state stays out of active_states / terminal_states — it becomes an implicit intermediate state automatically.
+  # After human review there are two paths: back to the initial state = incremental fix (same branch);
+  # to the rework state = full reset (close MR, fresh branch).
+  active_states:
+    - 待办
+    - 处理中
+    - 合并中
+    - 重置处理
+
+  # Terminal states. Issues in these states are never dispatched, and their workspaces are cleaned up at startup.
+  terminal_states:
+    - 完成
+    - 关闭
+    - 取消
+    - 重复
+
+# ============================================================================
+# polling: polling cadence
+# ============================================================================
+polling:
+  # Poll interval (ms). Default 30000 = 30 seconds. Must be > 0.
+  interval_ms: 30000
+
+# ============================================================================
+# workspace: per-task workspace
+# ============================================================================
+workspace:
+  # Workspace root directory. ~ expands to home. Relative paths resolve against the WORKFLOW.md directory.
+  # Each issue gets <root>/<sanitized_identifier>.
+  root: ~/tasking_workspaces
+
+# ============================================================================
+# hooks: workspace lifecycle hooks (optional)
+# ============================================================================
+hooks:
+  # Timeout for all hooks (ms). Default 60000 = 60 seconds. Must be > 0.
+  timeout_ms: 60000
+
+  # Runs only when a new workspace is created. Failure aborts creation. Commonly git clone + dependency install.
+  after_create: null
+
+  # Runs before each attempt. Failure aborts the current attempt.
+  # before_run: |
+  #   git pull --ff-only origin main
+
+  # Runs after each attempt (success/failure/timeout alike). Failures are logged only.
+  after_run: null
+
+  # Runs before workspace removal (issue reached a terminal state). Failures are logged only; removal is not blocked.
+  # before_remove: |
+  #   cd elixir && mix workspace.before_remove
+
+# ============================================================================
+# agent: concurrency & retry policy
+# ============================================================================
+agent:
+  # Global concurrency cap. At most this many opencode run subprocesses run simultaneously.
+  max_concurrent_agents: 10
+
+  # Turn limit within a single worker. When reached, the worker exits and the scheduler schedules a continuation retry.
+  # Starting at 3 is recommended to avoid oversized first-run token consumption.
+  max_turns: 20
+
+  # Backoff ceiling (ms). Default 300000 = 5 minutes.
+  max_retry_backoff_ms: 300000
+
+  # Per-state concurrency limits. Empty = unlimited. E.g. {"in progress": 2} caps the In Progress state at 2 concurrent workers.
+  max_concurrent_agents_by_state: {}
+
+# ============================================================================
+# opencode: worker subprocess configuration
+# ============================================================================
+opencode:
+  # opencode launch command. Default "opencode run".
+  command: opencode run
+
+  # opencode agent profile name.
+  agent: build
+
+  # Optional. Advisory catalog of known opencode agent profiles (string array). Surfaced by the `/agent` command; warns on unknown names.
+  # Empty array (default) = no validation, any `agent:<name>` passes through; non-empty = advisory validation, unknown names warn and fall back to the default. Not a hard allowlist.
+  agents: []
+
+  # Optional. opencode model (provider/model format), maps to `--model`. Default null (unset; uses opencode's default model).
+  model: null
+
+  # Optional. Model variant (provider-specific reasoning effort such as high/max/minimal), maps to `--variant`. Default null (unset). Independent of model.
+  variant: null
+
+  # Per-turn timeout (ms). Default 3600000 = 1 hour. Must be > 0.
+  # Hard wall-clock timeout: kills the turn when time is up regardless of activity.
+  turn_timeout_ms: 3600000
+
+  # Stall timeout (ms). Terminates the worker after this much time without activity.
+  # Default 7200000 = 2 hours. Set 0 to disable stall detection.
+  # Scheduler-level backstop: when neither the inactivity nor the wall-clock timeout can kill the subprocess
+  # (e.g. it refuses to honor SIGTERM). Timeouts SIGTERM first, then process-group
+  # SIGKILL after a 10s grace (see docs/adr/0020); this is only a backstop if
+  # the escalation itself fails.
+  # Set above turn_timeout_ms so normal turns are not mis-killed.
+  stall_timeout_ms: 7200000
+
+  # Inactivity timeout (ms). SIGTERM after stdout/stderr produces no data for this long.
+  # Default 600000 = 10 minutes. Set 0 to disable the inactivity timeout.
+  # Subprocess level: checks raw bytes and resets the timer whenever data arrives.
+  inactivity_timeout_ms: 600000
+
+# ============================================================================
+# router: route-agent triage for the unstructured source (Feishu)
+# ============================================================================
+  # Not implemented: parsed only, no runtime code (reserved for a future route agent).
+# router:
+  # Whether to enable the route agent. When enabled it runs in a bounded way per tick,
+  # triaging Feishu messages into Tasks.
+  # enabled: false
+
+  # opencode agent profile used by the route agent.
+  # agent: triage
+
+  # Max inbox entries processed per route-agent run.
+  # batch_size: 20
+
+  # Route-agent per-run timeout (ms). Default 120000 = 2 minutes.
+  # timeout_ms: 120000
+
+# ============================================================================
+# feishu: Feishu ↔ Jira comment bridge (REST polling, no public port)
+# ============================================================================
+feishu:
+  # When enabled, Feishu mirrors comments of existing Jira issues: threads bind 1:1 to issues, comments mirror both ways.
+  # Inbound uses REST polling (no webhooks, no exposed public port). See docs/feishu-quickstart.md.
+  enabled: false
+
+  # Feishu edition: feishu (China mainland, open.feishu.cn) | lark (overseas, open.larksuite.com). Defaults to feishu.
+  edition: feishu
+
+  # Feishu app credentials. Plaintext or a $VAR env reference both work.
+  app_id: $FEISHU_APP_ID
+  app_secret: $FEISHU_APP_SECRET
+
+  # Intake group chat_id: the dedicated group hosting all issue threads (get via GET /im/v1/chats). Required when enabled.
+  intake_chat_id: $FEISHU_INTAKE_CHAT_ID
+
+  # Jira→Feishu comment mirror cadence (ms), default 5s. Receiving runs over the event channel, not polling.
+  forward_interval_ms: 5000
+
+  # Sweep loss-backstop cadence (ms), default 12h. Catches offline windows; also fires at start and on WS reconnect.
+  sweep_interval_ms: 43200000
+
+  # Default issueType for /issue (tasking init lists the project's available types). Required when enabled.
+  create_issue_type: Task
+
+  # Webhook-mode only (unused under REST polling; reserved for a future webhook mode).
+  # verification_token: $FEISHU_VERIFICATION_TOKEN
+  # encrypt_key: $FEISHU_ENCRYPT_KEY
+
+  # --------------------------------------------------------------------------
+  # Direct sessions (feishu.direct): bypass Jira and run opencode in fixed directories.
+  # Enabled by default when feishu.enabled is true; an explicit enabled: false opts out. See docs/configuration.md.
+  # --------------------------------------------------------------------------
+  direct:
+    # An explicit false turns direct sessions off.
+    enabled: true
+
+    # Project name → directory map, used by `/chat <project> <msg>`. The object form {path, auto_approve} overrides the global value.
+    # Example:
+    #   projects:
+    #     tasking: /home/me/workspace/tasking
+    #     other: {path: /abs/dir, auto_approve: true}
+    projects:
+
+    # Directory-prefix allow-list for ad-hoc path mode (`/chat /abs/path <msg>`); empty = unrestricted.
+    path_roots: []
+
+    # true = pass --auto to opencode run (auto-approve permissions not explicitly denied).
+    # Default false: the permission stance comes from the target directory's own .opencode config.
+    auto_approve: false
+
+    # How much is mirrored to Feishu: quiet (final reply only) | summary (reply + stats line) | detailed (default; one process card per turn; collapsible panels need Feishu/Lark client >= V7.9).
+    verbosity: detailed
+
+    # Daemon-wide cap on concurrent direct turns (independent of Jira's max_concurrent_agents); per directory/session is always serial.
+    max_concurrent: 5
+
+    # Idle time before a session is marked expired (ms; it does not delete the opencode session on disk). Default 2592000000 = 30 days.
+    idle_ttl_ms: 2592000000
+
+# ============================================================================
+# server: HTTP dashboard (optional)
+# ============================================================================
+server:
+  # Dashboard port. null = do not start. Set e.g. 8080 to start.
+  port: null
+
+  # Bind address. "0.0.0.0" = all interfaces (externally reachable). "127.0.0.1" = local only.
+  host: 0.0.0.0
+
+# ============================================================================
+# logging: file logging (optional)
+# ============================================================================
+logging:
+  file:
+    # File log path. null = no file (stderr only). The CLI defaults to ./tasking.log at startup.
+    path: null
+
+    # Max bytes per file. Rotated once exceeded. Default 10485760 = 10 MB.
+    max_bytes: 10485760
+
+    # Rotation backup count. Keeps the most recent N backup files.
+    max_files: 5
+
+# ============================================================================
+# env: environment variables injected into worker subprocesses (optional)
+# ============================================================================
+# Values support $VAR indirection (same semantics as tracker.api_key).
+# A variable resolving to an empty string is injected as an empty value. A missing env section defaults to {}.
+env:
+  # GitLab token for the glab CLI. glab reads this env var automatically.
+  GITLAB_TOKEN: $GITLAB_TOKEN
+  GITLAB_HOST: $GITLAB_HOST
+---
+
+<!-- tasking-workflow-lang: en -->
+
+You are a coding agent running the grill-openspec workflow on: {{ task.identifier }} - {{ task.title }}
+
+{% if task.description %}
+## Description
+{{ task.description }}
+{% endif %}
+
+## Skills (installed by `tasking init` into the target repo — the runtime daemon does NOT copy them)
+
+This workflow uses four skills. They live in `.opencode/skills/`. `tasking init --workflow grill-openspec` installs them (plus `land`) into the target repo, which the `after_create` hook clones into each workspace — the runtime daemon does NOT copy them per-workspace. If any is missing, the target repo's `.opencode/skills/` is incomplete: re-run `tasking init` or commit the missing skill.
+- `opsx-grill-with-docs` — interview to sharpen the plan; draft `CONTEXT.md` + `docs/adr/`
+- `opsx-propose-with-tdd` — create the openspec change (proposal/design/tasks)
+- `opsx-implement` — implement tasks + create MR
+- `openspec-archive-change` — archive the openspec change (workspace close-out)
+- `install-glab` — idempotently install the GitLab CLI; run before any `glab` step when `command -v glab` fails.
+
+## State model
+
+Three state buckets control how the scheduler manages your task:
+- **Active** ({{ active_states }}): the scheduler dispatches you here.
+- **Review** (`{{ review_state }}`): the scheduler stops your worker but preserves the workspace. Wait for a human decision.
+- **Terminal** ({{ terminal_states }}): the scheduler removes the workspace.
+
+The state you are in only picks the bucket. Which **phase** you run is determined by YOU from artifacts — NOT from the state name. Never hardcode state names; query Jira transitions via the `jira_rest` MCP tool and pick by semantic match.
+
+## Phase routing — determine your phase from artifacts
+
+On every dispatch, inspect in order:
+1. Is there an open MR? (check `glab mr list` or the git remote)
+2. Does an openspec change exist? (`openspec/changes/<name>/` with `tasks.md`)
+3. Does `CONTEXT.md` exist (grill drafted terms/decisions)?
+4. Was a grill comment posted? (read Jira comments for the marker `## 🔍 拷问 / Grill Questions`)
+
+If uncertain at any step, read the latest Jira comments; if still uncertain, escalate (see Mid-run escalation below).
+
+## State hygiene when starting work
+
+When you start a working phase (grill or implementation) on a dispatch: if the current Jira state is the initial active state (not yet "in progress"), query transitions via `jira_rest` (`GET /issue/{{ task.identifier }}/transitions`) and transition to the active state whose name semantically means "in progress / working" — pick by semantic match, do NOT hardcode the state name. Skip if already in progress. The merge phase needs no such transition (the human already moved it to the "merging" state).
+
+## Phase 1: grill
+
+No grill comment exists in Jira yet (first dispatch, or a fresh workspace with no prior grill). Run the `opsx-grill-with-docs` skill:
+- Resolve every fact you can from the codebase/environment first — do NOT ask the human what you can look up yourself.
+- Draft `CONTEXT.md` and `docs/adr/*.md` for the terms and decisions you could resolve.
+- Batch the remaining DECISIONS that truly need a human into ONE Jira comment with the marker header `## 🔍 拷问 / Grill Questions` (numbered questions, each with your recommended answer).
+- Transition to `{{ review_state }}` and stop. Do NOT create an MR. Do NOT create an openspec change yet — that belongs to Phase 2.
+- If you can resolve everything from the codebase (zero open decisions): skip the comment and the review pause, and go straight to Phase 2.
+
+### Re-dispatch after grill review (human answered, moved back to active)
+
+Read Jira comments, find your grill comment, ingest the human's answers, and update `CONTEXT.md`/ADR. For any question the human did NOT answer: adopt your own recommended answer (note "unanswered — recommendation adopted" in a comment) and continue — keep momentum. Only if a question is truly blocking (you cannot proceed without an answer) do you re-post just that question and transition back to `{{ review_state }}`. Then proceed to Phase 2.
+
+## Phase 2: implement (propose-with-tdd + implement)
+
+A grill comment exists in Jira AND the human has answered, and no MR exists yet. Run:
+1. `opsx-propose-with-tdd` — create the openspec change at `openspec/changes/<name>/` (proposal/design/tasks).
+2. `opsx-implement` — implement all tasks TDD-style (red → green). Commit the code AND `openspec/changes/<name>/` together into a feature branch named `feature/{{ task.identifier }}-<short-slug>`. Do NOT push to main.
+3. Push the feature branch and create a GitLab MR via `glab` (pre-authenticated via `GITLAB_TOKEN`).
+4. Sweep MR feedback and ensure CI is green.
+5. Add a Jira comment summarizing your changes (files, rationale, MR link) via `jira_rest`, then transition to `{{ review_state }}`. Stop.
+
+## Phase 3: merge (land + archive)
+
+The current active state semantically means "merging" (approve-to-merge), OR an open MR exists and is approved. Determine the merge signal:
+- If the current active state clearly conveys "merging" semantically → merge phase.
+- Else (ambiguous) → check `glab mr view` for the MR approval status: approved → merge phase; not approved + review feedback → incremental fix (below).
+
+In merge phase:
+1. Run the `land` skill to merge the MR.
+2. Run the `openspec-archive-change` skill to archive the openspec change. This is a workspace-local close-out — the archive lives in this workspace; the openspec change persists upstream because you committed `openspec/changes/<name>/` into the feature branch in Phase 2 and the MR was just merged.
+3. Transition to a terminal state ({{ terminal_states }}). The scheduler will then remove the workspace.
+
+Before step 1 (merge), ensure all MR discussion threads are resolved: threads you addressed and threads you deliberately skipped (nitpicks / out-of-scope) must all be resolved — reply briefly on the skipped ones explaining why, then resolve. Resolve any unresolved blocking thread first. Use `glab` (`glab mr view` to list discussions, `glab api` to resolve via the GitLab discussions API).
+
+## Incremental fix (MR open, review feedback — do NOT re-grill)
+
+An open MR exists with unresolved review feedback (not approved). Read the MR discussion threads via `glab` (`glab mr view` / `glab api`). For each thread: if you address it, reply with what you did and resolve the thread; if you deliberately don't address it (nitpick / out-of-scope), reply briefly explaining why and resolve it anyway. Then fix on the SAME branch, push (the MR auto-updates), ensure CI is green, transition back to `{{ review_state }}`. Do NOT re-grill. Do NOT re-propose.
+
+## Full reset (rework — do NOT re-grill)
+
+If the current active state semantically means "rework/reset" (full redo): close the old MR, create a new branch from origin/main, and re-run `opsx-implement` against the EXISTING openspec change (`tasks.md` survives). Do NOT re-grill, do NOT re-propose — the plan (CONTEXT.md/ADR/openspec change) survives; only the code/MR is discarded. Transition back to `{{ review_state }}`.
+
+## Mid-run escalation (any phase)
+
+If at any point you hit a decision you truly cannot make and need a human: post a Jira comment with the marker `## 🔍 拷问 / Grill Questions` containing the blocking question (with your recommended answer), transition to `{{ review_state }}`, and stop. On re-dispatch (human answered, moved back to active), resume the phase you were in — determine it from artifacts per the Phase routing above.
+
+## Transitions & tracking
+
+- Always query available transitions first via `jira_rest` (`GET /issue/{{ task.identifier }}/transitions`) and pick the id by semantic name match — do NOT hardcode transition ids (they differ across Jira instances).
+- Always add a comment before finishing, describing what you did.
+- If you created or merged an MR, include the MR link in the comment.
+- If you posted a grill comment, reference it.
+- If you have output files (screenshots, logs, reports), upload them as Jira attachments via `jira_upload_attachment` MCP tool.

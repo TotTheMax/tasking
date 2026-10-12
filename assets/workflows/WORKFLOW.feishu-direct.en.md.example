@@ -1,0 +1,267 @@
+---
+interface_language: zh
+# ============================================================================
+# tracker: structured task source (Jira)
+# ============================================================================
+# This deployment runs Feishu direct sessions only (feishu-direct variant): no Jira source.
+# To enable one: change kind below to jira and fill in the following fields
+# (they are ignored — with a warning — while kind is none).
+tracker:
+  # "jira" = structured source (scheduler polls and dispatches); "none" = no Jira source (direct-only).
+  kind: none
+
+  # ---- The following fields only take effect when kind is jira -------------
+  # Jira REST API endpoint. Cloud: https://your-domain.atlassian.net/rest/api/3
+  # Self-hosted: http://your-host:port/rest/api/2
+  # endpoint: https://your-domain.atlassian.net/rest/api/3
+
+  # Required (jira mode). Jira API token. Prefer a $VAR reference; never commit plaintext.
+  # api_key: $JIRA_API_TOKEN
+
+  # Required in basic mode (Cloud email or self-hosted username). Omit in bearer mode.
+  # api_user: you@example.com
+
+  # Auth mode. "basic" = email + token (common on Cloud); "bearer" = token only (self-hosted PAT)
+  # auth_mode: basic
+
+  # Name of the review handoff state; keep null for the minimal no-review flow.
+  # review_state: null
+
+  # Required (jira mode). Jira project key (e.g. "ENG"). Mutually exclusive with project_slug.
+  # project_key: ENG
+
+  # Alternative to project_key; set either one.
+  # project_slug: null
+
+  # Filter by assignee. null = no filter. "me" = currentUser().
+  # assignee: null
+
+  # Required-label filter. Empty = no filter.
+  # required_labels: []
+
+  # Candidate states. Only issues currently in these states are pulled as dispatch candidates.
+  # NOTE: State names differ across Jira deployments — adjust them to match YOUR Jira instance
+  # (these placeholder values are Chinese because the canonical zh deployment uses them).
+  # Three-tier state model: active (dispatch) / neither-review (stop worker, keep workspace) / terminal (clean up workspace).
+  # Minimal: active→work→terminal two-state flow, no review bucket.
+  # active_states:
+  #   - 待办
+  #   - 处理中
+
+  # Terminal states (workspaces cleaned up at startup when kind is jira).
+  # terminal_states:
+  #   - 完成
+  #   - 关闭
+
+# ============================================================================
+# polling: polling cadence
+# ============================================================================
+polling:
+  # Poll interval (ms). Default 30000 = 30 seconds. Must be > 0.
+  interval_ms: 30000
+
+# ============================================================================
+# workspace: per-task workspace
+# ============================================================================
+workspace:
+  # Workspace root directory. ~ expands to home. Relative paths resolve against the WORKFLOW.md directory.
+  # Each issue gets <root>/<sanitized_identifier>.
+  root: ~/tasking_workspaces
+
+# ============================================================================
+# hooks: workspace lifecycle hooks (optional)
+# ============================================================================
+hooks:
+  # Timeout for all hooks (ms). Default 60000 = 60 seconds. Must be > 0.
+  timeout_ms: 60000
+
+  # Runs only when a new workspace is created. Failure aborts creation. Commonly git clone + dependency install.
+  after_create: null
+
+  # Runs before each attempt. Failure aborts the current attempt.
+  # before_run: |
+  #   git pull --ff-only origin main
+
+  # Runs after each attempt (success/failure/timeout alike). Failures are logged only.
+  after_run: null
+
+  # Runs before workspace removal (issue reached a terminal state). Failures are logged only; removal is not blocked.
+  # before_remove: |
+  #   cd elixir && mix workspace.before_remove
+
+# ============================================================================
+# agent: concurrency & retry policy
+# ============================================================================
+agent:
+  # Global concurrency cap. At most this many opencode run subprocesses run simultaneously.
+  max_concurrent_agents: 10
+
+  # Turn limit within a single worker. When reached, the worker exits and the scheduler schedules a continuation retry.
+  # Starting at 3 is recommended to avoid oversized first-run token consumption.
+  max_turns: 20
+
+  # Backoff ceiling (ms). Default 300000 = 5 minutes.
+  max_retry_backoff_ms: 300000
+
+  # Per-state concurrency limits. Empty = unlimited. E.g. {"in progress": 2} caps the In Progress state at 2 concurrent workers.
+  max_concurrent_agents_by_state: {}
+
+# ============================================================================
+# opencode: worker subprocess configuration
+# ============================================================================
+opencode:
+  # opencode launch command. Default "opencode run".
+  command: opencode run
+
+  # opencode agent profile name.
+  agent: build
+
+  # Optional. Advisory catalog of known opencode agent profiles (string array). Surfaced by the `/agent` command; warns on unknown names.
+  # Empty array (default) = no validation, any `agent:<name>` passes through; non-empty = advisory validation, unknown names warn and fall back to the default. Not a hard allowlist.
+  agents: []
+
+  # Optional. opencode model (provider/model format), maps to `--model`. Default null (unset; uses opencode's default model).
+  model: null
+
+  # Optional. Model variant (provider-specific reasoning effort such as high/max/minimal), maps to `--variant`. Default null (unset). Independent of model.
+  variant: null
+
+  # Per-turn timeout (ms). Default 3600000 = 1 hour. Must be > 0.
+  # Hard wall-clock timeout: kills the turn when time is up regardless of activity.
+  turn_timeout_ms: 3600000
+
+  # Stall timeout (ms). Terminates the worker after this much time without activity.
+  # Default 7200000 = 2 hours. Set 0 to disable stall detection.
+  # Scheduler-level backstop: when neither the inactivity nor the wall-clock timeout can kill the subprocess
+  # (e.g. it refuses to honor SIGTERM). Timeouts SIGTERM first, then process-group
+  # SIGKILL after a 10s grace (see docs/adr/0020); this is only a backstop if
+  # the escalation itself fails.
+  # Set above turn_timeout_ms so normal turns are not mis-killed.
+  stall_timeout_ms: 7200000
+
+  # Inactivity timeout (ms). SIGTERM after stdout/stderr produces no data for this long.
+  # Default 600000 = 10 minutes. Set 0 to disable the inactivity timeout.
+  # Subprocess level: checks raw bytes and resets the timer whenever data arrives.
+  inactivity_timeout_ms: 600000
+
+# ============================================================================
+# router: route-agent triage for the unstructured source (Feishu)
+# ============================================================================
+  # Not implemented: parsed only, no runtime code (reserved for a future route agent).
+# router:
+  # Whether to enable the route agent. When enabled it runs in a bounded way per tick,
+  # triaging Feishu messages into Tasks.
+  # enabled: false
+
+  # opencode agent profile used by the route agent.
+  # agent: triage
+
+  # Max inbox entries processed per route-agent run.
+  # batch_size: 20
+
+  # Route-agent per-run timeout (ms). Default 120000 = 2 minutes.
+  # timeout_ms: 120000
+
+# ============================================================================
+# feishu: Feishu ↔ Jira comment bridge (REST polling, no public port)
+# ============================================================================
+feishu:
+  # When enabled, Feishu mirrors comments of existing Jira issues: threads bind 1:1 to issues, comments mirror both ways.
+  # Inbound uses REST polling (no webhooks, no exposed public port). See docs/feishu-quickstart.md.
+  enabled: true
+
+  # Feishu edition: feishu (China mainland, open.feishu.cn) | lark (overseas, open.larksuite.com). Defaults to feishu.
+  edition: feishu
+
+  # Feishu app credentials. Plaintext or a $VAR env reference both work.
+  app_id: $FEISHU_APP_ID
+  app_secret: $FEISHU_APP_SECRET
+
+  # Intake group chat_id: the dedicated group hosting all issue threads (get via GET /im/v1/chats). Required when enabled.
+  intake_chat_id: $FEISHU_INTAKE_CHAT_ID
+
+  # Jira→Feishu comment mirror cadence (ms), default 5s. Receiving runs over the event channel, not polling.
+  forward_interval_ms: 5000
+
+  # Sweep loss-backstop cadence (ms), default 12h. Catches offline windows; also fires at start and on WS reconnect.
+  sweep_interval_ms: 43200000
+
+  # Default issueType for /issue. Required only when kind is jira (unused in trackerless mode).
+  create_issue_type: Task
+
+  # Webhook-mode only (unused under REST polling; reserved for a future webhook mode).
+  # verification_token: $FEISHU_VERIFICATION_TOKEN
+  # encrypt_key: $FEISHU_ENCRYPT_KEY
+
+  # --------------------------------------------------------------------------
+  # Direct sessions (feishu.direct): bypass Jira and run opencode in fixed directories.
+  # Enabled by default when feishu.enabled is true; an explicit enabled: false opts out. See docs/configuration.md.
+  # --------------------------------------------------------------------------
+  direct:
+    # An explicit false turns direct sessions off.
+    enabled: true
+
+    # Project name → directory map, used by `/chat <project> <msg>`. The object form {path, auto_approve} overrides the global value.
+    # Example:
+    #   projects:
+    #     tasking: /home/me/workspace/tasking
+    #     other: {path: /abs/dir, auto_approve: true}
+    projects:
+
+    # Directory-prefix allow-list for ad-hoc path mode (`/chat /abs/path <msg>`); empty = unrestricted.
+    path_roots: []
+
+    # true = pass --auto to opencode run (auto-approve permissions not explicitly denied).
+    # Default false: the permission stance comes from the target directory's own .opencode config.
+    auto_approve: false
+
+    # How much is mirrored to Feishu: quiet (final reply only) | summary (reply + stats line) | detailed (default; one process card per turn; collapsible panels need Feishu/Lark client >= V7.9).
+    verbosity: detailed
+
+    # Daemon-wide cap on concurrent direct turns (independent of Jira's max_concurrent_agents); per directory/session is always serial.
+    max_concurrent: 5
+
+    # Idle time before a session is marked expired (ms; it does not delete the opencode session on disk). Default 2592000000 = 30 days.
+    idle_ttl_ms: 2592000000
+
+# ============================================================================
+# server: HTTP dashboard (optional)
+# ============================================================================
+server:
+  # Dashboard port. null = do not start. Set e.g. 8080 to start.
+  port: null
+
+  # Bind address. "0.0.0.0" = all interfaces (externally reachable). "127.0.0.1" = local only.
+  host: 0.0.0.0
+
+# ============================================================================
+# logging: file logging (optional)
+# ============================================================================
+logging:
+  file:
+    # File log path. null = no file (stderr only). The CLI defaults to ./tasking.log at startup.
+    path: null
+
+    # Max bytes per file. Rotated once exceeded. Default 10485760 = 10 MB.
+    max_bytes: 10485760
+
+    # Rotation backup count. Keeps the most recent N backup files.
+    max_files: 5
+
+# ============================================================================
+# env: environment variables injected into worker subprocesses (optional)
+# ============================================================================
+# Values support $VAR indirection (same semantics as tracker.api_key).
+# A variable resolving to an empty string is injected as an empty value. A missing env section defaults to {}.
+env:
+  # GitLab token for the glab CLI (the minimal variant usually needs no MR; leave empty or configure as needed).
+  GITLAB_TOKEN: $GITLAB_TOKEN
+  GITLAB_HOST: $GITLAB_HOST
+---
+<!-- tasking-workflow-lang: en -->
+<!-- tasking-workflow: feishu-direct -->
+
+<!--
+  Direct sessions need no workflow body: each Feishu message you send is the agent's task instruction.
+  To connect Jira later: re-run tasking init and choose "Connect Jira".
+-->

@@ -1,0 +1,356 @@
+---
+interface_language: zh
+# ============================================================================
+# tracker: 结构化任务源 (Jira)
+# ============================================================================
+tracker:
+  # 必填。仅支持 "jira"。
+  kind: jira
+
+  # Jira REST API 端点。Cloud: https://your-domain.atlassian.net/rest/api/3
+  # 自托管: http://your-host:port/rest/api/2
+  endpoint: https://your-domain.atlassian.net/rest/api/3
+
+  # 必填。Jira API token。建议用 $VAR 环境变量引用，不写明文。
+  # Cloud: 账号设置 → 安全 → 创建 API token
+  # 自托管: 用户管理 → 生成 PAT
+  api_key: $JIRA_API_TOKEN
+
+  # basic 模式必填 (Cloud email 或自托管用户名)。bearer 模式可省略。
+  api_user: you@example.com
+
+  # 认证模式。"basic" = email + token (Cloud 常用)；"bearer" = 仅 token (自托管 PAT)
+  auth_mode: basic
+
+  # review 交接态名称 (如 "代码评审中"、"In Review")。
+  # 此状态不放在 active_states 或 terminal_states 中，自动成为隐式中间态。
+  # agent 创建 MR 后转入此态，调度器停止 worker 但保留工作区。
+  review_state: 代码评审中
+
+  # 必填。Jira 项目 key (如 "ENG")。与 project_slug 二选一。
+  project_key: ENG
+
+  # project_key 的替代，二选一即可。
+  project_slug: null
+
+  # 按指派人过滤。null = 不过滤 (拉取项目内所有符合状态的)。"me" = currentUser() (当前 API 用户)。
+  assignee: null
+
+  # 必需标签过滤。空 = 不过滤。如 ["tothemax"] 表示只派发含此标签的 issue。
+  required_labels: []
+
+  # 候选状态。只拉取处于这些状态的 issue 作为派发候选。
+  # 注意: 不同的 Jira 部署状态名可能不同，需根据实际调整。
+  # 三层状态模型: active(派发) / neither-review(停 worker 保留工作区) / terminal(清理工作区)。
+  # review 态(如"代码评审中")不放在 active_states 或 terminal_states 中 — 自动成为隐式中间态。
+  # 人 review 后双路径: 移回初始态(如"待办")= 增量修复(同分支改); 移到返工态= 全量重置(关 MR、新分支)。
+  active_states:
+    - 待办
+    - 处理中
+    - 合并中
+    - 重置处理
+
+  # 终态。处于这些状态的 issue 不会被派发，且启动时清理其工作区。
+  terminal_states:
+    - 完成
+    - 关闭
+    - 取消
+    - 重复
+
+# ============================================================================
+# polling: 轮询节奏
+# ============================================================================
+polling:
+  # 轮询间隔 (毫秒)。默认 30000 = 30 秒。必须 > 0。
+  interval_ms: 30000
+
+# ============================================================================
+# workspace: per-task 工作区
+# ============================================================================
+workspace:
+  # 工作区根目录。~ 会展开为 home。相对路径基于 WORKFLOW.md 所在目录。
+  # 每个 issue 的工作区为 <root>/<sanitized_identifier>。
+  root: ~/tasking_workspaces
+
+# ============================================================================
+# hooks: 工作区生命周期钩子 (可选)
+# ============================================================================
+hooks:
+  # 所有 hook 的超时 (毫秒)。默认 60000 = 60 秒。必须 > 0。
+  timeout_ms: 60000
+
+  # 仅新工作区创建时运行。失败中止创建。常用于 git clone + 依赖安装。
+  after_create: null
+
+  # 每次 attempt 前运行。失败中止当前 attempt。
+  # before_run: |
+  #   git pull --ff-only origin main
+
+  # 每次 attempt 后运行 (成功/失败/超时均执行)。失败仅记录。
+  after_run: null
+
+  # 工作区删除前运行 (issue 进入终态时)。失败仅记录，不阻塞删除。
+  # before_remove: |
+  #   cd elixir && mix workspace.before_remove
+
+# ============================================================================
+# agent: 并发与重试策略
+# ============================================================================
+agent:
+  # 全局并发上限。同时运行的 opencode run 子进程数不超过此值。
+  max_concurrent_agents: 10
+
+  # 同一 worker 内的 turn 上限。达到后 worker 退出，调度续轮 retry。
+  # 建议起步设 3 避免首次 token 消耗过大。
+  max_turns: 20
+
+  # 退避上限 (毫秒)。默认 300000 = 5 分钟。
+  max_retry_backoff_ms: 300000
+
+  # 按状态限并发。空 = 不限。如 {"in progress": 2} 限制 In Progress 状态最多 2 个并发。
+  max_concurrent_agents_by_state: {}
+
+# ============================================================================
+# opencode: worker 子进程配置
+# ============================================================================
+opencode:
+  # opencode 启动命令。默认 "opencode run"。
+  command: opencode run
+
+  # opencode agent profile 名称。
+  agent: build
+
+  # 可选。已知 opencode agent profile 的咨询性目录（字符串数组）。供 `/agent` 命令展示并对未知名提示。
+  # 空目录（默认）＝不校验，任何 `agent:<name>` 直通；非空＝咨询性校验，未知名警告并回退默认。不作硬白名单。
+  agents: []
+
+  # 可选。opencode 模型 (provider/model 格式)，映射 `--model`。默认 null（不配置，走 opencode 默认模型）。
+  model: null
+
+  # 可选。模型变体 (provider 特定推理档位，如 high/max/minimal)，映射 `--variant`。默认 null（不配置）。与 model 彼此独立。
+  variant: null
+
+  # 单 turn 超时 (毫秒)。默认 3600000 = 1 小时。必须 > 0。
+  # 硬墙钟超时：无论活动状态如何，到点必杀。
+  turn_timeout_ms: 3600000
+
+  # 停滞超时 (毫秒)。超过此时间无活动则终止 worker。
+  # 默认 7200000 = 2 小时。设为 0 禁用停滞检测。
+  # scheduler 层兜底：当不活跃超时和墙钟超时都无法终止子进程时
+  # （如子进程拒绝响应 SIGTERM）。超时先 SIGTERM，10s 宽限未退出则
+  # 进程组 SIGKILL（见 docs/adr/0020）；本项仅兜底升级路径自身失效。
+  # 建议设为大于 turn_timeout_ms 以避免正常 turn 被误杀。
+  stall_timeout_ms: 7200000
+
+  # 不活跃超时 (毫秒)。stdout/stderr 无数据超过此值则 SIGTERM 终止。
+  # 默认 600000 = 10 分钟。设为 0 禁用不活跃超时。
+  # subprocess 层：检查原始字节，收到数据时重置计时器。
+  inactivity_timeout_ms: 600000
+
+# ============================================================================
+# router: 非结构化源 (飞书) 的 route agent 分诊
+# ============================================================================
+  # 未实现：当前仅解析，无运行时代码（预留供将来 route agent 实现）。
+# router:
+  # 是否启用 route agent。启用后按 tick 有界运行，将飞书消息分诊为 Task。
+  # enabled: false
+
+  # route agent 使用的 opencode agent profile。
+  # agent: triage
+
+  # 单次 route agent 运行处理的 inbox 条目上限。
+  # batch_size: 20
+
+  # route agent 单次运行超时 (毫秒)。默认 120000 = 2 分钟。
+  # timeout_ms: 120000
+
+# ============================================================================
+# feishu: 飞书 ↔ Jira 评论桥 (REST 轮询，无公网端口)
+# ============================================================================
+feishu:
+  # 启用后飞书成已存在 Jira issue 的评论同步镜像：话题 1:1 绑定 issue，双向镜像评论。
+  # 入站用 REST 轮询（不收 webhook、不暴露公网端口）。详见 docs/feishu-quickstart.md。
+  enabled: false
+
+  # 飞书版本：feishu（国内版 open.feishu.cn）| lark（海外版 open.larksuite.com）。默认 feishu。
+  edition: feishu
+
+  # 飞书应用凭证。可明文，也可用 $VAR 环境变量引用。
+  app_id: $FEISHU_APP_ID
+  app_secret: $FEISHU_APP_SECRET
+
+  # intake 群 chat_id：承载所有 issue 线程的指定群（GET /im/v1/chats 取）。启用时必填。
+  intake_chat_id: $FEISHU_INTAKE_CHAT_ID
+
+  # Jira→飞书评论镜像节奏（毫秒），默认 5s。收消息走事件通道，不轮询。
+  forward_interval_ms: 5000
+
+  # Sweep 兜底清扫节奏（毫秒），默认 12h。补拉断线/停机窗口，启动与 WS 重连时也会触发。
+  sweep_interval_ms: 43200000
+
+  # /issue 默认 issueType（tasking init 时列出项目可用 type）。启用时必填。
+  create_issue_type: Task
+
+  # webhook 模式专用（REST 轮询下不用，预留供将来 webhook 模式）。
+  # verification_token: $FEISHU_VERIFICATION_TOKEN
+  # encrypt_key: $FEISHU_ENCRYPT_KEY
+
+  # --------------------------------------------------------------------------
+  # 直连会话 (feishu.direct)：绕过 Jira，在固定目录直接跑 opencode。
+  # feishu.enabled 为 true 时直连默认启用；段内 enabled: false 显式关闭。详见 docs/configuration.md。
+  # --------------------------------------------------------------------------
+  direct:
+    # 段内显式 false 关闭直连。
+    enabled: true
+
+    # 项目名 → 目录映射，供 `/chat <项目名> <消息>` 使用。对象形态 {path, auto_approve} 覆盖全局值。
+    # 例：
+    #   projects:
+    #     tasking: /home/me/workspace/tasking
+    #     other: {path: /abs/dir, auto_approve: true}
+    projects:
+
+    # ad-hoc path 模式（`/chat /绝对路径 <消息>`）的目录前缀白名单；空 = 不限制。
+    path_roots: []
+
+    # true = 给 opencode run 传 --auto（自动放行未被显式拒绝的权限）。
+    # 默认 false：权限姿态由目标目录自己的 .opencode 权限配置决定。
+    auto_approve: false
+
+    # 镜像到飞书的事件量级：quiet（仅最终正文）| summary（正文 + 统计行）| detailed（默认，每 turn 一张过程卡片；折叠面板需飞书/Lark 客户端 >= V7.9）。
+    verbosity: detailed
+
+    # 直连 turn 的全局并发上限（独立于 Jira 的 max_concurrent_agents）；同目录/同会话始终串行。
+    max_concurrent: 5
+
+    # 空闲多久后把会话标记为 expired（毫秒，不删除 opencode 磁盘 session）。默认 2592000000 = 30 天。
+    idle_ttl_ms: 2592000000
+
+# ============================================================================
+# server: HTTP 仪表板 (可选)
+# ============================================================================
+server:
+  # 仪表板端口。null = 不启动。设为 8080 则启动。
+  port: null
+
+  # 绑定地址。"0.0.0.0" = 全网卡 (外部可访问)。"127.0.0.1" = 仅本地。
+  host: 0.0.0.0
+
+# ============================================================================
+# logging: 文件日志 (可选)
+# ============================================================================
+logging:
+  file:
+    # 文件日志路径。null = 不写文件 (仅 stderr)。CLI 启动时默认为 ./tasking.log。
+    path: null
+
+    # 单文件最大字节数。超出后轮转。默认 10485760 = 10 MB。
+    max_bytes: 10485760
+
+    # 轮转备份数。保留最近 N 个备份文件。
+    max_files: 5
+
+# ============================================================================
+# env: 注入 worker 子进程的环境变量 (可选)
+# ============================================================================
+# 值支持 $VAR 间接引用 (与 tracker.api_key 相同语义)。
+# 解析为空字符串时注入空字符串值。缺失的 env 段默认为空对象。
+env:
+  # GitLab token，供 glab CLI 使用。glab 自动读此环境变量。
+  GITLAB_TOKEN: $GITLAB_TOKEN
+  GITLAB_HOST: $GITLAB_HOST
+---
+
+You are a coding agent running the grill-openspec workflow on: {{ task.identifier }} - {{ task.title }}
+
+{% if task.description %}
+## Description
+{{ task.description }}
+{% endif %}
+
+## Skills (installed by `tasking init` into the target repo — the runtime daemon does NOT copy them)
+
+This workflow uses four skills. They live in `.opencode/skills/`. `tasking init --workflow grill-openspec` installs them (plus `land`) into the target repo, which the `after_create` hook clones into each workspace — the runtime daemon does NOT copy them per-workspace. If any is missing, the target repo's `.opencode/skills/` is incomplete: re-run `tasking init` or commit the missing skill.
+- `opsx-grill-with-docs` — interview to sharpen the plan; draft `CONTEXT.md` + `docs/adr/`
+- `opsx-propose-with-tdd` — create the openspec change (proposal/design/tasks)
+- `opsx-implement` — implement tasks + create MR
+- `openspec-archive-change` — archive the openspec change (workspace close-out)
+- `install-glab` — idempotently install the GitLab CLI; run before any `glab` step when `command -v glab` fails.
+
+## State model
+
+Three state buckets control how the scheduler manages your task:
+- **Active** ({{ active_states }}): the scheduler dispatches you here.
+- **Review** (`{{ review_state }}`): the scheduler stops your worker but preserves the workspace. Wait for a human decision.
+- **Terminal** ({{ terminal_states }}): the scheduler removes the workspace.
+
+The state you are in only picks the bucket. Which **phase** you run is determined by YOU from artifacts — NOT from the state name. Never hardcode state names; query Jira transitions via the `jira_rest` MCP tool and pick by semantic match.
+
+## Phase routing — determine your phase from artifacts
+
+On every dispatch, inspect in order:
+1. Is there an open MR? (check `glab mr list` or the git remote)
+2. Does an openspec change exist? (`openspec/changes/<name>/` with `tasks.md`)
+3. Does `CONTEXT.md` exist (grill drafted terms/decisions)?
+4. Was a grill (拷问) comment posted? (read Jira comments for the marker `## 🔍 拷问 / Grill Questions`)
+
+If uncertain at any step, read the latest Jira comments; if still uncertain, escalate (see 运行中升级 below).
+
+## 工作开始时的状态卫生
+
+When you start a working phase (grill or 实施) on a dispatch: if the current Jira state is the initial active state (not yet "in progress"), query transitions via `jira_rest` (`GET /issue/{{ task.identifier }}/transitions`) and transition to the active state whose name semantically means "in progress / working" — pick by semantic match, do NOT hardcode the state name. Skip if already in progress. The 合并 phase needs no such transition (the human already moved it to the "merging" state).
+
+## 阶段 1：grill（拷问）
+
+No grill comment exists in Jira yet (first dispatch, or a fresh workspace with no prior grill). Run the `opsx-grill-with-docs` skill:
+- Resolve every fact you can from the codebase/environment first — do NOT ask the human what you can look up yourself.
+- Draft `CONTEXT.md` and `docs/adr/*.md` for the terms and decisions you could resolve.
+- Batch the remaining DECISIONS that truly need a human into ONE Jira comment with the marker header `## 🔍 拷问 / Grill Questions` (numbered questions, each with your recommended answer).
+- Transition to `{{ review_state }}` and stop. Do NOT create an MR. Do NOT create an openspec change yet — that belongs to 阶段 2.
+- If you can resolve everything from the codebase (zero open decisions): skip the comment and the review pause, and go straight to 阶段 2.
+
+### Re-dispatch after grill review (human answered, moved back to active)
+
+Read Jira comments, find your grill comment, ingest the human's answers, and update `CONTEXT.md`/ADR. For any question the human did NOT answer: adopt your own recommended answer (note "未答采用推荐" in a comment) and continue — keep momentum. Only if a question is truly blocking (you cannot proceed without an answer) do you re-post just that question and transition back to `{{ review_state }}`. Then proceed to 阶段 2.
+
+## 阶段 2：实施（propose-with-tdd + implement）
+
+A grill comment exists in Jira AND the human has answered, and no MR exists yet. Run:
+1. `opsx-propose-with-tdd` — create the openspec change at `openspec/changes/<name>/` (proposal/design/tasks).
+2. `opsx-implement` — implement all tasks TDD-style (red → green). Commit the code AND `openspec/changes/<name>/` together into a feature branch named `feature/{{ task.identifier }}-<short-slug>`. Do NOT push to main.
+3. Push the feature branch and create a GitLab MR via `glab` (pre-authenticated via `GITLAB_TOKEN`).
+4. Sweep MR feedback and ensure CI is green.
+5. Add a Jira comment summarizing your changes (files, rationale, MR link) via `jira_rest`, then transition to `{{ review_state }}`. Stop.
+
+## 阶段 3：合并（land + archive）
+
+The current active state semantically means "merging" (approve-to-merge), OR an open MR exists and is approved. Determine the merge signal:
+- If the current active state clearly conveys "merging" semantically → merge phase.
+- Else (ambiguous) → check `glab mr view` for the MR approval status: approved → merge phase; not approved + review feedback → 增量修复 (below).
+
+In merge phase:
+1. Run the `land` skill to merge the MR.
+2. Run the `openspec-archive-change` skill to archive the openspec change. This is a workspace-local close-out — the archive lives in this workspace; the openspec change persists upstream because you committed `openspec/changes/<name>/` into the feature branch in 阶段 2 and the MR was just merged.
+3. Transition to a terminal state ({{ terminal_states }}). The scheduler will then remove the workspace.
+
+Before step 1 (merge), ensure all MR discussion threads are resolved: threads you addressed and threads you deliberately skipped (nitpicks / out-of-scope) must all be resolved — reply briefly on the skipped ones explaining why, then resolve. Resolve any unresolved blocking thread first. Use `glab` (`glab mr view` to list discussions, `glab api` to resolve via the GitLab discussions API).
+
+## 增量修复（MR open, review feedback — do NOT re-grill）
+
+An open MR exists with unresolved review feedback (not approved). Read the MR discussion threads via `glab` (`glab mr view` / `glab api`). For each thread: if you address it, reply with what you did and resolve the thread; if you deliberately don't address it (nitpick / out-of-scope), reply briefly explaining why and resolve it anyway. Then fix on the SAME branch, push (the MR auto-updates), ensure CI is green, transition back to `{{ review_state }}`. Do NOT re-grill. Do NOT re-propose.
+
+## 全量重置（rework — do NOT re-grill）
+
+If the current active state semantically means "rework/reset" (full redo): close the old MR, create a new branch from origin/main, and re-run `opsx-implement` against the EXISTING openspec change (`tasks.md` survives). Do NOT re-grill, do NOT re-propose — the plan (CONTEXT.md/ADR/openspec change) survives; only the code/MR is discarded. Transition back to `{{ review_state }}`.
+
+## 运行中升级（any phase）
+
+If at any point you hit a decision you truly cannot make and need a human: post a Jira comment with the marker `## 🔍 拷问 / Grill Questions` containing the blocking question (with your recommended answer), transition to `{{ review_state }}`, and stop. On re-dispatch (human answered, moved back to active), resume the phase you were in — determine it from artifacts per the Phase routing above.
+
+## Transitions & tracking
+
+- Always query available transitions first via `jira_rest` (`GET /issue/{{ task.identifier }}/transitions`) and pick the id by semantic name match — do NOT hardcode transition ids (they differ across Jira instances).
+- Always add a comment before finishing, describing what you did.
+- If you created or merged an MR, include the MR link in the comment.
+- If you posted a grill comment, reference it.
+- If you have output files (screenshots, logs, reports), upload them as Jira attachments via `jira_upload_attachment` MCP tool.

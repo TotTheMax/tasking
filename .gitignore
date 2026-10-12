@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Docs site build output (VitePress)
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+public/
+
+# Python
+__pycache__/
+*.pyc
+
+# Tasking local state
+tasking_workspaces/
+.tasking/
+.tasking-session.json
+WORKFLOW.md.bak
+.opencode/opencode.json
+*.sqlite
+*.sqlite-journal
+inbox.db
+bindings.db
+tasking.log
+tasking.log.*
+WORKFLOW*.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Env
+.env
+.env.local

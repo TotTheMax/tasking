@@ -1,0 +1,72 @@
+{
+  "$comment": "Feishu card.action.trigger raw event envelopes (long-connection push). provenance: captured = verified against a live event on 2026-09-22 (operator.name confirmed absent; event.operator.open_id / event.action.value / event.context.open_message_id+open_chat_id all resolved non-empty through normalizeCardAction). Decorative fields (host, delivery_type, token…) remain documented-only.",
+  "provenance": "captured",
+  "withOperatorName": {
+    "schema": "2.0",
+    "header": {
+      "event_type": "card.action.trigger",
+      "event_id": "doc-with-name-0001",
+      "token": "",
+      "app_id": "",
+      "tenant_key": "",
+      "created_at": ""
+    },
+    "event": {
+      "operator": {
+        "union_id": "",
+        "user_id": "",
+        "open_id": "ou_op",
+        "name": "张三"
+      },
+      "token": "",
+      "action": {
+        "tag": "button",
+        "value": {}
+      },
+      "host": "",
+      "delivery_type": "PUSH",
+      "context": {
+        "open_message_id": "om_card",
+        "open_chat_id": "oc_intake"
+      }
+    }
+  },
+  "withoutOperatorName": {
+    "schema": "2.0",
+    "header": {
+      "event_type": "card.action.trigger",
+      "event_id": "doc-no-name-0001",
+      "token": "",
+      "app_id": "",
+      "tenant_key": "",
+      "created_at": ""
+    },
+    "event": {
+      "operator": {
+        "union_id": "",
+        "user_id": "",
+        "open_id": "ou_op"
+      },
+      "token": "",
+      "action": {
+        "tag": "button",
+        "value": {}
+      },
+      "host": "",
+      "delivery_type": "PUSH",
+      "context": {
+        "open_message_id": "om_card",
+        "open_chat_id": "oc_intake"
+      }
+    }
+  },
+  "capturedVerification": {
+    "date": "2026-09-22",
+    "normalized": {
+      "messageId": "om_x100b6429e6188cacde77f2603d1cc5e",
+      "chatId": "oc_6a0f97509e6c106d45fba1cf8664e750",
+      "operatorOpenId": "ou_83d0214026b31ee1b0a0b76fe68473c1",
+      "operatorName": null
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "name": "@tothemax/tasking",
+  "version": "0.6.17",
+  "description": "A TypeScript CLI daemon that orchestrates opencode coding-agent work from Jira (structured) and Feishu (unstructured) task sources.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TotTheMax/tasking.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TotTheMax/tasking/issues"
+  },
+  "homepage": "https://github.com/TotTheMax/tasking#readme",
+  "keywords": [
+    "opencode",
+    "coding-agent",
+    "jira",
+    "feishu",
+    "lark",
+    "orchestration",
+    "cli",
+    "daemon"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "tasking": "dist/cli/index.js"
+  },
+  "files": ["dist", "assets", "README.md"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/index.ts",
+    "docs:build": "vitepress build docs",
+    "docs:dev": "vitepress dev docs",
+    "docs:preview": "vitepress preview docs",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "vitest run tests/e2e.test.ts tests/bridge-flow.test.ts tests/trackerless.test.ts",
+    "test:integration": "INTEGRATION=1 vitest run tests/integration-real.test.ts tests/integration-direct.test.ts",
+    "prepublishOnly": "npm run build",
+    "test:event-flow": "INTEGRATION=1 vitest run tests/integration-event-flow.test.ts"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.73.0",
+    "@opencode-ai/plugin": "1.17.9",
+    "@tothemax/tasking": "^0.6.15",
+    "better-sqlite3": "^11.8.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.5",
+    "@vitest/coverage-v8": "^2.1.9",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitepress": "^1.6.4",
+    "vitest": "^2.1.8"
+  },
+  "allowScripts": {
+    "better-sqlite3": true,
+    "esbuild": true
+  }
+}

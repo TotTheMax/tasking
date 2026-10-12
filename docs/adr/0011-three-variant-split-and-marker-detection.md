@@ -1,0 +1,7 @@
+# Three-variant workflow split + sentinel-marker detection
+
+The `default` workflow variant was non-minimal (full git-branch + MR + review + land-merge flow, installing `land`/`install-glab`). We split it into three variants: `default` (now truly minimal — work in workspace, upload to Jira, transition to terminal, no VCS/MR/skills), `code-mr` (the former `default` behavior, renamed), and `grill-openspec` (unchanged). We also added sentinel markers in each non-default template's prompt body and made `detectWorkflow` three-way, so `--update` picks the right drift-report template for new `code-mr` users.
+
+We deliberately did NOT add legacy heuristics to retro-detect old full-MR `WORKFLOW.md` files generated before this change. Those few internal-pilot files carry no marker and fall to `default` (minimal), producing a spurious (non-destructive — `--update` never writes) full-body diff; users escape with `tasking init --update --workflow code-mr`. The trade-off was endorsed to avoid extra work for a handful of legacy users while still making the path simple and correct for future users.
+
+The decision honors ADR 0001: a new variant lands as "one template file + one `init --workflow` option," with detection living in the prompt body (sentinel markers), not in the config schema, scheduler, runner, or prompt renderer. `syncAllSkills` was changed from a hardcoded grill-openspec union to `skillsForWorkflow(detectedWorkflow)`, so the minimal `default` no longer pulls all six skills on `--update`.

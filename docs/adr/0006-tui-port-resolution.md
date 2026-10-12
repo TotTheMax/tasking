@@ -1,0 +1,3 @@
+# tasking tui port resolution: flag > daemon.json > 8080
+
+`tasking tui` connects to the daemon's HTTP dashboard. The port is resolved in order: explicit `--port`, then the `.tasking/daemon.json` port in the current directory, then a probed fallback of `8080`. This keeps the local "attach to my own daemon" flow (daemon.json) primary while still supporting attaching to a daemon on a conventional port (remote, or one started with `--port 8080`) with no local metadata. Note `server.port` defaults to `null` (dashboard disabled); `8080` is a tui-only convenience fallback, not a config default — the tui always probes the endpoint and reports a friendly error if unreachable.
