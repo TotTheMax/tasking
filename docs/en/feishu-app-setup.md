@@ -49,7 +49,7 @@ tasking receives messages and card interactions over a **WebSocket long connecti
 |---|---|
 | Receive message v2.0 `im.message.receive_v1` (chat-message entry: `/chat`, `/issue`, free text) | `im:message.group_msg` (already granted in §4) |
 
-Subscription mode: choose **Receive events via long connection** → save. Saving requires the client online: start `tasking start` on your machine first, then come back to save.
+Subscription mode: choose **Receive events via long connection** → save.
 
 **② Callback configuration — subscribe to 1 callback**
 

@@ -38,7 +38,7 @@ tasking --help
 | `im:resource` | 附件上传（缺失降级纯文本） |
 | `contact:user.id:readonly` | 建群时把你拉进群（缺失时需手动建群） |
 
-「事件与回调」页**两块都配长连接**：**事件配置**添加 `接收消息 im.message.receive_v1`；**回调配置**订阅 `卡片回传交互 card.action.trigger`。保存长连接要求客户端在线——先把 `tasking start` 跑起来再回来保存即可。
+「事件与回调」页**两块都配长连接**：**事件配置**添加 `接收消息 im.message.receive_v1`；**回调配置**订阅 `卡片回传交互 card.action.trigger`。
 
 版本管理与发布 → 创建版本 → 提交，管理员审批（未审批调 API 会 403）。建一个群（如 `tasking-intake`）并把机器人拉进群。**个人版飞书无需他人审批、自助开通**；完整步骤、权限清单、事件订阅与报错对照见[飞书应用开通](./feishu-app-setup.md)，排错细节见[飞书接入 quickstart](./feishu-quickstart.md)。
 
