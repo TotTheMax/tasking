@@ -96,3 +96,6 @@ When creating an issue via /issue in Feishu, the description was added to both t
 
 ### Unstable routes to Lark international cause card-update 5xx
 Accessing the Lark international API (open.larksuite.com) from mainland networks — directly or through a poor proxy — can intermittently return 504/502 for card updates, message sends, and file uploads. tasking retries retryable errors (5xx/429/network) once after a delay; if that also fails, the turn falls back to text and card mode recovers on the next turn. Feishu (open.feishu.cn) is unaffected. The root fix is a stable international route for the daemon host.
+
+### No retry on card creation (deferred enhancement)
+Card **creation** (`replyCardInThread` — the result card and turn card) does not yet use the delayed retry: a transient 5xx falls straight through to text delivery (no content loss, only the card's markdown look). Card **updates** (`updateCard`) already have retryable classification + delayed retry. Add this only if real usage reports "route is fine overall but result cards occasionally lost" (true transient blips); on a chronically degraded route retry would only delay the answer.
