@@ -27,36 +27,39 @@ App details → **App capabilities** → **Bot** → **Add bot capability**. Thi
 
 ## 4. Grant permissions (scopes)
 
-**Permission Management** → **API Permissions** → search and enable:
+**Permission Management** → **API Permissions** → search by the **permission name** below and enable all **5**. Enable them in one pass: without the first 3 the matching feature fails; without the last 2 features degrade.
 
-**Required (3) — the matching feature fails without them:**
-
-| Scope | What tasking uses it for |
-|---|---|
-| `im:message.group_msg` | App-level access to all group messages — receiving `/chat`, `/issue`, etc.; without it the polling fallback `GET /im/v1/messages` fails with **230027**; no substitute |
-| `im:message` | Get and send chat messages — every tasking reply and card (`POST /im/v1/messages`, `.../reply`), message content reads (reconciliation after reconnects), plus update/recall of sent messages (`PATCH` / `DELETE` `/im/v1/messages/:id`) for in-place card refresh; without it cards stop refreshing and arrive as separate messages |
-| `im:chat` | Get and update chat info — `tasking init` lists candidate intake chats and offers "➕ create intake chat (and add you)" (`POST /im/v1/chats`); without it, creating reports the missing scope and init falls back to picking an existing chat |
-
-**Enhanced (2) — recommended:**
-
-| Scope | What tasking uses it for | Behavior when missing |
+| Permission name (as shown in the console) | Scope | What tasking uses it for |
 |---|---|---|
-| `im:resource` | Upload images/files (`POST /im/v1/files`) so agent artifacts land directly in the chat | Upload fails with **99991672 / Access denied**; tasking degrades to plain-text replies |
-| `contact:user.id:readonly` | Resolves your open_id from email/mobile when creating the intake chat (`POST /contact/v3/users/batch_get_id`) so you are added to it — **without adding a human member, a bot-created chat contains only the bot and is invisible to you** | init cannot locate your account: it warns, does not select the bot-only chat, and points you to manual creation + "⟳ refresh chat list" |
+| 获取群组中所有消息（敏感权限） | `im:message.group_msg` | Group-message entry — receiving `/chat`, `/issue`, etc.; without it no message arrives (error **230027**; no substitute) |
+| 获取与发送单聊、群组消息 | `im:message` | Every reply and card, message-content reads (reconciliation after reconnects), update/recall of sent messages (in-place card refresh; without it cards stop refreshing and arrive as separate messages) |
+| 获取与更新群组信息 | `im:chat` | `tasking init` chat picker + one-click intake-chat creation; without it init falls back to picking an existing chat |
+| 获取与上传图片或文件资源 | `im:resource` | Agent artifacts uploaded straight to the chat; without it tasking degrades to plain-text replies (upload error **99991672**) |
+| 通过手机号或邮箱获取用户 ID | `contact:user.id:readonly` | Adds you to a newly created chat via your email/mobile — **without a human member, a bot-created chat contains only the bot and is invisible to you**; without it init guides manual chat creation |
 
-**Alternative authorizations (when you prefer not to grant the combined scopes):** scopes authorize endpoints and overlap. Without `im:message`, use `im:message:send_as_bot` (send) + `im:message:readonly` (read content) instead — you lose in-place card refresh (exclusive to PATCH/DELETE). Without `im:chat`, use `im:chat:readonly` (list only, no creation). Nothing substitutes for `im:message.group_msg`. The minimal working set is the 3 + 2 above (verified live on Lark).
+> Alternative authorizations (optional): `im:message:send_as_bot` + `im:message:readonly` can replace `im:message` (losing in-place card refresh); `im:chat:readonly` can replace `im:chat` (list only, no creation). Nothing substitutes for `im:message.group_msg`. On the enterprise edition some scopes show *pending approval* after enabling — an admin must approve them in the Admin Console.
 
-Enterprise note: some scopes show a *pending approval* state after enabling — an admin must approve them in the Admin Console before they take effect.
+## 5. Subscribe to events and callbacks (WS long connection)
 
-## 5. Subscribe to events (WS long connection)
+tasking receives messages and card interactions over a **WebSocket long connection** (outbound-only: no public IP, domain, or certificate needed — see [ADR 0018](../adr/0018-event-driven-feishu-ingress.md)). On the app's **Events & Callbacks** page, **events and callbacks are two separate blocks — configure both**:
 
-tasking receives messages over a **WebSocket long connection** (outbound-only: no public IP, domain, or certificate needed — see [ADR 0018](../adr/0018-event-driven-feishu-ingress.md)). In the [Developer Console](https://open.feishu.cn/app), under the app:
+**① Event configuration — add 1 event**
 
-1. **Events & Callbacks → Subscription mode** → choose *Receive events via long connection* → save. Saving requires the client to be online: start `tasking start` on your machine first, then come back to save.
-2. **Events & Callbacks → Add event** — add both:
-   - `Receive message im.message.receive_v1` — the entry point for chat messages (`/chat`, `/issue`, free text).
-   - `Card interaction callback card.action.trigger` — card button clicks (direct-session `/stop`, state-transition cards, etc.).
-3. After changing event subscriptions you must **publish a new version** (next section) for them to take effect.
+| Event | Required permission |
+|---|---|
+| Receive message v2.0 `im.message.receive_v1` (chat-message entry: `/chat`, `/issue`, free text) | `im:message.group_msg` (already granted in §4) |
+
+Subscription mode: choose **Receive events via long connection** → save. Saving requires the client online: start `tasking start` on your machine first, then come back to save.
+
+**② Callback configuration — subscribe to 1 callback**
+
+| Callback | Purpose |
+|---|---|
+| Card interaction callback `card.action.trigger` | Card button clicks (direct-session `/stop`, state-transition cards, etc.) |
+
+Subscription mode: choose **Receive callbacks via long connection** → save.
+
+After changing subscriptions you must **publish a new version** (next section) for them to take effect.
 
 > Single-instance constraint: only one tasking daemon may be online per Feishu app. If multiple machines connect with the same `app_id`, the platform routes events randomly in cluster mode and instances steal each other's messages.
 

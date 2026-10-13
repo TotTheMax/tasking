@@ -27,36 +27,39 @@ tasking 与飞书的所有交互（直连 `/chat`、Jira 桥 `/issue`、卡片�
 
 ## 4. 开通权限（scope）
 
-「权限管理」→「API 权限」→ 搜索并开通：
+「权限管理」→「API 权限」→ 按下表的**权限名称**搜索并开通，共 **5 个**。建议一次开齐：前 3 个缺失对应功能不可用，后 2 个缺失时功能降级：
 
-**必需（3 个）——不开通对应功能不可用：**
-
-| scope | tasking 用它做什么 |
-|---|---|
-| `im:message.group_msg` | 应用级读取群组所有消息——收 `/chat`、`/issue` 等群消息；缺失时轮询 `GET /im/v1/messages` 报 **230027**，无替代 |
-| `im:message` | 获取与发送单聊、群组消息——tasking 的所有回复与卡片（`POST /im/v1/messages`、`.../reply`）、消息内容读取（断线对账补拉），以及更新/撤回已发消息（`PATCH` / `DELETE` `/im/v1/messages/:id`，直连会话卡片**原地刷新**；缺失时卡片不刷新、改为多条新消息） |
-| `im:chat` | 获取与更新群组信息——`tasking init` 列出候选 intake 群 + 群选择器的「➕ 新建 intake 群（并拉你进群）」（`POST /im/v1/chats`）；缺失新建时报缺权限，init 降级回手选已有群 |
-
-**增强（2 个）——建议一并开通：**
-
-| scope | tasking 用它做什么 | 缺失时的表现 |
+| 权限名称（后台显示） | scope | tasking 用它做什么 |
 |---|---|---|
-| `im:resource` | 上传图片/文件（`POST /im/v1/files`），agent 产物附件直接发群 | 上传报 **99991672 / Access denied**，tasking 降级为纯文本回复 |
-| `contact:user.id:readonly` | 新建群时通过你的邮箱/手机号查 open_id 把你拉进群（`POST /contact/v3/users/batch_get_id`）——**不拉人进群的话，机器人建的群里只有机器人，你在飞书看不到它** | 新建时无法定位你的账号：init 会警告并建"只有机器人"的群且不选用，引导手动建群后「⟳ 刷新群列表」 |
+| 获取群组中所有消息（敏感权限） | `im:message.group_msg` | 群消息入口——收 `/chat`、`/issue` 等群消息；缺失时收不到任何消息（报 **230027**，无替代） |
+| 获取与发送单聊、群组消息 | `im:message` | 所有回复与卡片发送、消息内容读取（断线对账补拉）、已发消息更新/撤回（卡片**原地刷新**；缺失时卡片不刷新、改为多条新消息） |
+| 获取与更新群组信息 | `im:chat` | `tasking init` 列群选 intake 群 + 「➕ 新建 intake 群」一键建群；缺失时降级手选已有群 |
+| 获取与上传图片或文件资源 | `im:resource` | agent 产物附件直接发群；缺失时降级纯文本回复（上传报 **99991672**） |
+| 通过手机号或邮箱获取用户 ID | `contact:user.id:readonly` | 建群时通过你的邮箱/手机号把你拉进群——**不拉人进群的话，机器人建的群里只有机器人，你在飞书看不到它**；缺失时 init 引导手动建群 |
 
-**替代授权（不愿开组合权限时）：**scope 按端点授权、存在覆盖。未开 `im:message` 时可用 `im:message:send_as_bot`（发送）+ `im:message:readonly`（读内容）替代，但会失去卡片原地刷新（PATCH/DELETE 专属）；未开 `im:chat` 时可用 `im:chat:readonly` 替代（仅列群，无建群）。`im:message.group_msg` 无替代。最小可用集即上表 3 + 2（已在 Lark 实测验证）。
+> 替代授权（可选）：`im:message:send_as_bot` + `im:message:readonly` 可替代 `im:message`（失去卡片原地刷新）；`im:chat:readonly` 可替代 `im:chat`（仅列群、无建群）；`im:message.group_msg` 无替代。企业版部分权限开通后显示「待审批」，需管理员在管理后台批准后才生效。
 
-企业版注意：部分权限开通后会显示「待审批」状态，需管理员在管理后台批准才生效。
+## 5. 订阅事件与回调（WS 长连接）
 
-## 5. 订阅事件（WS 长连接）
+tasking 收消息与卡片交互都走 **WebSocket 长连接**（出站建连，机器无需公网 IP / 域名 / 证书，见 [ADR 0018](../adr/0018-event-driven-feishu-ingress.md)）。在[开发者后台](https://open.feishu.cn/app)该应用的「事件与回调」页，**事件与回调是两块独立配置，都要设置**：
 
-tasking 收消息走 **WebSocket 长连接**（出站建连，机器无需公网 IP / 域名 / 证书，见 [ADR 0018](../adr/0018-event-driven-feishu-ingress.md)）。在[开发者后台](https://open.feishu.cn/app)该应用下：
+**① 事件配置 —— 添加 1 个事件**
 
-1. **事件与回调 → 订阅方式** → 选「使用长连接接收事件」→ 保存。保存时要求客户端在线：先在机器上把 `tasking start` 跑起来再回来保存。
-2. **事件与回调 → 添加事件**，添加两个：
-   - `接收消息 im.message.receive_v1` —— 群消息入口（`/chat`、`/issue`、自由文本）。
-   - `卡片回传交互 card.action.trigger` —— 卡片按钮点击（直连 `/stop`、状态转移等交互卡片的回调）。
-3. 事件订阅改动后需**重新发布版本**（下一步）才生效。
+| 事件 | 依赖权限 |
+|---|---|
+| 接收消息 v2.0 `im.message.receive_v1`（群消息入口：`/chat`、`/issue`、自由文本） | `im:message.group_msg`（§4 已开） |
+
+订阅方式选「**使用长连接接收事件**」→ 保存。保存时要求客户端在线：先在机器上把 `tasking start` 跑起来再回来保存。
+
+**② 回调配置 —— 订阅 1 个回调**
+
+| 回调 | 用途 |
+|---|---|
+| 卡片回传交互 `card.action.trigger` | 卡片按钮点击（直连 `/stop`、状态转移等交互卡片） |
+
+订阅方式选「**使用长连接接收回调**」→ 保存。
+
+事件/回调订阅改动后需**重新发布版本**（下一步）才生效。
 
 > 单实例约束：同一飞书应用只允许一个 tasking daemon 在线。多台机器同时连同一个 `app_id` 时，平台按集群模式随机路由事件，会互相抢消息。
 

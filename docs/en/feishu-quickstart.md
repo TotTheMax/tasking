@@ -29,6 +29,7 @@ App details → "App Capabilities" → "Bot" → click "Add bot capability" → 
 | `im:message` | Send messages/replies (`POST /im/v1/messages`, `.../reply`) and read message content |
 | `im:chat` | List the bot's groups (`GET /im/v1/chats`, to get the intake group chat_id) and one-click chat creation |
 | `im:resource` | Upload images/files (degrades to plain-text replies when missing) |
+| `contact:user.id:readonly` | Adds your account to a newly created chat (without it the bot-created chat contains only the bot; init falls back to manual creation) |
 
 > Alternatives when `im:message` / `im:chat` are not enabled: `im:message:send_as_bot` (send), `im:message:readonly` (read content), `im:chat:readonly` (list chats) — see [Feishu App Setup](./feishu-app-setup.md).
 

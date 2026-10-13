@@ -29,6 +29,7 @@
 | `im:message` | 发消息/回复（`POST /im/v1/messages`、`.../reply`）与读取消息内容 |
 | `im:chat` | 列机器人所在群（`GET /im/v1/chats`，取 intake 群 chat_id）与一键建群 |
 | `im:resource` | 上传图片/文件（缺失时降级纯文本回复） |
+| `contact:user.id:readonly` | 建群时把你的账号拉进群（缺失时机器人建的群里只有机器人，init 引导手动建群） |
 
 > 未开通 `im:message` / `im:chat` 时的替代授权：发送 `im:message:send_as_bot`、读内容 `im:message:readonly`、列群 `im:chat:readonly`（详见[飞书应用开通](./feishu-app-setup.md)）。
 

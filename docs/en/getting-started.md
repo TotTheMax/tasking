@@ -28,15 +28,17 @@ No Jira needed: create a Feishu app → `tasking init` with enter-enter-enter �
 
 ## 1.1 Create the Feishu custom app
 
-[https://open.feishu.cn](https://open.feishu.cn) → developer console → create an enterprise custom app (e.g. `tasking`). Note the **App ID** (`cli_xxx`) and **App Secret**. Add the **bot** capability, then grant the 4 scopes:
+[https://open.feishu.cn](https://open.feishu.cn) → developer console → create an enterprise custom app (e.g. `tasking`). Note the **App ID** (`cli_xxx`) and **App Secret**. Add the **bot** capability, then grant the 5 scopes:
 
 | Scope | Purpose |
 |------|---------|
 | `im:message.group_msg` | app-level group message read (receiving messages, required, no substitute) |
 | `im:message` | send/reply as the bot and read message content |
 | `im:chat` | list the bot's chats (init's chat picker / one-click creation) |
+| `im:resource` | attachment upload (degrades to plain text when missing) |
+| `contact:user.id:readonly` | adds you to a newly created chat (manual chat creation when missing) |
 
-Version management → create version → publish, admin approves (unapproved apps get 403 from APIs). Create a group (e.g. `tasking-intake`) and add the bot to it. **Personal Feishu needs no third-party approval — fully self-service**; for the complete steps, enhanced permissions (file upload / card refresh), event subscription, and an error→missing-step table see [Feishu App Setup](./feishu-app-setup.md). Troubleshooting details: [Feishu quickstart](./feishu-quickstart.md).
+Version management → create version → publish, admin approves (unapproved apps get 403 from APIs). Create a group (e.g. `tasking-intake`) and add the bot to it. **Personal Feishu needs no third-party approval — fully self-service**; for the complete steps, permission list, event subscription, and an error→missing-step table see [Feishu App Setup](./feishu-app-setup.md). Troubleshooting details: [Feishu quickstart](./feishu-quickstart.md).
 
 ## 1.2 tasking init (just press enter)
 

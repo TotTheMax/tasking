@@ -28,15 +28,17 @@ tasking --help
 
 ## 1.1 建飞书自建应用
 
-[https://open.feishu.cn](https://open.feishu.cn) → 开发者后台 → 创建企业自建应用（名如 `tasking`）。记 **App ID**（`cli_xxx`）+ **App Secret**。应用能力里添加**机器人**，权限管理开通 4 个 scope：
+[https://open.feishu.cn](https://open.feishu.cn) → 开发者后台 → 创建企业自建应用（名如 `tasking`）。记 **App ID**（`cli_xxx`）+ **App Secret**。应用能力里添加**机器人**，权限管理开通 5 个 scope：
 
 | scope | 用途 |
 |------|------|
 | `im:message.group_msg` | 应用级读群组消息（收消息，必需，无替代） |
 | `im:message` | 以机器人身份发消息/回复与读取消息内容 |
 | `im:chat` | 列机器人所在群（init 帮选/一键建 intake 群） |
+| `im:resource` | 附件上传（缺失降级纯文本） |
+| `contact:user.id:readonly` | 建群时把你拉进群（缺失时需手动建群） |
 
-版本管理与发布 → 创建版本 → 提交，管理员审批（未审批调 API 会 403）。建一个群（如 `tasking-intake`）并把机器人拉进群。**个人版飞书无需他人审批、自助开通**；完整步骤、增强权限（文件上传/卡片刷新）、事件订阅与报错对照见[飞书应用开通](./feishu-app-setup.md)，排错细节见[飞书接入 quickstart](./feishu-quickstart.md)。
+版本管理与发布 → 创建版本 → 提交，管理员审批（未审批调 API 会 403）。建一个群（如 `tasking-intake`）并把机器人拉进群。**个人版飞书无需他人审批、自助开通**；完整步骤、权限清单、事件订阅与报错对照见[飞书应用开通](./feishu-app-setup.md)，排错细节见[飞书接入 quickstart](./feishu-quickstart.md)。
 
 ## 1.2 tasking init（一路回车）
 
