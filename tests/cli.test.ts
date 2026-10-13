@@ -5,6 +5,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readDaemonInfo, writeDaemonInfo } from "../src/cli/daemon-info.js";
 import { main } from "../src/cli/index.js";
+import { readTaskingVersion } from "../src/cli/version.js";
+
+vi.mock("../src/cli/version.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/cli/version.js")>();
+  return { ...actual, readTaskingVersion: vi.fn(actual.readTaskingVersion) };
+});
 
 function captureStdout(run: () => Promise<number>): Promise<{ code: number; output: string }> {
   const spy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -50,6 +56,17 @@ describe("cli main", () => {
     const { code, output } = await captureStdout(() => main(["node", "tasking", "-v"]));
     expect(code).toBe(0);
     expect(output).toMatch(/^\d+\.\d+\.\d+\n$/);
+  });
+
+  it("prints unknown and exits 0 when the version source is unreadable", async () => {
+    vi.mocked(readTaskingVersion).mockReturnValue("unknown");
+    try {
+      const { code, output } = await captureStdout(() => main(["node", "tasking", "--version"]));
+      expect(code).toBe(0);
+      expect(output).toBe("unknown\n");
+    } finally {
+      vi.mocked(readTaskingVersion).mockRestore();
+    }
   });
 
   it("returns nonzero for unknown subcommand", async () => {
