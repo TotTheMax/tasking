@@ -20,11 +20,12 @@
 
 ## Decisions
 
-1. **分类依据 `TaskingError`**：`details.status >= 500 || status === 429 || category === "feishu_api_request"` 判为可重试；其余（含 400/403 等永久性 4xx）快速失败。备选：解析 message 文本——放弃，结构化字段现成且不脆。
+1. **分类依据 `TaskingError`**：`details.status >= 500 || status === 429 || category === "feishu_api_request"` 判为可重试；其余（含 400/403 等永久性 4xx）快速失败。非 `TaskingError` 的未知错误（生产端口不会产生，测试桩中代表瞬时故障）按可重试处理——沿用既有 self-heal 语义。备选：解析 message 文本——放弃，结构化字段现成且不脆。
 2. **延迟 2000ms + 0-1000ms 抖动，重试 1 次**。依据：实测 504 返回耗时 ~5s（拥塞窗口量级），10-09 案例中重试成功间隔也在秒级；抖动防多会话同步重试。
 3. **每 turn 恢复而非熔断**：`startTurnCard` 重置 `cardsAvailable=true`。真不支持卡片的平台最多每 turn 一次廉价的建卡失败 + WARN 日志，复杂度比熔断器低一个量级。移除现有的"连败 2 次 → 永久 false"路径（`cardUpdateFailures` 阈值逻辑随之简化为单 flush 内的一次重试计数）。
 4. **降级文本语义（补录已上线行为）**：降级期间 pending = `turn.tools.slice(flushedTools)`，合并为**一条**消息（≤2000 字符截断）；游标推进沿用现有快照 + 同 turn 守卫。
 5. **延迟注入而非配置**：`DirectSessionManagerDeps` 增加 `cardRetryDelayMs?: number`（默认 2000，测试传 0 或小值）。这是测试缝不是用户配置面，不进 WORKFLOW.md/schema/双语文档。
+7. **turn 切换时的增量兜底**：fire-and-forget 的 flush 可能在重试睡眠中跨越 turn 切换（turn 守卫使其醒来后不再投递）。`startTurnCard` 先 join 在飞 flush（`rt.flushPromise`），再对旧 turn 补发 `tools.length > flushedTools` 的剩余增量（恰好一次，游标即投递凭证，与 `cardsAvailable` 无关），然后才重置游标。文本行构造提取 `toolTextLines` 共用。
 6. **并发 flush 防重入**：延迟 sleep 使 flush 重叠窗口变大（sleep 期间 finalize/seal 可再入 `flushTurnCard`）。以 `rt.flushInFlight` 标志串行化：进行中的 flush 返回后，后续 flush 自然拿到最新状态；被跳过的 flush 由 1.5s 节流/终态立即刷新补上。
 
 ## Risks / Trade-offs

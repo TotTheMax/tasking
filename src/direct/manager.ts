@@ -124,6 +124,7 @@ interface SessionRuntime {
   flushTimer: NodeJS.Timeout | null;
   flushInFlight: boolean;
   flushQueued: boolean;
+  flushPromise: Promise<void> | null;
 }
 
 interface TurnStats {
@@ -210,7 +211,13 @@ export class DirectSessionManager {
   private hasQueuedWork(): boolean {
     if (this.pendingWork > 0) return true;
     for (const rt of this.runtime.values()) {
-      if (rt.turnInFlight || rt.queue.length > 0 || rt.flushTimer !== null || rt.flushInFlight) {
+      if (
+        rt.turnInFlight ||
+        rt.queue.length > 0 ||
+        rt.flushTimer !== null ||
+        rt.flushInFlight ||
+        rt.flushQueued
+      ) {
         return true;
       }
     }
@@ -1066,6 +1073,7 @@ export class DirectSessionManager {
         flushTimer: null,
         flushInFlight: false,
         flushQueued: false,
+        flushPromise: null,
       };
       this.runtime.set(rootId, rt);
     }
@@ -1150,6 +1158,13 @@ export class DirectSessionManager {
     retryFromTurn: number | undefined,
   ): Promise<void> {
     const fresh = this.deps.store.getDirectSession(session.root_id) ?? session;
+    await rt.flushPromise?.catch(() => {});
+    const prev = rt.turn;
+    if (prev !== null && prev.tools.length > rt.flushedTools) {
+      const pending = prev.tools.slice(rt.flushedTools);
+      rt.flushedTools = prev.tools.length;
+      await this.replySafe(prev.rootId, truncate(toolTextLines(pending), 2000));
+    }
     const state: TurnCardState = {
       rootId: session.root_id,
       sessionName: fresh.name ?? sessionName(fresh.path),
@@ -1254,9 +1269,12 @@ export class DirectSessionManager {
       return;
     }
     rt.flushInFlight = true;
+    const flight = this.flushTurnCardInner(rootId);
+    rt.flushPromise = flight;
     try {
-      await this.flushTurnCardInner(rootId);
+      await flight;
     } finally {
+      rt.flushPromise = null;
       rt.flushInFlight = false;
       if (rt.flushQueued) {
         rt.flushQueued = false;
@@ -1305,7 +1323,6 @@ export class DirectSessionManager {
         });
         if (!isRetryableCardError(e)) {
           rt.cardsAvailable = false;
-          rt.cardId = null;
         } else {
           const base = this.deps.cardRetryDelayMs ?? CARD_RETRY_DELAY_MS;
           const jitter = base <= 0 ? 0 : Math.floor(Math.random() * CARD_RETRY_JITTER_MS);
@@ -1321,22 +1338,17 @@ export class DirectSessionManager {
                 error: toTaskingError(retryError).message,
               });
               rt.cardsAvailable = false;
-              rt.cardId = null;
             }
           }
         }
       }
     }
+    if (rt.turn !== turn) return;
     if (this.deps.config().feishu.direct.verbosity !== "detailed") return;
     const pending = turn.tools.slice(rt.flushedTools);
     rt.flushedTools = turn.tools.length;
     if (pending.length === 0) return;
-    const lines = pending.map((t) => {
-      const summary = toolSummary(t);
-      const exit = t.exit !== undefined && t.exit !== 0 ? ` (exit ${t.exit})` : "";
-      return `🔧 ${t.tool}${summary === "" ? "" : ` · ${summary}`}${exit}`;
-    });
-    await this.replySafe(rootId, truncate(lines.join("\n"), 2000));
+    await this.replySafe(rootId, truncate(toolTextLines(pending), 2000));
   }
 
   private accumulateTool(rt: SessionRuntime, evt: OpencodeEvent): void {
@@ -2166,6 +2178,16 @@ function isRetryableCardError(e: unknown): boolean {
   if (e.category !== "feishu_api_status") return false;
   const status = (e.details as { status?: unknown } | undefined)?.status;
   return status === 429 || (typeof status === "number" && status >= 500);
+}
+
+function toolTextLines(tools: TurnCardToolEvent[]): string {
+  return tools
+    .map((t) => {
+      const summary = toolSummary(t);
+      const exit = t.exit !== undefined && t.exit !== 0 ? ` (exit ${t.exit})` : "";
+      return `🔧 ${t.tool}${summary === "" ? "" : ` · ${summary}`}${exit}`;
+    })
+    .join("\n");
 }
 
 function sleepUnrefed(ms: number): Promise<void> {

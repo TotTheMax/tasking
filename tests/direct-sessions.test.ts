@@ -1825,7 +1825,6 @@ describe("DirectSessionManager turn cards (detailed)", () => {
 
   it("switches a mid-turn update failure to the text fallback", async () => {
     const { feishu, runner, mgr } = setup(failingUpdatePort);
-    void 0;
     await mgr.handleIntakeMessage(msg({ message_id: "om_fb2", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
     runner.calls[0]?.onEvent?.(toolEvent("npm test"));
@@ -2108,6 +2107,45 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     await mgr.whenIdle();
     expect(updateCalls).toBeGreaterThanOrEqual(2);
     expect(feishu.sent("om_dr6").some((t) => t.includes("🔧"))).toBe(false);
+  });
+
+  it("a flush waking after the turn changed neither resends old tools nor clobbers the new cursor", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    let updateAttempts = 0;
+    const port: DirectFeishuPort = {
+      replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+      replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+      replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
+      updateCard: async () => {
+        updateAttempts++;
+        throw new TaskingError("feishu_api_status", "feishu updateCard failed: 504", {
+          status: 504,
+        });
+      },
+    };
+    const mgr = new DirectSessionManager({
+      feishu: port,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      spawn: runner.spawn,
+      cardRetryDelayMs: 200,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dr7", text: "/chat tasking 第一轮" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.onEvent?.(toolEvent("旧轮工具"));
+    await vi.waitFor(() => expect(updateAttempts).toBeGreaterThanOrEqual(1), { timeout: 4000 });
+    runner.finish(0, [textEvent("第一答")]);
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_dr8", root_id: "om_dr7", text: "第二轮", create_time: "1700000100" }),
+    );
+    await runner.waitForCall(2);
+    runner.finish(1, [toolEvent("新轮工具"), textEvent("第二答")]);
+    await mgr.whenIdle();
+    const toolTexts = feishu.sent("om_dr7").filter((t) => t.includes("🔧"));
+    expect(toolTexts.filter((t) => t.includes("旧轮工具")).length).toBeLessThanOrEqual(1);
+    expect(toolTexts.some((t) => t.includes("新轮工具"))).toBe(true);
   });
 });
 

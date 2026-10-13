@@ -93,5 +93,6 @@
 ### 在飞书通过/issue创建issue的时候的问题
 在飞书通过/issue创建issue的时候描述会被同时加到了描述和comments（评论中的包含了标题和描述）,comments的有些多余可以不加。
 **修复**：`executeIssue` 建 issue 后不再写首条 comment（summary/description 已承载全部内容），见 TAS-9 与 `docs/adr/0009-issue-first-comment-removed.md`。
+
 ### Lark 国际版链路不稳定导致卡片更新 5xx
 国内网络直连或经劣质代理访问 Lark 国际版 API（open.larksuite.com）时，卡片更新/消息发送/文件上传可能间歇性返回 504/502。tasking 对可重试错误（5xx/429/网络错误）会延迟重试一次，仍失败时该轮降级为文本并在下一轮自动恢复卡片；飞书版（open.feishu.cn）不受影响。根治需为 daemon 所在机器提供稳定的国际线路。
