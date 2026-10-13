@@ -40,6 +40,18 @@ describe("cli main", () => {
     expect(code).toBe(0);
   });
 
+  it("prints bare semver and exits 0 for --version", async () => {
+    const { code, output } = await captureStdout(() => main(["node", "tasking", "--version"]));
+    expect(code).toBe(0);
+    expect(output).toMatch(/^\d+\.\d+\.\d+\n$/);
+  });
+
+  it("prints bare semver and exits 0 for -v", async () => {
+    const { code, output } = await captureStdout(() => main(["node", "tasking", "-v"]));
+    expect(code).toBe(0);
+    expect(output).toMatch(/^\d+\.\d+\.\d+\n$/);
+  });
+
   it("returns nonzero for unknown subcommand", async () => {
     const code = await main(["node", "tasking", "bogus"]);
     expect(code).toBe(1);
@@ -54,6 +66,12 @@ describe("cli main", () => {
     expect(output).toContain("--help");
     expect(output).toContain("Run 'tasking <command> --help'");
     expect(output).not.toContain("triage");
+  });
+
+  it("top-level --help lists --version in Options", async () => {
+    const { code, output } = await captureStdout(() => main(["node", "tasking", "--help"]));
+    expect(code).toBe(0);
+    expect(output).toMatch(/-v, --version\s+Print the installed version/);
   });
 
   it("top-level -h prints help to stdout", async () => {

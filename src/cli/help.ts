@@ -162,6 +162,7 @@ ${COMMANDS.map((cmd) => `  ${cmd.name.padEnd(COMMAND_NAME_WIDTH)} ${cmd.descript
 
 Options:
   -h, --help   Show help
+  -v, --version  Print the installed version
 
 Run 'tasking <command> --help' for command-specific options.
 `;

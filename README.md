@@ -50,6 +50,7 @@ For guided quickstarts, see the [Chinese guide](./docs/zh/getting-started.md) or
 | `tasking status` | Print a runtime snapshot (running, retrying, totals) |
 | `tasking logs` | Print recent structured logs |
 | `tasking doctor [workflow-path]` | Read-only whole-chain health check (WORKFLOW.md, Feishu, Jira, opencode) |
+| `tasking --version` | Print the installed version (top-level flag, also `-v`) |
 
 ## `WORKFLOW.md` contract
 

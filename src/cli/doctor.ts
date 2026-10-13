@@ -14,6 +14,7 @@ import type { FeishuConfig, TrackerConfig } from "../config/config-types.js";
 import { loadDotenvIfPresent } from "../config/dotenv.js";
 import { ConfigManager } from "../config/manager.js";
 import { setLocale, translate } from "../translate/locale.js";
+import { readTaskingVersion } from "./version.js";
 import { resolveWorkflowPathOrReport } from "./workflow-path.js";
 
 type DoctorStatus = "pass" | "fail" | "skip" | "info";
@@ -60,6 +61,7 @@ export async function runDoctor(
   deps: DoctorDeps = {},
   workflowPath?: string,
 ): Promise<number> {
+  output.write(`tasking ${readTaskingVersion()}\n`);
   const opencodeVersion = deps.opencodeVersion ?? defaultOpencodeVersion;
   const items: DoctorItem[] = [];
 

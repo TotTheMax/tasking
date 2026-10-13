@@ -77,6 +77,10 @@ tasking start
 
 `tasking --help`（或 `-h`）与 `tasking help` 打印顶层帮助：命令列表 + 一句话说明。查看某个子命令的详细帮助（usage、参数、选项表）可用 `tasking <cmd> --help`（或 `-h`）或 `tasking help <cmd>`。显式请求的帮助输出到 stdout 且退出码 0；无子命令、未知子命令、`help` 后跟未知命令输出到 stderr 且退出码 1。
 
+### 版本入口
+
+`tasking --version`（或 `-v`）向 stdout 打印已安装的版本（来自 `package.json` 的裸 semver，如 `0.6.17`），退出码 0。`tasking doctor` 的体检报告第一行也会打印该版本。
+
 ### `tasking init`
 
 生成入门 `WORKFLOW.md` 与本地工作区目录。默认交互式引导填写 Jira 凭据。位置参数 `[workflow-path]` 可指定配置文件路径（缺省 `./WORKFLOW.md`），生成的配置、`.opencode/skills/`、`.tasking/` 参考副本与 `.bak` 备份都以该文件所在目录为基准；与 `start`/`doctor` 语义一致，传目录视为错误。

@@ -50,6 +50,7 @@ tasking logs       # 查看近期结构化日志
 | `tasking status` | 打印运行时快照（运行中、重试中、总量） |
 | `tasking logs` | 打印近期结构化日志 |
 | `tasking doctor [workflow-path]` | 全链路只读体检（WORKFLOW.md、飞书、Jira、opencode） |
+| `tasking --version` | 打印已安装的版本（顶层 flag，也可用 `-v`） |
 
 ## `WORKFLOW.md` 契约
 

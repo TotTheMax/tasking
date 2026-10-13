@@ -77,6 +77,10 @@ Press `Ctrl+C` for a graceful shutdown.
 
 `tasking --help` (or `-h`) and `tasking help` print the top-level help: a list of commands with a one-line description each. To view detailed help for a subcommand (usage, arguments, options table), use `tasking <cmd> --help` (or `-h`) or `tasking help <cmd>`. Explicitly requested help is printed to stdout with exit code 0; missing subcommand, unknown subcommand, or `help` followed by an unknown command prints to stderr with exit code 1.
 
+### Version entrypoint
+
+`tasking --version` (or `-v`) prints the installed version (a bare semver from `package.json`, e.g. `0.6.17`) to stdout and exits 0. `tasking doctor` also prints this version as the first line of its report.
+
 ### `tasking init`
 
 Generates a starter `WORKFLOW.md` and the local workspace directory. By default it runs an interactive wizard to fill in Jira credentials. The positional `[workflow-path]` selects the config file path (default `./WORKFLOW.md`); the generated config, `.opencode/skills/`, the `.tasking/` reference copy, and `.bak` backups all key off that file's directory — the same semantics as `start`/`doctor`. A directory argument is an error.

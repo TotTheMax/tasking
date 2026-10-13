@@ -82,6 +82,13 @@ describe("tasking doctor", () => {
     return d;
   }
 
+  it("prints the tasking version as the first output line", async () => {
+    const dir = tempDir();
+    const { stream, content } = mockOutput();
+    await runDoctor(dir, stream, {});
+    expect(content()).toMatch(/^tasking \d+\.\d+\.\d+\n/);
+  });
+
   it("exits 0 when everything passes (feishu-direct)", async () => {
     const dir = tempDir();
     writeWorkflow(

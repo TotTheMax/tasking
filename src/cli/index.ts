@@ -47,6 +47,7 @@ import { TOP_LEVEL_HELP, subcommandHelp } from "./help.js";
 import { runInit } from "./init.js";
 import { acquireInstanceLock, releaseInstanceLock } from "./instance-lock.js";
 import { httpToConfigView, httpToSnapshot } from "./tui-helpers.js";
+import { readTaskingVersion } from "./version.js";
 import { resolveWorkflowPathOrReport } from "./workflow-path.js";
 
 function wantsHelp(args: string[]): boolean {
@@ -65,6 +66,11 @@ export async function main(argv: string[]): Promise<number> {
 
   if (subcommand === "--help" || subcommand === "-h") {
     process.stdout.write(TOP_LEVEL_HELP);
+    return 0;
+  }
+
+  if (subcommand === "--version" || subcommand === "-v") {
+    process.stdout.write(`${readTaskingVersion()}\n`);
     return 0;
   }
 
