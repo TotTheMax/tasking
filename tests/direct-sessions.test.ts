@@ -1869,6 +1869,50 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     expect(toolTexts[0]).not.toContain("carded-a");
     expect(toolTexts[0]).not.toContain("carded-b");
   });
+
+  it("a tool arriving while a card update is in flight still reaches the text fallback", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    let failUpdates = false;
+    let firstUpdate: (() => void) | null = null;
+    let updateCalls = 0;
+    const port: DirectFeishuPort = {
+      replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+      replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+      replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
+      updateCard: (messageId, card) =>
+        new Promise<void>((resolve, reject) => {
+          updateCalls++;
+          if (updateCalls > 1 || failUpdates) {
+            reject(new Error("card update failed"));
+            return;
+          }
+          firstUpdate = resolve;
+        }),
+    };
+    const mgr = new DirectSessionManager({
+      feishu: port,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      spawn: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_rc1", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.onEvent?.(toolEvent("pre-flight"));
+    await vi.waitFor(() => expect(updateCalls).toBeGreaterThanOrEqual(1), { timeout: 4000 });
+    runner.calls[0]?.onEvent?.(toolEvent("in-flight"));
+    failUpdates = true;
+    firstUpdate?.();
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    const merged = feishu
+      .sent("om_rc1")
+      .filter((t) => t.includes("🔧"))
+      .join("\n");
+    expect(merged).toContain("in-flight");
+    expect(merged).not.toContain("pre-flight");
+  });
 });
 
 describe("DirectSessionManager turn card actions", () => {

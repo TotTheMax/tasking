@@ -1193,11 +1193,14 @@ export class DirectSessionManager {
     if (!rt.turn || rt.cardId === null) return;
     const updateCard = this.deps.feishu.updateCard;
     const cardId = rt.cardId;
+    const turn = rt.turn;
+    const renderedTools = turn.tools.length;
     const sealed: TurnCardState = { ...rt.turn, sealed: true };
     rt.cardId = null;
     if (!updateCard) return;
     try {
       await updateCard.call(this.deps.feishu, cardId, buildTurnCard(sealed));
+      if (rt.turn === turn) rt.flushedTools = Math.max(rt.flushedTools, renderedTools);
     } catch (e) {
       this.deps.logger.warn("direct card seal failed", {
         root_id: rt.turn.rootId,
@@ -1260,9 +1263,10 @@ export class DirectSessionManager {
     }
     const updateCard = this.deps.feishu.updateCard;
     if (rt.cardsAvailable && rt.cardId !== null && updateCard) {
+      const renderedTools = turn.tools.length;
       try {
         await updateCard.call(this.deps.feishu, rt.cardId, buildTurnCard(turn));
-        rt.flushedTools = turn.tools.length;
+        if (rt.turn === turn) rt.flushedTools = Math.max(rt.flushedTools, renderedTools);
         rt.cardUpdateFailures = 0;
         return;
       } catch (e) {
@@ -1274,7 +1278,7 @@ export class DirectSessionManager {
         if (rt.cardUpdateFailures < 2 && rt.cardId !== null) {
           try {
             await updateCard.call(this.deps.feishu, rt.cardId, buildTurnCard(turn));
-            rt.flushedTools = turn.tools.length;
+            if (rt.turn === turn) rt.flushedTools = Math.max(rt.flushedTools, renderedTools);
             rt.cardUpdateFailures = 0;
             return;
           } catch (retryError) {
