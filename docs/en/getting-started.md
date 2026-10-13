@@ -69,8 +69,10 @@ tasking start --tui    # foreground TUI; Ctrl+C stops (in-flight turns are abort
 In the intake group send:
 
 ```text
-/chat tasking help me look at this error
+/chat <project> help me look at this error
 ```
+
+`<project>` is the **directory alias** you entered at §1.2 question 5 (if you typed `tasking`, the command is `/chat tasking help me look at this error` — it is the name you gave your working directory, **not a tasking subcommand**). If you skipped that question, use the path form `/chat /abs/path <message>`.
 
 The bot creates a topic and starts opencode; on completion you get a summary plus a stats line. **Reply inside the topic to continue** (follow-ups queue and merge into the next turn).
 
