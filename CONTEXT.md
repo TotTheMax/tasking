@@ -221,6 +221,10 @@ _Avoid_: 进度卡, session card, dashboard card
 Ending a turn card's interactive life: its control-button row is replaced by a one-line stats footer, so the card reads as a historical record while its panels, text and expand state stay as they were.
 _Avoid_: 归档, 冻结, closing a card
 
+**Card fallback (卡片降级)**:
+The switch of one turn's process updates from in-place turn-card updates to coalesced plain-text delivery, after card updates fail retryably. It covers only the remainder of that turn and only tools not yet rendered on the card; card mode resumes on the next turn.
+_Avoid_: 永久弃卡, text mode, card disable
+
 **Card action (卡片动作)**:
 A button press on a turn card, delivered as a `card.action.trigger` callback over the event channel and answered within seconds with a toast and/or a new version of that card. It is a distinct ingress kind from a user message and is never queued behind one.
 _Avoid_: 按钮事件, card callback

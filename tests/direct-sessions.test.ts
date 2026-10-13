@@ -11,6 +11,7 @@ import { resolveConfig } from "../src/config/resolver.js";
 import { buildDirectCommand } from "../src/direct/command.js";
 import { type DirectFeishuPort, DirectSessionManager } from "../src/direct/manager.js";
 import type { ActivityEvent } from "../src/observability/activity-store.js";
+import { TaskingError } from "../src/shared/errors.js";
 import { translateCard } from "../src/translate/card.js";
 import { setLocale, translate } from "../src/translate/locale.js";
 import type { OpencodeEvent, SubprocessResult } from "../src/worker/runner.js";
@@ -1727,7 +1728,10 @@ function failingUpdatePort(feishu: FakeFeishu): DirectFeishuPort {
 }
 
 describe("DirectSessionManager turn cards (detailed)", () => {
-  function setup(port: (feishu: FakeFeishu) => DirectFeishuPort = (f) => f) {
+  function setup(
+    port: (feishu: FakeFeishu) => DirectFeishuPort = (f) => f,
+    extra: { cardRetryDelayMs?: number } = {},
+  ) {
     const feishu = new FakeFeishu();
     const runner = new FakeRunner();
     const mgr = new DirectSessionManager({
@@ -1736,6 +1740,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
       spawn: runner.spawn,
+      cardRetryDelayMs: extra.cardRetryDelayMs ?? 0,
     });
     return { feishu, runner, mgr };
   }
@@ -1820,6 +1825,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
 
   it("switches a mid-turn update failure to the text fallback", async () => {
     const { feishu, runner, mgr } = setup(failingUpdatePort);
+    void 0;
     await mgr.handleIntakeMessage(msg({ message_id: "om_fb2", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
     runner.calls[0]?.onEvent?.(toolEvent("npm test"));
@@ -1896,6 +1902,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
       spawn: runner.spawn,
+      cardRetryDelayMs: 0,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_rc1", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
@@ -1912,6 +1919,195 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       .join("\n");
     expect(merged).toContain("in-flight");
     expect(merged).not.toContain("pre-flight");
+  });
+
+  it("delays before retrying a retryable card update failure", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const attempts: number[] = [];
+    const port: DirectFeishuPort = {
+      replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+      replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+      replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
+      updateCard: async (messageId, card) => {
+        attempts.push(Date.now());
+        if (attempts.length === 1) {
+          throw new TaskingError("feishu_api_status", "feishu updateCard failed: 504", {
+            status: 504,
+          });
+        }
+        await feishu.updateCard(messageId, card);
+      },
+    };
+    const mgr = new DirectSessionManager({
+      feishu: port,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      spawn: runner.spawn,
+      cardRetryDelayMs: 50,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dr1", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.onEvent?.(toolEvent("重试后成功"));
+    await vi.waitFor(() => expect(attempts.length).toBeGreaterThanOrEqual(2), { timeout: 5000 });
+    expect(attempts[1] - attempts[0]).toBeGreaterThanOrEqual(50);
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    expect(feishu.sent("om_dr1").some((t) => t.includes("🔧"))).toBe(false);
+  });
+
+  it("falls back to a single merged incremental text when the delayed retry also fails", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    let failed = false;
+    const port: DirectFeishuPort = {
+      replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+      replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+      replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
+      updateCard: async (messageId, card) => {
+        if (failed) {
+          throw new TaskingError("feishu_api_status", "feishu updateCard failed: 504", {
+            status: 504,
+          });
+        }
+        await feishu.updateCard(messageId, card);
+      },
+    };
+    const mgr = new DirectSessionManager({
+      feishu: port,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      spawn: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dr2", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.onEvent?.(toolEvent("已上卡"));
+    await vi.waitFor(() => expect(feishu.updates.length).toBeGreaterThanOrEqual(1), {
+      timeout: 4000,
+    });
+    failed = true;
+    runner.finish(0, [toolEvent("降级增量"), textEvent("完成")]);
+    await mgr.whenIdle();
+    const toolTexts = feishu.sent("om_dr2").filter((t) => t.includes("🔧"));
+    expect(toolTexts).toHaveLength(1);
+    expect(toolTexts[0]).toContain("降级增量");
+    expect(toolTexts[0]).not.toContain("已上卡");
+  });
+
+  it("recovers card mode on the next turn after a fallback turn", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    let failed = false;
+    const port: DirectFeishuPort = {
+      replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+      replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+      replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
+      updateCard: async (messageId, card) => {
+        if (failed) {
+          throw new TaskingError("feishu_api_status", "feishu updateCard failed: 504", {
+            status: 504,
+          });
+        }
+        await feishu.updateCard(messageId, card);
+      },
+    };
+    const mgr = new DirectSessionManager({
+      feishu: port,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      spawn: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dr3", text: "/chat tasking 第一轮" }));
+    await runner.waitForCall(1);
+    failed = true;
+    runner.finish(0, [toolEvent("第一轮工具"), textEvent("第一答")]);
+    await mgr.whenIdle();
+    expect(feishu.sent("om_dr3").some((t) => t.includes("🔧"))).toBe(true);
+    const cardsAfterTurn1 = feishu.cards.length;
+    failed = false;
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_dr4", root_id: "om_dr3", text: "第二轮", create_time: "1700000100" }),
+    );
+    await runner.waitForCall(2);
+    expect(feishu.cards.length).toBeGreaterThan(cardsAfterTurn1);
+    runner.finish(1, [textEvent("第二答")]);
+    await mgr.whenIdle();
+  });
+
+  it("does not retry a non-retryable 4xx card update failure", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    let attempts = 0;
+    const port: DirectFeishuPort = {
+      replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+      replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+      replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
+      updateCard: async () => {
+        attempts++;
+        throw new TaskingError("feishu_api_status", "feishu updateCard failed: 400", {
+          status: 400,
+        });
+      },
+    };
+    const mgr = new DirectSessionManager({
+      feishu: port,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      spawn: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dr5", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [toolEvent("快速失败工具"), textEvent("完成")]);
+    await mgr.whenIdle();
+    expect(attempts).toBe(1);
+    expect(feishu.sent("om_dr5").some((t) => t.includes("快速失败工具"))).toBe(true);
+  });
+
+  it("serializes overlapping flushes while a card update is in flight", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    let releaseFirst: (() => void) | null = null;
+    let updateCalls = 0;
+    const port: DirectFeishuPort = {
+      replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+      replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+      replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
+      updateCard: (messageId, card) =>
+        new Promise<void>((resolve) => {
+          updateCalls++;
+          if (updateCalls === 1) {
+            releaseFirst = resolve;
+            return;
+          }
+          void feishu.updateCard(messageId, card).then(resolve);
+        }),
+    };
+    const mgr = new DirectSessionManager({
+      feishu: port,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      spawn: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dr6", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.onEvent?.(toolEvent("悬挂期间"));
+    await vi.waitFor(() => expect(updateCalls).toBeGreaterThanOrEqual(1), { timeout: 4000 });
+    runner.finish(0, [textEvent("完成")]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(updateCalls).toBe(1);
+    releaseFirst?.();
+    await mgr.whenIdle();
+    expect(updateCalls).toBeGreaterThanOrEqual(2);
+    expect(feishu.sent("om_dr6").some((t) => t.includes("🔧"))).toBe(false);
   });
 });
 
@@ -2249,6 +2445,7 @@ describe("DirectSessionManager card update resilience", () => {
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
       spawn: runner.spawn,
+      cardRetryDelayMs: 0,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_rt1", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);

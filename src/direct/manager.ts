@@ -11,7 +11,7 @@ import { parseChat } from "../bridge/commands.js";
 import type { DirectConfig, EffectiveConfig } from "../config/config-types.js";
 import type { ActivityEvent } from "../observability/activity-store.js";
 import type { Logger } from "../observability/logger.js";
-import { toTaskingError } from "../shared/errors.js";
+import { TaskingError, toTaskingError } from "../shared/errors.js";
 import type { RuntimeDirectSession } from "../shared/types.js";
 import {
   type OpencodeEvent,
@@ -76,11 +76,14 @@ export interface DirectManagerDeps {
   activity?: (sessionKey: string, evt: ActivityEvent) => void;
   clearActivity?: (sessionKey: string) => void;
   deleteSession?: (sessionId: string) => Promise<void>;
+  cardRetryDelayMs?: number;
 }
 
 const MAX_MESSAGE_CHARS = 3500;
 const TTL_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const CARD_UPDATE_INTERVAL_MS = 1500;
+const CARD_RETRY_DELAY_MS = 2000;
+const CARD_RETRY_JITTER_MS = 1000;
 const CARD_ACTION_DEDUP_MS = 2 * 60 * 1000;
 const MEMBER_CACHE_TTL_MS = 60 * 60 * 1000;
 const CARD_HEARTBEAT_MS = 5000;
@@ -118,8 +121,9 @@ interface SessionRuntime {
   fullDetail: TurnCardToolEvent[];
   fullDetailBytes: number;
   fullDetailDropped: number;
-  cardUpdateFailures: number;
   flushTimer: NodeJS.Timeout | null;
+  flushInFlight: boolean;
+  flushQueued: boolean;
 }
 
 interface TurnStats {
@@ -206,7 +210,9 @@ export class DirectSessionManager {
   private hasQueuedWork(): boolean {
     if (this.pendingWork > 0) return true;
     for (const rt of this.runtime.values()) {
-      if (rt.turnInFlight || rt.queue.length > 0 || rt.flushTimer !== null) return true;
+      if (rt.turnInFlight || rt.queue.length > 0 || rt.flushTimer !== null || rt.flushInFlight) {
+        return true;
+      }
     }
     return false;
   }
@@ -1057,8 +1063,9 @@ export class DirectSessionManager {
         fullDetail: [],
         fullDetailBytes: 0,
         fullDetailDropped: 0,
-        cardUpdateFailures: 0,
         flushTimer: null,
+        flushInFlight: false,
+        flushQueued: false,
       };
       this.runtime.set(rootId, rt);
     }
@@ -1168,7 +1175,8 @@ export class DirectSessionManager {
     rt.fullDetailDropped = 0;
     const detailed = this.deps.config().feishu.direct.verbosity === "detailed";
     const replyCard = this.deps.feishu.replyCardInThread;
-    if (!detailed || !rt.cardsAvailable || !replyCard) {
+    rt.cardsAvailable = true;
+    if (!detailed || !replyCard) {
       rt.cardsAvailable = false;
       return;
     }
@@ -1240,6 +1248,25 @@ export class DirectSessionManager {
 
   private async flushTurnCard(rootId: string): Promise<void> {
     const rt = this.runtimeFor(rootId);
+    if (rt.turn === null) return;
+    if (rt.flushInFlight) {
+      rt.flushQueued = true;
+      return;
+    }
+    rt.flushInFlight = true;
+    try {
+      await this.flushTurnCardInner(rootId);
+    } finally {
+      rt.flushInFlight = false;
+      if (rt.flushQueued) {
+        rt.flushQueued = false;
+        this.flushSoon(rootId);
+      }
+    }
+  }
+
+  private async flushTurnCardInner(rootId: string): Promise<void> {
+    const rt = this.runtimeFor(rootId);
     const turn = rt.turn;
     if (!turn) return;
     if (rt.flushTimer) {
@@ -1264,33 +1291,40 @@ export class DirectSessionManager {
     const updateCard = this.deps.feishu.updateCard;
     if (rt.cardsAvailable && rt.cardId !== null && updateCard) {
       const renderedTools = turn.tools.length;
+      const applySuccess = (): void => {
+        if (rt.turn === turn) rt.flushedTools = Math.max(rt.flushedTools, renderedTools);
+      };
       try {
         await updateCard.call(this.deps.feishu, rt.cardId, buildTurnCard(turn));
-        if (rt.turn === turn) rt.flushedTools = Math.max(rt.flushedTools, renderedTools);
-        rt.cardUpdateFailures = 0;
+        applySuccess();
         return;
       } catch (e) {
-        rt.cardUpdateFailures++;
         this.deps.logger.warn("direct card update failed", {
           root_id: rootId,
           error: toTaskingError(e).message,
         });
-        if (rt.cardUpdateFailures < 2 && rt.cardId !== null) {
-          try {
-            await updateCard.call(this.deps.feishu, rt.cardId, buildTurnCard(turn));
-            if (rt.turn === turn) rt.flushedTools = Math.max(rt.flushedTools, renderedTools);
-            rt.cardUpdateFailures = 0;
-            return;
-          } catch (retryError) {
-            rt.cardUpdateFailures++;
-            this.deps.logger.warn("direct card update retry failed; falling back to text", {
-              root_id: rootId,
-              error: toTaskingError(retryError).message,
-            });
+        if (!isRetryableCardError(e)) {
+          rt.cardsAvailable = false;
+          rt.cardId = null;
+        } else {
+          const base = this.deps.cardRetryDelayMs ?? CARD_RETRY_DELAY_MS;
+          const jitter = base <= 0 ? 0 : Math.floor(Math.random() * CARD_RETRY_JITTER_MS);
+          await sleepUnrefed(base + jitter);
+          if (rt.turn === turn && rt.cardId !== null) {
+            try {
+              await updateCard.call(this.deps.feishu, rt.cardId, buildTurnCard(turn));
+              applySuccess();
+              return;
+            } catch (retryError) {
+              this.deps.logger.warn("direct card update retry failed; falling back to text", {
+                root_id: rootId,
+                error: toTaskingError(retryError).message,
+              });
+              rt.cardsAvailable = false;
+              rt.cardId = null;
+            }
           }
         }
-        rt.cardsAvailable = false;
-        rt.cardId = null;
       }
     }
     if (this.deps.config().feishu.direct.verbosity !== "detailed") return;
@@ -2124,6 +2158,21 @@ export class DirectSessionManager {
       });
     }
   }
+}
+
+function isRetryableCardError(e: unknown): boolean {
+  if (!(e instanceof TaskingError)) return true;
+  if (e.category === "feishu_api_request") return true;
+  if (e.category !== "feishu_api_status") return false;
+  const status = (e.details as { status?: unknown } | undefined)?.status;
+  return status === 429 || (typeof status === "number" && status >= 500);
+}
+
+function sleepUnrefed(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 }
 
 function fullDetailBytes(detail: TurnCardToolEvent): number {

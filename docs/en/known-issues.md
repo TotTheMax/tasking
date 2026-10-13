@@ -93,3 +93,6 @@ Here the Description only shows part; normally it should all be shown.
 ### Issue when creating an issue via /issue in Feishu
 When creating an issue via /issue in Feishu, the description was added to both the description and the comments (the comment contained the title and description); the comment is redundant and can be omitted.
 **Fix**: `executeIssue` no longer writes a first comment after creating the issue (summary/description already carry the full content); see TAS-9 and `docs/adr/0009-issue-first-comment-removed.md`.
+
+### Unstable routes to Lark international cause card-update 5xx
+Accessing the Lark international API (open.larksuite.com) from mainland networks — directly or through a poor proxy — can intermittently return 504/502 for card updates, message sends, and file uploads. tasking retries retryable errors (5xx/429/network) once after a delay; if that also fails, the turn falls back to text and card mode recovers on the next turn. Feishu (open.feishu.cn) is unaffected. The root fix is a stable international route for the daemon host.
