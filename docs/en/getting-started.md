@@ -38,6 +38,8 @@ No Jira needed: create a Feishu app → `tasking init` with enter-enter-enter �
 | `im:resource` | attachment upload (degrades to plain text when missing) |
 | `contact:user.id:readonly` | adds you to a newly created chat (manual chat creation when missing) |
 
+On the **Events & Callbacks** page, **configure both blocks with long connection**: **Event configuration** — add `Receive message im.message.receive_v1`; **Callback configuration** — subscribe to `Card interaction callback card.action.trigger`. Saving the long-connection mode requires the client online — start `tasking start` first, then come back to save.
+
 Version management → create version → publish, admin approves (unapproved apps get 403 from APIs). Create a group (e.g. `tasking-intake`) and add the bot to it. **Personal Feishu needs no third-party approval — fully self-service**; for the complete steps, permission list, event subscription, and an error→missing-step table see [Feishu App Setup](./feishu-app-setup.md). Troubleshooting details: [Feishu quickstart](./feishu-quickstart.md).
 
 ## 1.2 tasking init (just press enter)
