@@ -1262,6 +1262,7 @@ export class DirectSessionManager {
     if (rt.cardsAvailable && rt.cardId !== null && updateCard) {
       try {
         await updateCard.call(this.deps.feishu, rt.cardId, buildTurnCard(turn));
+        rt.flushedTools = turn.tools.length;
         rt.cardUpdateFailures = 0;
         return;
       } catch (e) {
@@ -1273,6 +1274,7 @@ export class DirectSessionManager {
         if (rt.cardUpdateFailures < 2 && rt.cardId !== null) {
           try {
             await updateCard.call(this.deps.feishu, rt.cardId, buildTurnCard(turn));
+            rt.flushedTools = turn.tools.length;
             rt.cardUpdateFailures = 0;
             return;
           } catch (retryError) {
