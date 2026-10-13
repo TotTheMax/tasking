@@ -2147,6 +2147,37 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     expect(toolTexts.filter((t) => t.includes("旧轮工具")).length).toBeLessThanOrEqual(1);
     expect(toolTexts.some((t) => t.includes("新轮工具"))).toBe(true);
   });
+
+  it("sends a short answer as text, not a file, when the completion card create fails", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const port: DirectFeishuPort = {
+      replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+      replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+      replyCardInThread: async () => {
+        throw new TaskingError("feishu_api_status", "feishu replyInThread failed: 504", {
+          status: 504,
+        });
+      },
+      updateCard: (messageId, card) => feishu.updateCard(messageId, card),
+      uploadFile: (content, fileName) => feishu.uploadFile(content, fileName),
+      sendFileMessage: (rootId, fileKey) => feishu.sendFileMessage(rootId, fileKey),
+    };
+    const mgr = new DirectSessionManager({
+      feishu: port,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      spawn: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dc1", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("短回答")]);
+    await mgr.whenIdle();
+    expect(feishu.sent("om_dc1").some((t) => t.includes("短回答"))).toBe(true);
+    expect(feishu.fileMessages).toHaveLength(0);
+  });
 });
 
 describe("DirectSessionManager turn card actions", () => {

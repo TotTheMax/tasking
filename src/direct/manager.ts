@@ -1400,6 +1400,10 @@ export class DirectSessionManager {
     const markdown = `${delivery.answer}\n\n${[delivery.statsLine, delivery.note]
       .filter((part) => part !== "")
       .join("\n")}`.trim();
+    if (markdown.length <= MAX_MESSAGE_CHARS) {
+      await this.replySafe(session.root_id, markdown);
+      return;
+    }
     await this.deliverLongContent(
       session.root_id,
       markdown,
