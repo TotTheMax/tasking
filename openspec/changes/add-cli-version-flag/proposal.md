@@ -22,6 +22,6 @@
 ## Impact
 
 - 代码：`src/cli/index.ts`（顶层参数分发）、`src/cli/help.ts`（顶层帮助）、`src/cli/doctor.ts`（头部输出）
-- 测试：`tests/cli.test.ts`、`tests/cli-commands.test.ts`、`tests/doctor.test.ts`
+- 测试：`tests/cli.test.ts`（顶层分发与帮助文本）、`tests/doctor.test.ts`（doctor 头部版本行）
 - 文档：`README.md`、`README.zh-CN.md`、`docs/en/usage.md`、`docs/zh/usage.md`
 - 无 breaking change：`--version`/`-v` 当前均落入"未知子命令"错误路径，不存在既有行为被覆盖
