@@ -19,7 +19,7 @@
 
 ## 3. S3 同步审批
 
-- [ ] 3.1 审批状态机（写失败测试先：pending 发现→发卡→reply once/always/reject→恢复、超时自动 reject 盖章、重复点击/换卡/缺字段安全应答；再实现，Jira 与直连两投放面共用核心）
+- [x] 3.1 审批状态机（写失败测试先：pending 发现→发卡→reply once/always/reject→恢复、超时自动 reject 盖章、重复点击/换卡/缺字段安全应答；再实现，Jira 与直连两投放面共用核心）
 - [ ] 3.2 Jira 审批卡投放绑定话题（写失败测试先：挂起时经桥接管线发卡到绑定话题、回复后卡片盖章与 turn 恢复；再实现）
 - [ ] 3.3 直连审批卡投放会话话题（写失败测试先：挂起时会话话题出现审批卡、轮次卡片显示等待状态与倒计时、审批后恢复；再实现）
 - [ ] 3.4 姿态翻译（写失败测试先：perm_on→session.update 立即生效、perm_once 一轮后收回、perm toggle/`/auto off` 清空、`/auto on` 持久化跨重启；再替换 manager.ts 的 handlePermissionAction 实现，验证点：ruleset 清空 API 语义与已挂起单子是否被更新覆盖）
