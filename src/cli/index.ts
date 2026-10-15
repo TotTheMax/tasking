@@ -22,6 +22,8 @@ import { loadDotenvIfPresent } from "../config/dotenv.js";
 import { ConfigManager } from "../config/manager.js";
 import { validateStartupConfig } from "../config/validator.js";
 import { DirectSessionManager } from "../direct/manager.js";
+import { defaultApiExec } from "../driver/api-client.js";
+import { collectWorkspaceSessionIds, sweepActiveSessions } from "../driver/sweep.js";
 import { ActivityStore } from "../observability/activity-store.js";
 import { type ConfigRuntimeInfo, buildConfigView } from "../observability/config-view.js";
 import { HttpDashboard } from "../observability/http-dashboard.js";
@@ -32,8 +34,6 @@ import { Scheduler } from "../scheduler/scheduler.js";
 import { TaskingError } from "../shared/errors.js";
 import { classifyOpencodeVersion, probeOpencodeVersion } from "../shared/opencode-version.js";
 import { createInitialState } from "../shared/types.js";
-import { defaultApiExec } from "../driver/api-client.js";
-import { collectWorkspaceSessionIds, sweepActiveSessions } from "../driver/sweep.js";
 import { setLocale, setTranslateWarnLogger, translate } from "../translate/locale.js";
 import { runAttempt } from "../worker/runner.js";
 import { deleteSession } from "../workspace/manager.js";
@@ -280,9 +280,7 @@ async function runStart(args: string[]): Promise<number> {
 
   const sweepIds = new Set(collectWorkspaceSessionIds(configMgr.current.workspace.root));
   if (configMgr.current.feishu.enabled) {
-    const sweepStore = new BindingStore(
-      join(configMgr.current.workspace.root, "bindings.db"),
-    );
+    const sweepStore = new BindingStore(join(configMgr.current.workspace.root, "bindings.db"));
     try {
       for (const s of sweepStore.listDirectSessionsByStatus("running")) {
         if (s.session_id) sweepIds.add(s.session_id);

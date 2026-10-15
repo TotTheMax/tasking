@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  type ApiExecFn,
+  type ApiExecResult,
   buildApiArgs,
   execApi,
-  type ApiExecResult,
-  type ApiExecFn,
 } from "../src/driver/api-client.js";
 
 describe("buildApiArgs", () => {
@@ -16,9 +16,11 @@ describe("buildApiArgs", () => {
   });
 
   it("splits multi-token commands", () => {
-    expect(
-      buildApiArgs({ command: "/usr/local/bin/opencode", operation: "server.info" }),
-    ).toEqual(["/usr/local/bin/opencode", "api", "server.info"]);
+    expect(buildApiArgs({ command: "/usr/local/bin/opencode", operation: "server.info" })).toEqual([
+      "/usr/local/bin/opencode",
+      "api",
+      "server.info",
+    ]);
   });
 
   it("places --server before the operation", () => {
@@ -45,12 +47,7 @@ describe("buildApiArgs", () => {
       operation: "session.permission.reply",
       params: { sessionID: "ses_1", requestID: "per_2" },
     });
-    expect(args.slice(-4)).toEqual([
-      "--param",
-      "sessionID=ses_1",
-      "--param",
-      "requestID=per_2",
-    ]);
+    expect(args.slice(-4)).toEqual(["--param", "sessionID=ses_1", "--param", "requestID=per_2"]);
   });
 
   it("serializes data body as JSON", () => {
@@ -83,42 +80,45 @@ describe("execApi", () => {
   });
 
   it("returns null body for empty stdout", async () => {
-    const res = await execApi(
-      { command: "opencode", operation: "session.remove" },
-      async () => ({ exitCode: 0, stdout: "", stderr: "", timedOut: false }),
-    );
+    const res = await execApi({ command: "opencode", operation: "session.remove" }, async () => ({
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+    }));
     expect(res).toBeNull();
   });
 
   it("throws with stderr detail on non-zero exit", async () => {
     await expect(
-      execApi(
-        { command: "opencode", operation: "session.get" },
-        async () => ({
-          exitCode: 1,
-          stdout: "",
-          stderr: "boom",
-          timedOut: false,
-        }),
-      ),
+      execApi({ command: "opencode", operation: "session.get" }, async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: "boom",
+        timedOut: false,
+      })),
     ).rejects.toThrow(/boom/);
   });
 
   it("throws a recognizable error on timeout", async () => {
     await expect(
-      execApi(
-        { command: "opencode", operation: "session.get" },
-        async () => ({ exitCode: null, stdout: "", stderr: "", timedOut: true }),
-      ),
+      execApi({ command: "opencode", operation: "session.get" }, async () => ({
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        timedOut: true,
+      })),
     ).rejects.toThrow(/timed out/i);
   });
 
   it("throws when stdout is not JSON on success exit", async () => {
     await expect(
-      execApi(
-        { command: "opencode", operation: "server.info" },
-        async () => ({ exitCode: 0, stdout: "not json", stderr: "", timedOut: false }),
-      ),
+      execApi({ command: "opencode", operation: "server.info" }, async () => ({
+        exitCode: 0,
+        stdout: "not json",
+        stderr: "",
+        timedOut: false,
+      })),
     ).rejects.toThrow();
   });
 });

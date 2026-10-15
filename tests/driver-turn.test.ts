@@ -1,14 +1,11 @@
 import { describe, expect, it } from "vitest";
-import {
-  type ApiExecFn,
-  type ApiExecResult,
-} from "../src/driver/api-client.js";
+import type { ApiExecFn, ApiExecResult } from "../src/driver/api-client.js";
 import type { SessionMessage } from "../src/driver/session-ops.js";
 import {
+  type TurnDriverEvent,
   diffMessagesToEvents,
   mapContentEntry,
   runTurn,
-  type TurnDriverEvent,
 } from "../src/driver/turn-driver.js";
 
 describe("mapContentEntry", () => {
@@ -103,7 +100,7 @@ interface Script {
 
 function scriptExec(scripts: Script[]): { exec: ApiExecFn; calls: string[] } {
   const calls: string[] = [];
-  let i = 0;
+  const i = 0;
   const byOp = new Map<string, Script[]>();
   for (const s of scripts) {
     const list = byOp.get(s.operation) ?? [];
@@ -301,7 +298,8 @@ describe("runTurn timers and interrupt ladder", () => {
     const exec: ApiExecFn = async (args) => {
       const op = args[2] ?? "";
       calls.push(op);
-      if (op === "session.prompt") return { exitCode: 0, stdout: '{"data":{}}', stderr: "", timedOut: false };
+      if (op === "session.prompt")
+        return { exitCode: 0, stdout: '{"data":{}}', stderr: "", timedOut: false };
       if (op === "session.permission.list") {
         return {
           exitCode: 0,

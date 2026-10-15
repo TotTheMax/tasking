@@ -1,4 +1,4 @@
-import { execApi, type ApiExecFn } from "./api-client.js";
+import { type ApiExecFn, execApi } from "./api-client.js";
 
 export interface SessionOpBase {
   command: string;

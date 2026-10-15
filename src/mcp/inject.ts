@@ -54,7 +54,7 @@ export function injectMcpConfig(workspacePath: string, tracker: TrackerConfig): 
   const mcpConfig = buildMcpConfig(tracker);
   const existingMcp = (existing.mcp as Record<string, unknown>) ?? {};
   const existingServers = (existingMcp.servers as Record<string, unknown>) ?? {};
-  const newServers = ((mcpConfig.mcp as Record<string, unknown>).servers) as Record<string, unknown>;
+  const newServers = (mcpConfig.mcp as Record<string, unknown>).servers as Record<string, unknown>;
   existingMcp.servers = { ...existingServers, ...newServers };
   existing.mcp = existingMcp;
 

@@ -1,5 +1,9 @@
-import { ApiError, execApi, type ApiExecFn } from "./api-client.js";
+import { ApiError, type ApiExecFn, execApi } from "./api-client.js";
 import {
+  type PendingPermission,
+  type PermissionDecision,
+  type SessionMessage,
+  type SessionOpBase,
   createSession,
   getSession,
   interruptSession,
@@ -7,16 +11,14 @@ import {
   listSessionMessages,
   promptSession,
   replyPermission,
-  type PendingPermission,
-  type PermissionDecision,
-  type SessionMessage,
-  type SessionOpBase,
 } from "./session-ops.js";
 
 export interface TurnDriverEvent {
   type: string;
   text?: string;
   tool?: string;
+  title?: string;
+  error?: string;
   input?: Record<string, unknown>;
   output?: string;
   exit?: number;
@@ -24,6 +26,7 @@ export interface TurnDriverEvent {
   durationMs?: number;
   status?: string;
   usage?: { input_tokens: number; output_tokens: number; total_tokens: number };
+  tokens?: { input: number; output: number; total: number };
 }
 
 export interface TurnUsage {
@@ -59,11 +62,7 @@ export function mapContentEntry(
         if (typeof metadata.truncated === "boolean") evt.truncated = metadata.truncated;
       }
       const time = state.time as Record<string, unknown> | undefined;
-      if (
-        time &&
-        typeof time.created === "number" &&
-        typeof time.completed === "number"
-      ) {
+      if (time && typeof time.created === "number" && typeof time.completed === "number") {
         evt.durationMs = Math.max(0, time.completed - time.created);
       }
     }
@@ -72,11 +71,13 @@ export function mapContentEntry(
   return [];
 }
 
-export function messageTokensUsage(
-  message: SessionMessage,
-): { usage: TurnUsage; hasTokens: boolean } {
+export function messageTokensUsage(message: SessionMessage): {
+  usage: TurnUsage;
+  hasTokens: boolean;
+} {
   const t = message.tokens;
-  if (!t) return { usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }, hasTokens: false };
+  if (!t)
+    return { usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }, hasTokens: false };
   const total = t.input + t.output + t.reasoning;
   return {
     usage: { input_tokens: t.input, output_tokens: t.output, total_tokens: total },
@@ -112,7 +113,15 @@ export function diffMessagesToEvents(
       usage.input_tokens += msgUsage.input_tokens;
       usage.output_tokens += msgUsage.output_tokens;
       usage.total_tokens += msgUsage.total_tokens;
-      events.push({ type: "step_usage", usage: msgUsage });
+      events.push({
+        type: "step_usage",
+        usage: msgUsage,
+        tokens: {
+          input: msgUsage.input_tokens,
+          output: msgUsage.output_tokens,
+          total: msgUsage.total_tokens,
+        },
+      });
     }
   }
   return { events, usage, lastActivityAt };
@@ -192,7 +201,9 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
   let pendingSince: number | null = null;
   let waitingNotified = false;
 
-  const settleTimeout = async (reason: "turn_timeout" | "inactivity_timeout"): Promise<TurnResult> => {
+  const settleTimeout = async (
+    reason: "turn_timeout" | "inactivity_timeout",
+  ): Promise<TurnResult> => {
     try {
       await interruptSession(opts.exec, opts.base, sessionId);
     } catch {

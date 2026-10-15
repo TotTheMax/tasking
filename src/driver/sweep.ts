@@ -1,8 +1,8 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Logger } from "../observability/logger.js";
-import { execApi, type ApiExecFn } from "./api-client.js";
-import { interruptSession, type SessionOpBase } from "./session-ops.js";
+import { type ApiExecFn, execApi } from "./api-client.js";
+import { type SessionOpBase, interruptSession } from "./session-ops.js";
 
 const SIDECAR_FILENAME = ".tasking-session.json";
 

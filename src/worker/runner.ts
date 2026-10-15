@@ -6,9 +6,9 @@ import type {
   TrackerConfig,
 } from "../config/config-types.js";
 import type { WorkspaceConfig } from "../config/config-types.js";
-import { defaultApiExec, type ApiExecFn } from "../driver/api-client.js";
-import { runTurn, type TurnDriverEvent } from "../driver/turn-driver.js";
+import { type ApiExecFn, defaultApiExec } from "../driver/api-client.js";
 import { switchSessionAgent } from "../driver/session-ops.js";
+import { type TurnDriverEvent, runTurn } from "../driver/turn-driver.js";
 import { injectMcpConfig } from "../mcp/inject.js";
 import type { ActivityEvent } from "../observability/activity-store.js";
 import type { Logger } from "../observability/logger.js";
@@ -435,7 +435,12 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
       const turnNo = turn;
       if (knownAgent !== null && resolved.agent !== knownAgent && sessionId) {
         try {
-          await switchSessionAgent(apiExec, { command: config.opencode.command, serverUrl: config.opencode.server_url }, sessionId, resolved.agent);
+          await switchSessionAgent(
+            apiExec,
+            { command: config.opencode.command, serverUrl: config.opencode.server_url },
+            sessionId,
+            resolved.agent,
+          );
         } catch (e) {
           logger.warn("session agent switch failed", {
             task_identifier: task.identifier,
@@ -547,7 +552,11 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
         lastError = `turn ${turn} timed out (${result.error ?? "turn_timeout"})`;
         break;
       }
-      if (result.status === "failed" || result.status === "error" || result.status === "interrupted") {
+      if (
+        result.status === "failed" ||
+        result.status === "error" ||
+        result.status === "interrupted"
+      ) {
         lastStatus = "failed";
         lastError = result.error ?? `turn ${turn} ${result.status}`;
         break;

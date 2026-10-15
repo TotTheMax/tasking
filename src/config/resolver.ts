@@ -295,11 +295,7 @@ export function resolveConfig(
       typeof opencodeRaw.auto_approve === "boolean"
         ? opencodeRaw.auto_approve
         : DEFAULTS.opencode.auto_approve,
-    poll_interval_ms: asNumber(
-      opencodeRaw.poll_interval_ms,
-      DEFAULTS.opencode.poll_interval_ms,
-      1,
-    ),
+    poll_interval_ms: asNumber(opencodeRaw.poll_interval_ms, DEFAULTS.opencode.poll_interval_ms, 1),
     permission_timeout_ms: asNumber(
       opencodeRaw.permission_timeout_ms,
       DEFAULTS.opencode.permission_timeout_ms,

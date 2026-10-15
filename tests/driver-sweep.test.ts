@@ -3,18 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ApiExecFn, ApiExecResult } from "../src/driver/api-client.js";
-import {
-  collectWorkspaceSessionIds,
-  sweepActiveSessions,
-} from "../src/driver/sweep.js";
-import { writeSessionSidecar } from "../src/workspace/manager.js";
+import { collectWorkspaceSessionIds, sweepActiveSessions } from "../src/driver/sweep.js";
 import { ConsoleLogger } from "../src/observability/logger.js";
+import { writeSessionSidecar } from "../src/workspace/manager.js";
 
 const logger = new ConsoleLogger({}, () => {});
 
-function responder(
-  routes: Record<string, string | Error>,
-): { exec: ApiExecFn; calls: string[] } {
+function responder(routes: Record<string, string | Error>): { exec: ApiExecFn; calls: string[] } {
   const calls: string[] = [];
   const exec: ApiExecFn = async (args) => {
     const op = args[2] ?? "";

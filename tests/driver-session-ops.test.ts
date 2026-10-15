@@ -36,9 +36,7 @@ const base = { command: "opencode" };
 
 describe("createSession", () => {
   it("sends location, model ref, agent and permissive ruleset", async () => {
-    const { exec, captured } = recorder([
-      '{"data":{"id":"ses_1","location":{"directory":"/w"}}}',
-    ]);
+    const { exec, captured } = recorder(['{"data":{"id":"ses_1","location":{"directory":"/w"}}}']);
     const session = await createSession(exec, {
       ...base,
       directory: "/w",
@@ -53,7 +51,11 @@ describe("createSession", () => {
     const body = JSON.parse(captured.args[0]?.[dataIdx + 1] ?? "{}");
     expect(captured.args[0]?.slice(0, 3)).toEqual(["opencode", "api", "session.create"]);
     expect(body.location).toEqual({ directory: "/w" });
-    expect(body.model).toEqual({ id: "glm-5.3", providerID: "zhipuai-coding-plan", variant: "high" });
+    expect(body.model).toEqual({
+      id: "glm-5.3",
+      providerID: "zhipuai-coding-plan",
+      variant: "high",
+    });
     expect(body.agent).toBe("build");
     expect(body.title).toBe("TAS-1");
     expect(body.permissions).toEqual([{ action: "*", resource: "*", effect: "allow" }]);

@@ -26,9 +26,7 @@ import { readSessionSidecar, resolveWorkspacePath } from "../src/workspace/manag
 
 const logger = new ConsoleLogger({}, () => {});
 
-function makeConfig(
-  root: string,
-): {
+function makeConfig(root: string): {
   opencode: OpencodeConfig;
   hooks: HooksConfig;
   agent: AgentConfig;
@@ -1349,7 +1347,13 @@ describe("runAttempt activity capture", () => {
       const { exec } = apiScript({
         tokens: null,
         messages: [
-          { content: [{ type: "text", text: "working" }, { type: "tool", tool: "read" }], tokens: null },
+          {
+            content: [
+              { type: "text", text: "working" },
+              { type: "tool", tool: "read" },
+            ],
+            tokens: null,
+          },
         ],
       });
       const activity: ActivityEvent[] = [];
@@ -1453,7 +1457,6 @@ describe("runAttempt activity capture", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
-
 });
 
 describe("step_usage events", () => {

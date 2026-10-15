@@ -1,7 +1,7 @@
-import { mkdirSync, writeFileSync, chmodSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readFileSync } from "node:fs";
 
 export interface OpencodeMockResponse {
   op: string;

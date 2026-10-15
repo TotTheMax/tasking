@@ -21,13 +21,13 @@
 
 - [x] 3.1 审批状态机（写失败测试先：pending 发现→发卡→reply once/always/reject→恢复、超时自动 reject 盖章、重复点击/换卡/缺字段安全应答；再实现，Jira 与直连两投放面共用核心）
 - [ ] 3.2 Jira 审批卡投放绑定话题（写失败测试先：挂起时经桥接管线发卡到绑定话题、回复后卡片盖章与 turn 恢复；再实现）
-- [ ] 3.3 直连审批卡投放会话话题（写失败测试先：挂起时会话话题出现审批卡、轮次卡片显示等待状态与倒计时、审批后恢复；再实现）
-- [ ] 3.4 姿态翻译（写失败测试先：perm_on→session.update 立即生效、perm_once 一轮后收回、perm toggle/`/auto off` 清空、`/auto on` 持久化跨重启；再替换 manager.ts 的 handlePermissionAction 实现，验证点：ruleset 清空 API 语义与已挂起单子是否被更新覆盖）
+- [x] 3.3 直连审批卡投放会话话题（写失败测试先：挂起时会话话题出现审批卡、轮次卡片显示等待状态与倒计时、审批后恢复；再实现）
+- [x] 3.4 姿态翻译（写失败测试先：perm_on→session.update 立即生效、perm_once 一轮后收回、perm toggle/`/auto off` 清空、`/auto on` 持久化跨重启；再替换 manager.ts 的 handlePermissionAction 实现，验证点：ruleset 清空 API 语义与已挂起单子是否被更新覆盖）
 - [ ] 3.5 回路测试（tests/card-roundtrip.test.ts 增审批卡与姿态按钮三场景：再点一次/换卡后点/payload 缺字段）
 
 ## 4. S4 直连切换
 
-- [ ] 4.1 直连执行切驱动器（写失败测试先：首 turn/续跑经驱动器、auto_approve 项目覆盖映射 ruleset、日志 `direct turn starting` 字段更新；再改 manager.ts 执行路径）
+- [x] 4.1 直连执行切驱动器（写失败测试先：首 turn/续跑经驱动器、auto_approve 项目覆盖映射 ruleset、日志 `direct turn starting` 字段更新；再改 manager.ts 执行路径）
 - [ ] 4.2 卡片数据源切轮询 diff（写失败测试先：工具面板/文本/stats 由 diff 事件驱动、token 展示合计口径、等待审批标记；再改卡片刷新链路）
 - [ ] 4.3 `/stop`/`/done` 语义（写失败测试先：/stop 走中断梯子并作废挂起审批、/done 删会话；再实现）
 - [ ] 4.4 合并队列保持（写失败测试先：运行中追问排队合并续跑语义不变、daemon 中止丢队列行为不变；再回归验证既有用例）

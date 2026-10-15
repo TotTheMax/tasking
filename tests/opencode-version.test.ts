@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  classifyOpencodeVersion,
   SUPPORTED_RANGE,
   VALIDATED_MINOR,
+  classifyOpencodeVersion,
 } from "../src/shared/opencode-version.js";
 
 describe("classifyOpencodeVersion", () => {

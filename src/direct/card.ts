@@ -351,3 +351,84 @@ export function buildTurnCard(state: TurnCardState): unknown {
   }
   return card;
 }
+
+export interface ApprovalCardRequest {
+  rootId: string;
+  turn: number;
+  requestID: string;
+  action: string;
+  resources: string[];
+  save?: string[];
+}
+
+export type ApprovalCardResolution =
+  | { state: "replied"; decision: "once" | "always" | "reject" }
+  | { state: "expired" | "cancelled" | "external" };
+
+function approvalButton(
+  label: string,
+  action: string,
+  req: ApprovalCardRequest,
+  type: "default" | "primary" | "danger" = "default",
+): Record<string, unknown> {
+  return {
+    tag: "button",
+    text: { tag: "plain_text", content: label },
+    type,
+    size: "medium",
+    behaviors: [
+      {
+        type: "callback",
+        value: {
+          action,
+          root_id: req.rootId,
+          turn: req.turn,
+          request_id: req.requestID,
+        },
+      },
+    ],
+  };
+}
+
+const APPROVAL_STAMP: Record<string, string> = {
+  "replied:once": "✅ 已允许",
+  "replied:always": "♾️ 已始终允许",
+  "replied:reject": "❌ 已拒绝",
+  expired: "⏰ 超时已拒绝",
+  cancelled: "⛔ 已随任务中断",
+  external: "🕓 已在其他端处理",
+};
+
+export function buildApprovalCard(
+  req: ApprovalCardRequest,
+  resolution?: ApprovalCardResolution,
+): Record<string, unknown> {
+  const resources = req.resources.map((r) => `\`${r}\``).join(" · ");
+  const saveNote =
+    req.save && req.save.length > 0
+      ? `\n始终允许将按模式保存：${req.save.map((s) => `\`${s}\``).join("、")}`
+      : "";
+  const elements: Array<Record<string, unknown>> = [
+    {
+      tag: "markdown",
+      content: `🔐 **等待审批** · ${req.action}\n${resources}${saveNote}`,
+    },
+  ];
+  if (resolution) {
+    const key =
+      resolution.state === "replied" ? `replied:${resolution.decision}` : resolution.state;
+    elements.push({ tag: "markdown", content: `— ${APPROVAL_STAMP[key] ?? "已处理"} —` });
+  } else {
+    elements.push(approvalButton("✅ 允许一次", "approve_once", req, "primary"));
+    elements.push(approvalButton("♾️ 始终允许", "approve_always", req));
+    elements.push(approvalButton("✖ 拒绝", "approve_reject", req, "danger"));
+  }
+  return {
+    config: { update_multi: true },
+    header: {
+      title: { tag: "plain_text", content: "权限审批" },
+      template: "blue",
+    },
+    elements,
+  };
+}

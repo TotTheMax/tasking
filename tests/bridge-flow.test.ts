@@ -9,7 +9,7 @@ import { BindingStore } from "../src/bridge/binding-store.js";
 import { CommentBridge } from "../src/bridge/comment-bridge.js";
 import type { EffectiveConfig, FeishuConfig, TrackerConfig } from "../src/config/config-types.js";
 import { resolveConfig } from "../src/config/resolver.js";
-import { DirectSessionManager, type DirectSpawnFn } from "../src/direct/manager.js";
+import { DirectSessionManager } from "../src/direct/manager.js";
 import { ConsoleLogger } from "../src/observability/logger.js";
 import { Scheduler } from "../src/scheduler/scheduler.js";
 import type { AttemptResult } from "../src/worker/runner.js";
@@ -256,7 +256,9 @@ interface Harness {
 }
 
 async function createHarness(
-  over?: HarnessOverrides & { directSpawn?: DirectSpawnFn },
+  over?: HarnessOverrides & {
+    directSpawn?: import("../src/direct/driver.js").DirectTurnDriver;
+  },
 ): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), "tasking-flow-"));
   const bindings = new BindingStore(join(root, "b.db"));
@@ -292,7 +294,7 @@ async function createHarness(
       store: bindings,
       config: () => config,
       logger,
-      spawn: over.directSpawn,
+      turnDriver: over.directSpawn,
     });
     directManager.start();
   }
@@ -601,22 +603,28 @@ describe("E2E flow: Feishu /chat direct session", () => {
 
   function makeDirectHarness(projectDir: string) {
     const spawnCalls: DirectSpawnRecord[] = [];
-    const directSpawn: DirectSpawnFn = async (cmd, cwd, _t, _i, _s, onEvent) => {
+    const directSpawn: import("../src/direct/driver.js").DirectTurnDriver = async (request) => {
+      const cmd = [
+        "opencode",
+        "run",
+        "--dir",
+        request.directory,
+        ...(request.sessionId ? ["-s", request.sessionId] : []),
+        ...(request.autoApprove ? ["--auto"] : []),
+        request.prompt,
+      ];
+      const cwd = request.directory;
       spawnCalls.push({ cmd, cwd });
-      onEvent?.({
+      request.onEvent?.({
         type: "text",
         text: `回执 ${spawnCalls.length}`,
-        sessionId: `ses_direct${spawnCalls.length}`,
       });
       return {
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-        timedOut: false,
-        sessionAndUsage: {
-          session_id: `ses_direct${spawnCalls.length}`,
-          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
-        },
+        status: "succeeded",
+        sessionId: `ses_direct${spawnCalls.length}`,
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        error: null,
+        postureOpened: request.autoApprove,
       };
     };
     return createHarness({
@@ -718,9 +726,9 @@ describe("E2E flow: Feishu /chat direct session", () => {
 describe("E2E flow: /chat direct session turn cards", () => {
   function makeCardHarness(projectDir: string) {
     let spawnCount = 0;
-    const directSpawn: DirectSpawnFn = async (_cmd, _cwd, _t, _i, _s, onEvent) => {
+    const directSpawn: import("../src/direct/driver.js").DirectTurnDriver = async (request) => {
       spawnCount++;
-      onEvent?.({
+      request.onEvent?.({
         type: "tool_use",
         tool: "bash",
         title: "npm test",
@@ -730,16 +738,13 @@ describe("E2E flow: /chat direct session turn cards", () => {
         output: "PASS tests/card.test.ts",
         durationMs: 42,
       });
-      onEvent?.({ type: "text", text: `跑完了 ${spawnCount}`, sessionId: `ses_card${spawnCount}` });
+      request.onEvent?.({ type: "text", text: `跑完了 ${spawnCount}` });
       return {
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-        timedOut: false,
-        sessionAndUsage: {
-          session_id: `ses_card${spawnCount}`,
-          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-        },
+        status: "succeeded",
+        sessionId: `ses_card${spawnCount}`,
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        error: null,
+        postureOpened: request.autoApprove,
       };
     };
     return createHarness({

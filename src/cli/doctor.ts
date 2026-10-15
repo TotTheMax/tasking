@@ -13,12 +13,12 @@ import { JiraTracker } from "../adapters/jira/tracker.js";
 import type { FeishuConfig, TrackerConfig } from "../config/config-types.js";
 import { loadDotenvIfPresent } from "../config/dotenv.js";
 import { ConfigManager } from "../config/manager.js";
-import { setLocale, translate } from "../translate/locale.js";
 import {
-  classifyOpencodeVersion,
   type OpencodeAuthProbe,
   type OpencodeServiceProbe,
+  classifyOpencodeVersion,
 } from "../shared/opencode-version.js";
+import { setLocale, translate } from "../translate/locale.js";
 import { readTaskingVersion } from "./version.js";
 import { resolveWorkflowPathOrReport } from "./workflow-path.js";
 
@@ -75,7 +75,10 @@ function defaultOpencodeAuth(): OpencodeAuthProbe {
     const res = spawnSync("opencode", ["auth", "list"], { timeout: 8000, encoding: "utf8" });
     if (res.status !== 0) {
       const err = `${res.stderr ?? ""}`.trim();
-      return { ok: false, detail: err === "" ? "opencode auth list 失败" : (err.split("\n")[0] ?? "") };
+      return {
+        ok: false,
+        detail: err === "" ? "opencode auth list 失败" : (err.split("\n")[0] ?? ""),
+      };
     }
     const text = `${res.stdout ?? ""}`.trim();
     if (text === "") return { ok: false, detail: "无已认证 provider（opencode auth login）" };

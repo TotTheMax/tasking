@@ -56,7 +56,7 @@ describe("buildMcpConfig", () => {
   it("includes basic auth env vars", () => {
     const config = buildMcpConfig(makeTracker({ auth_mode: "basic", api_user: "u@e.com" }));
     const servers = (config.mcp as Record<string, unknown>).servers as Record<string, unknown>;
-    const env = ((servers.jira as Record<string, unknown>).environment) as Record<string, string>;
+    const env = (servers.jira as Record<string, unknown>).environment as Record<string, string>;
     expect(env.JIRA_AUTH_MODE).toBe("basic");
     expect(env.JIRA_API_USER).toBe("u@e.com");
   });
@@ -97,9 +97,7 @@ describe("injectMcpConfig", () => {
 
   it("never writes a permissions key", () => {
     injectMcpConfig(workspace, makeTracker());
-    const config = JSON.parse(
-      readFileSync(join(workspace, ".opencode", "opencode.json"), "utf8"),
-    );
+    const config = JSON.parse(readFileSync(join(workspace, ".opencode", "opencode.json"), "utf8"));
     expect(config.permissions).toBeUndefined();
   });
 
@@ -107,10 +105,7 @@ describe("injectMcpConfig", () => {
     const dir = join(workspace, ".opencode");
     mkdirSync(dir, { recursive: true });
     const userPerms = [{ action: "shell", resource: "*", effect: "ask" }];
-    writeFileSync(
-      join(dir, "opencode.json"),
-      JSON.stringify({ permissions: userPerms }),
-    );
+    writeFileSync(join(dir, "opencode.json"), JSON.stringify({ permissions: userPerms }));
 
     injectMcpConfig(workspace, makeTracker());
 
