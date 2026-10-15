@@ -30,6 +30,7 @@ import { ConsoleLogger, type Logger } from "../observability/logger.js";
 import { TerminalDashboard } from "../observability/terminal-dashboard.js";
 import { Scheduler } from "../scheduler/scheduler.js";
 import { TaskingError } from "../shared/errors.js";
+import { classifyOpencodeVersion, probeOpencodeVersion } from "../shared/opencode-version.js";
 import { createInitialState } from "../shared/types.js";
 import { setLocale, setTranslateWarnLogger, translate } from "../translate/locale.js";
 import { runAttempt } from "../worker/runner.js";
@@ -191,6 +192,20 @@ async function runStart(args: string[]): Promise<number> {
   if (!existsSync(workflowPath)) {
     console.error(`missing workflow file: ${workflowPath}`);
     return 1;
+  }
+
+  const ocVersion = probeOpencodeVersion();
+  const ocGate = ocVersion === null ? null : classifyOpencodeVersion(ocVersion);
+  if (ocVersion === null || ocGate?.hardFail) {
+    console.error(
+      ocVersion === null
+        ? "未在 PATH 找到 opencode（tasking 0.7 需要 opencode >=2.0 <3）——安装见 https://opencode.ai"
+        : ocGate?.message,
+    );
+    return 1;
+  }
+  if (ocGate?.status === "unvalidated") {
+    console.error(ocGate.message);
   }
 
   loadDotenvIfPresent(dirname(workflowPath));

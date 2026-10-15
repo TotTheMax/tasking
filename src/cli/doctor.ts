@@ -14,6 +14,11 @@ import type { FeishuConfig, TrackerConfig } from "../config/config-types.js";
 import { loadDotenvIfPresent } from "../config/dotenv.js";
 import { ConfigManager } from "../config/manager.js";
 import { setLocale, translate } from "../translate/locale.js";
+import {
+  classifyOpencodeVersion,
+  type OpencodeAuthProbe,
+  type OpencodeServiceProbe,
+} from "../shared/opencode-version.js";
 import { readTaskingVersion } from "./version.js";
 import { resolveWorkflowPathOrReport } from "./workflow-path.js";
 
@@ -28,6 +33,8 @@ interface DoctorItem {
 export interface DoctorDeps {
   fetchImpl?: typeof fetch;
   opencodeVersion?: () => string | null;
+  opencodeService?: () => OpencodeServiceProbe;
+  opencodeAuth?: () => OpencodeAuthProbe;
 }
 
 const ICONS: Record<DoctorStatus, string> = {
@@ -45,6 +52,36 @@ function defaultOpencodeVersion(): string | null {
     return text === "" ? "unknown" : (text.split("\n")[0] ?? "unknown");
   } catch {
     return null;
+  }
+}
+
+function defaultOpencodeService(): OpencodeServiceProbe {
+  try {
+    const st = spawnSync("opencode", ["service", "status"], { timeout: 5000, encoding: "utf8" });
+    const text = `${st.stdout ?? ""}${st.stderr ?? ""}`.trim();
+    const urlMatch = text.match(/https?:\/\/\S+/);
+    if (!urlMatch) return { status: "stopped" };
+    const url = urlMatch[0] ?? "";
+    const info = spawnSync("opencode", ["api", "server.info"], { timeout: 8000, encoding: "utf8" });
+    const ok = info.status === 0 && `${info.stdout ?? ""}`.includes('"version"');
+    return ok ? { status: "running", url } : { status: "unreachable", url };
+  } catch {
+    return { status: "stopped" };
+  }
+}
+
+function defaultOpencodeAuth(): OpencodeAuthProbe {
+  try {
+    const res = spawnSync("opencode", ["auth", "list"], { timeout: 8000, encoding: "utf8" });
+    if (res.status !== 0) {
+      const err = `${res.stderr ?? ""}`.trim();
+      return { ok: false, detail: err === "" ? "opencode auth list 失败" : (err.split("\n")[0] ?? "") };
+    }
+    const text = `${res.stdout ?? ""}`.trim();
+    if (text === "") return { ok: false, detail: "无已认证 provider（opencode auth login）" };
+    return { ok: true, detail: text.split("\n")[0] ?? "" };
+  } catch {
+    return { ok: false, detail: "opencode 认证探测失败" };
   }
 }
 
@@ -189,15 +226,44 @@ export async function runDoctor(
   }
 
   const ocVersion = opencodeVersion();
-  items.push(
-    ocVersion === null
-      ? {
-          name: "opencode",
+  if (ocVersion === null) {
+    items.push({
+      name: "opencode",
+      status: "fail",
+      detail: "未在 PATH 找到 opencode——安装见 https://opencode.ai",
+    });
+  } else {
+    const gate = classifyOpencodeVersion(ocVersion);
+    items.push({
+      name: "opencode 版本",
+      status: gate.hardFail ? "fail" : "pass",
+      detail: gate.message ?? `在 PATH（${gate.normalized ?? ocVersion}）`,
+    });
+    if (!gate.hardFail) {
+      const service = (deps.opencodeService ?? defaultOpencodeService)();
+      if (service.status === "running") {
+        items.push({ name: "opencode 服务", status: "pass", detail: service.url ?? "" });
+      } else if (service.status === "unreachable") {
+        items.push({
+          name: "opencode 服务",
           status: "fail",
-          detail: "未在 PATH 找到 opencode——安装见 https://opencode.ai",
-        }
-      : { name: "opencode", status: "pass", detail: `在 PATH（${ocVersion}）` },
-  );
+          detail: `服务已注册但不可达（${service.url ?? ""}）——尝试 opencode service restart`,
+        });
+      } else {
+        items.push({
+          name: "opencode 服务",
+          status: "info",
+          detail: "后台服务未运行——daemon 启动时会自动拉起",
+        });
+      }
+      const auth = (deps.opencodeAuth ?? defaultOpencodeAuth)();
+      items.push({
+        name: "opencode 认证",
+        status: auth.ok ? "pass" : "fail",
+        detail: auth.ok ? auth.detail : `${auth.detail}——模型调用将失败`,
+      });
+    }
+  }
 
   output.write(translate("tasking doctor — 全链路只读体检\n\n"));
   for (const item of items) {

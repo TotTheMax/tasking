@@ -67,8 +67,11 @@ function writeWorkflow(dir: string, frontmatter: string): void {
   writeFileSync(join(dir, "WORKFLOW.md"), `---\n${frontmatter}\n---\n\n# body\n`, "utf8");
 }
 
-const ocOk = (): string => "0.6.0";
+const ocOk = (): string => "2.0.29";
 const ocMissing = (): null => null;
+const svcRunning = () => ({ status: "running" as const, url: "http://127.0.0.1:49374" });
+const svcStopped = () => ({ status: "stopped" as const });
+const authOk = () => ({ ok: true, detail: "zhipuai-coding-plan" });
 
 describe("tasking doctor", () => {
   const dirs: string[] = [];
@@ -191,6 +194,85 @@ describe("tasking doctor", () => {
     const code = await runDoctor(dir, stream, { opencodeVersion: ocMissing });
     expect(code).toBe(1);
     expect(content()).toContain("opencode");
+  });
+
+  it("fails when opencode major version is unsupported", async () => {
+    const dir = tempDir();
+    writeWorkflow(dir, ["tracker:", "  kind: none"].join("\n"));
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      opencodeVersion: () => "1.19.0",
+      opencodeService: svcRunning,
+      opencodeAuth: authOk,
+    });
+    expect(code).toBe(1);
+    expect(content()).toContain("opencode upgrade --major");
+  });
+
+  it("warns but passes on unvalidated 2.x minors", async () => {
+    const dir = tempDir();
+    writeWorkflow(dir, ["tracker:", "  kind: none"].join("\n"));
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      opencodeVersion: () => "2.3.1",
+      opencodeService: svcRunning,
+      opencodeAuth: authOk,
+    });
+    expect(code).toBe(0);
+    expect(content()).toContain("未经验证");
+  });
+
+  it("passes cleanly on validated 2.0.x", async () => {
+    const dir = tempDir();
+    writeWorkflow(dir, ["tracker:", "  kind: none"].join("\n"));
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      opencodeVersion: ocOk,
+      opencodeService: svcRunning,
+      opencodeAuth: authOk,
+    });
+    expect(code).toBe(0);
+    expect(content()).not.toContain("未经验证");
+    expect(content()).toContain("http://127.0.0.1:49374");
+  });
+
+  it("reports stopped service as info without failing", async () => {
+    const dir = tempDir();
+    writeWorkflow(dir, ["tracker:", "  kind: none"].join("\n"));
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      opencodeVersion: ocOk,
+      opencodeService: svcStopped,
+      opencodeAuth: authOk,
+    });
+    expect(code).toBe(0);
+    expect(content()).toContain("未运行");
+  });
+
+  it("fails when the registered service is unreachable", async () => {
+    const dir = tempDir();
+    writeWorkflow(dir, ["tracker:", "  kind: none"].join("\n"));
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      opencodeVersion: ocOk,
+      opencodeService: () => ({ status: "unreachable" as const, url: "http://127.0.0.1:1" }),
+      opencodeAuth: authOk,
+    });
+    expect(code).toBe(1);
+    expect(content()).toContain("服务");
+  });
+
+  it("fails when opencode auth is unavailable", async () => {
+    const dir = tempDir();
+    writeWorkflow(dir, ["tracker:", "  kind: none"].join("\n"));
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      opencodeVersion: ocOk,
+      opencodeService: svcRunning,
+      opencodeAuth: () => ({ ok: false, detail: "无已认证 provider" }),
+    });
+    expect(code).toBe(1);
+    expect(content()).toContain("认证");
   });
 
   it("fails feishu credential check when token request rejects", async () => {
