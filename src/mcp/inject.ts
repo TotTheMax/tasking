@@ -17,14 +17,17 @@ export function buildMcpConfig(tracker: TrackerConfig): Record<string, unknown> 
   const authMode = tracker.auth_mode;
   return {
     mcp: {
-      jira: {
-        type: "local",
-        command: ["node", scriptPath],
-        environment: {
-          JIRA_ENDPOINT: endpoint,
-          JIRA_AUTH_MODE: authMode,
-          JIRA_API_KEY: apiKey,
-          JIRA_API_USER: apiUser,
+      servers: {
+        jira: {
+          type: "local",
+          command: ["node", scriptPath],
+          environment: {
+            JIRA_ENDPOINT: endpoint,
+            JIRA_AUTH_MODE: authMode,
+            JIRA_API_KEY: apiKey,
+            JIRA_API_USER: apiUser,
+          },
+          codemode: false,
         },
       },
     },
@@ -50,7 +53,10 @@ export function injectMcpConfig(workspacePath: string, tracker: TrackerConfig): 
 
   const mcpConfig = buildMcpConfig(tracker);
   const existingMcp = (existing.mcp as Record<string, unknown>) ?? {};
-  existing.mcp = { ...existingMcp, ...(mcpConfig.mcp as Record<string, unknown>) };
+  const existingServers = (existingMcp.servers as Record<string, unknown>) ?? {};
+  const newServers = ((mcpConfig.mcp as Record<string, unknown>).servers) as Record<string, unknown>;
+  existingMcp.servers = { ...existingServers, ...newServers };
+  existing.mcp = existingMcp;
 
   writeFileSync(configPath, JSON.stringify(existing, null, 2), "utf8");
 }

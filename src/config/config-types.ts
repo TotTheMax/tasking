@@ -48,6 +48,9 @@ export interface OpencodeConfig {
   stall_timeout_ms: number;
   inactivity_timeout_ms: number;
   auto_approve: boolean;
+  poll_interval_ms: number;
+  permission_timeout_ms: number;
+  server_url: string | null;
 }
 
 export interface RouterConfig {
@@ -149,7 +152,7 @@ export const DEFAULTS = {
     max_concurrent_agents_by_state: {} as Record<string, number>,
   },
   opencode: {
-    command: "opencode run",
+    command: "opencode",
     agent: "build",
     agents: [] as string[],
     model: null as string | null,
@@ -158,6 +161,9 @@ export const DEFAULTS = {
     stall_timeout_ms: 7200000,
     inactivity_timeout_ms: 600000,
     auto_approve: true,
+    poll_interval_ms: 2000,
+    permission_timeout_ms: 1800000,
+    server_url: null as string | null,
   },
   router: {
     enabled: false,

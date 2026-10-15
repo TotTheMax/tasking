@@ -3,8 +3,8 @@
 - [x] 1.1 拷入 spike fixtures：从 spike 分支取 `tests/fixtures/opencode-v2/` 全量文件到 main（provenance 一并），作为后续 mock 剧本与契约断言素材
 - [x] 1.2 版本门禁纯函数（写失败测试先：1.x/3.x 拒绝、2.0.x 通过、2.3.1 警告、版本串 `opencode v2.0.29`/`2.0.29` 双格式解析；再实现 `SUPPORTED`/`VALIDATED` 常量与 classify 函数）
 - [x] 1.3 doctor 升级 opencode 项（写失败测试先：PATH 缺失、版本不符、未验证警告、探活失败各分支；再实现版本探测 + `server.info` 探活 + 模型认证探测）
-- [ ] 1.4 配置面（写失败测试先：command 默认 `opencode`、三新键默认值与校验、model/variant 独立解析；再改 config-types DEFAULTS/resolver/validator）
-- [ ] 1.5 `buildMcpConfig` v2 化（写失败测试先：输出含 `mcp.servers.jira`、`codemode:false`、不写 permissions、保留既有键；再改实现）
+- [x] 1.4 配置面（写失败测试先：command 默认 `opencode`、三新键默认值与校验、model/variant 独立解析；再改 config-types DEFAULTS/resolver/validator）
+- [x] 1.5 `buildMcpConfig` v2 化（写失败测试先：输出含 `mcp.servers.jira`、`codemode:false`、不写 permissions、保留既有键；再改实现）
 
 ## 2. S2 turn 驱动器
 
