@@ -6,6 +6,7 @@ import type {
   AgentConfig,
   HooksConfig,
   OpencodeConfig,
+  TrackerConfig,
   WorkspaceConfig,
 } from "../src/config/config-types.js";
 import type { ActivityEvent } from "../src/observability/activity-store.js";
@@ -25,10 +26,19 @@ import { readSessionSidecar, resolveWorkspacePath } from "../src/workspace/manag
 
 const logger = new ConsoleLogger({}, () => {});
 
-function makeConfig(root: string) {
+function makeConfig(
+  root: string,
+): {
+  opencode: OpencodeConfig;
+  hooks: HooksConfig;
+  agent: AgentConfig;
+  workspace: WorkspaceConfig;
+  tracker: TrackerConfig;
+  env: Record<string, string>;
+} {
   return {
     opencode: {
-      command: "opencode run",
+      command: "opencode",
       agent: "build",
       agents: [],
       model: null,
@@ -37,6 +47,9 @@ function makeConfig(root: string) {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: false,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 600000,
+      server_url: null,
     } satisfies OpencodeConfig,
     hooks: {
       after_create: null,
@@ -114,6 +127,86 @@ function tempRoot(): string {
   return mkdtempSync(join(tmpdir(), "tasking-worker-"));
 }
 
+interface ApiScriptOptions {
+  sessionId?: string;
+  tokens?: { input: number; output: number; reasoning: number } | null;
+  outcome?: string | null;
+  messages?: Array<{
+    content?: Array<Record<string, unknown>>;
+    tokens?: { input: number; output: number; reasoning: number } | null;
+  }>;
+}
+
+function apiScript(opts: ApiScriptOptions = {}) {
+  const sessionId = opts.sessionId ?? "ses_test123";
+  const tokens = opts.tokens === undefined ? { input: 10, output: 5, reasoning: 0 } : opts.tokens;
+  const outcome = opts.outcome === undefined ? "succeeded" : opts.outcome;
+  const messages = opts.messages ?? [{ content: [], tokens }];
+  const state = {
+    prompts: [] as string[],
+    createBodies: [] as Array<Record<string, unknown>>,
+    switchAgents: [] as Array<Record<string, unknown>>,
+    interrupts: 0,
+  };
+  const ok = (stdout: string): Promise<import("../src/driver/api-client.js").ApiExecResult> =>
+    Promise.resolve({ exitCode: 0, stdout, stderr: "", timedOut: false });
+  const exec = (async (args: string[]) => {
+    const op = args[2] ?? "";
+    const dataIdx = args.indexOf("--data");
+    if (op === "session.create") {
+      state.createBodies.push(JSON.parse(args[dataIdx + 1] ?? "{}") as Record<string, unknown>);
+      return ok(`{"data":{"id":"${sessionId}"}}`);
+    }
+    if (op === "session.prompt") {
+      const body = JSON.parse(args[dataIdx + 1] ?? "{}") as { text?: string };
+      state.prompts.push(body.text ?? "");
+      return ok('{"data":{"id":"msg_0"}}');
+    }
+    if (op === "session.switchAgent") {
+      state.switchAgents.push(JSON.parse(args[dataIdx + 1] ?? "{}") as Record<string, unknown>);
+      return ok("");
+    }
+    if (op === "session.interrupt") {
+      state.interrupts += 1;
+      return ok('{"interrupted":true}');
+    }
+    if (op === "session.get") {
+      return ok(`{"data":{"id":"${sessionId}","outcome":"${outcome}"}}`);
+    }
+    if (op === "session.permission.list") return ok('{"data":[]}');
+    if (op === "session.message.list") {
+      const data = messages.map((m, i) => ({
+        id: `msg_${i + 1}`,
+        type: "assistant",
+        content: m.content ?? [],
+        ...(m.tokens
+          ? {
+              tokens: {
+                input: m.tokens.input,
+                output: m.tokens.output,
+                reasoning: m.tokens.reasoning,
+                cache: { read: 0, write: 0 },
+              },
+            }
+          : {}),
+        time: { completed: i + 1 },
+      }));
+      return ok(JSON.stringify({ data }));
+    }
+    return ok("{}");
+  }) as import("../src/driver/api-client.js").ApiExecFn;
+  return { exec, state };
+}
+
+function clockSleep() {
+  let clock = 0;
+  const sleep = (ms: number) => {
+    clock += ms;
+    return Promise.resolve();
+  };
+  return { sleep, now: () => clock };
+}
+
 describe("buildOpencodeCommand", () => {
   it("builds command with --format json, --dir and --agent", () => {
     const oc: OpencodeConfig = {
@@ -126,6 +219,9 @@ describe("buildOpencodeCommand", () => {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: false,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 1,
+      server_url: null,
     };
     const cmd = buildOpencodeCommand(oc, "/ws/ABC-123", "do the work");
     expect(cmd).toEqual([
@@ -152,6 +248,9 @@ describe("buildOpencodeCommand", () => {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: false,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 1,
+      server_url: null,
     };
     const cmd = buildOpencodeCommand(oc, "/ws", "prompt");
     expect(cmd.slice(0, 4)).toEqual(["opencode", "run", "--foo", "--format"]);
@@ -168,6 +267,9 @@ describe("buildOpencodeCommand", () => {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: false,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 1,
+      server_url: null,
     };
     const cmd = buildOpencodeCommand(oc, "/ws", "prompt", "ses_abc");
     expect(cmd).toContain("-s");
@@ -187,6 +289,9 @@ describe("buildOpencodeCommand", () => {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: false,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 1,
+      server_url: null,
     };
     const cmd = buildOpencodeCommand(oc, "/ws", "prompt", null);
     expect(cmd).not.toContain("-s");
@@ -205,6 +310,9 @@ describe("buildOpencodeCommand", () => {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: true,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 1,
+      server_url: null,
     };
     const cmd = buildOpencodeCommand(oc, "/ws", "prompt");
     expect(cmd).toContain("--auto");
@@ -221,6 +329,9 @@ describe("buildOpencodeCommand", () => {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: false,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 1,
+      server_url: null,
     };
     const cmd = buildOpencodeCommand(oc, "/ws", "prompt");
     expect(cmd).not.toContain("--auto");
@@ -237,6 +348,9 @@ describe("buildOpencodeCommand", () => {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: false,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 1,
+      server_url: null,
     };
     const cmd = buildOpencodeCommand(oc, "/ws/ABC-123", "do the work");
     expect(cmd).not.toContain("--model");
@@ -254,6 +368,9 @@ describe("buildOpencodeCommand", () => {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: false,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 1,
+      server_url: null,
     };
     const cmd = buildOpencodeCommand(oc, "/ws/ABC-123", "do the work");
     expect(cmd).toEqual([
@@ -283,6 +400,9 @@ describe("buildOpencodeCommand", () => {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: false,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 1,
+      server_url: null,
     };
     const cmd = buildOpencodeCommand(oc, "/ws/ABC-123", "do the work");
     expect(cmd).toEqual([
@@ -312,6 +432,9 @@ describe("buildOpencodeCommand", () => {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: false,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 1,
+      server_url: null,
     };
     const cmd = buildOpencodeCommand(oc, "/ws/ABC-123", "do the work");
     expect(cmd).toEqual([
@@ -576,51 +699,64 @@ describe("runAttempt", () => {
   it("succeeds with one turn when no state checker", async () => {
     const root = tempRoot();
     try {
+      const { exec } = apiScript();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config: makeConfig(root),
         promptTemplate: "do {{ task.identifier }}",
         logger,
-        spawnRunner: async () => successResult(),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(result.usage.total_tokens).toBe(15);
+      expect(result.session_id).toBe("ses_test123");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("classifies turn timeout as timed_out", async () => {
+  it("classifies turn timeout as timed_out via interrupt ladder", async () => {
     const root = tempRoot();
     try {
+      const config = makeConfig(root);
+      config.opencode.turn_timeout_ms = 1;
+      const { exec, state } = apiScript({ outcome: null, tokens: null });
+      const clock = clockSleep();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
-        config: makeConfig(root),
+        config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({ exitCode: -1, stdout: "", stderr: "", timedOut: true }),
+        apiExec: exec,
+        sleep: clock.sleep,
+        now: clock.now,
+        interruptGraceMs: 5,
       });
       expect(result.status).toBe("timed_out");
+      expect(result.error).toContain("turn_timeout");
+      expect(state.interrupts).toBeGreaterThan(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("classifies nonzero exit as failed", async () => {
+  it("classifies failed outcome as failed", async () => {
     const root = tempRoot();
     try {
+      const { exec } = apiScript({ outcome: "failed" });
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config: makeConfig(root),
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({ exitCode: 2, stdout: "", stderr: "err", timedOut: false }),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("failed");
-      expect(result.error).toContain("code 2");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -631,13 +767,15 @@ describe("runAttempt", () => {
     try {
       const config = makeConfig(root);
       config.hooks.before_run = "exit 1";
+      const { exec } = apiScript();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => successResult(),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("failed");
       expect(result.error).toContain("before_run");
@@ -651,7 +789,7 @@ describe("runAttempt", () => {
     try {
       const config = makeConfig(root);
       config.agent.max_turns = 2;
-      let calls = 0;
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
@@ -659,13 +797,11 @@ describe("runAttempt", () => {
         promptTemplate: "do it",
         logger,
         trackerStateChecker: async (t) => t,
-        spawnRunner: async () => {
-          calls++;
-          return successResult({ input: 1, output: 1, total: 2 });
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
-      expect(calls).toBe(2);
+      expect(state.prompts).toHaveLength(2);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -675,6 +811,7 @@ describe("runAttempt", () => {
     const root = tempRoot();
     try {
       let calls = 0;
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
@@ -685,61 +822,53 @@ describe("runAttempt", () => {
           calls++;
           return calls <= 1 ? makeTask() : null;
         },
-        spawnRunner: async () => successResult(),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(calls).toBe(2);
+      expect(state.prompts).toHaveLength(2);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("extracts usage and session_id from JSON event stream", async () => {
+  it("accumulates usage from polled messages", async () => {
     const root = tempRoot();
     try {
+      const { exec } = apiScript({
+        sessionId: "ses_abc",
+        tokens: { input: 100, output: 50, reasoning: 5 },
+      });
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config: makeConfig(root),
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({
-          exitCode: 0,
-          stdout: [
-            JSON.stringify({ type: "step_start", sessionID: "ses_abc" }),
-            JSON.stringify({
-              type: "step_finish",
-              sessionID: "ses_abc",
-              part: { tokens: { input: 100, output: 50, total: 150 }, reason: "stop" },
-            }),
-          ].join("\n"),
-          stderr: "",
-          timedOut: false,
-        }),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.usage.input_tokens).toBe(100);
-      expect(result.usage.total_tokens).toBe(150);
+      expect(result.usage.total_tokens).toBe(155);
       expect(result.session_id).toBe("ses_abc");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("falls back to process timing when no usage", async () => {
+  it("reports zero usage when no token data", async () => {
     const root = tempRoot();
     try {
+      const { exec } = apiScript({ tokens: null });
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config: makeConfig(root),
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({
-          exitCode: 0,
-          stdout: "no json here",
-          stderr: "",
-          timedOut: false,
-        }),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(result.usage.total_tokens).toBe(0);
@@ -767,7 +896,8 @@ describe("runAttempt", () => {
             events.push(e.event);
           },
         },
-        spawnRunner: async () => successResult({ input: 1, output: 1, total: 2 }),
+        apiExec: apiScript().exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(events).toContain("turn_started");
@@ -790,7 +920,8 @@ describe("runAttempt", () => {
         config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({ exitCode: 1, stdout: "", stderr: "err", timedOut: false }),
+        apiExec: apiScript({ outcome: "failed" }).exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("failed");
       expect(existsSync(sentinel)).toBe(true);
@@ -804,7 +935,7 @@ describe("runAttempt", () => {
     try {
       const config = makeConfig(root);
       config.agent.max_turns = 1;
-      const prompts: string[] = [];
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask({ identifier: "HEIH-7" }),
         attempt: 1,
@@ -812,16 +943,14 @@ describe("runAttempt", () => {
         promptTemplate: "original task prompt {{ task.identifier }}",
         logger,
         startTurn: 3,
-        spawnRunner: async (cmd) => {
-          prompts.push(cmd[cmd.length - 1] ?? "");
-          return successResult();
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
-      expect(prompts).toHaveLength(1);
-      expect(prompts[0]).toContain("Continue working on HEIH-7");
-      expect(prompts[0]).toContain("turn 3");
-      expect(prompts[0]).not.toContain("original task prompt");
+      expect(state.prompts).toHaveLength(1);
+      expect(state.prompts[0]).toContain("Continue working on HEIH-7");
+      expect(state.prompts[0]).toContain("turn 3");
+      expect(state.prompts[0]).not.toContain("original task prompt");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -840,7 +969,8 @@ describe("runAttempt", () => {
         logger,
         startTurn: 2,
         trackerStateChecker: async (t) => t,
-        spawnRunner: async () => successResult({ input: 1, output: 1, total: 2 }, "ses_turntest"),
+        apiExec: apiScript({ sessionId: "ses_turntest" }).exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       const wsPath = resolveWorkspacePath("ABC-123", root);
@@ -865,7 +995,8 @@ describe("runAttempt", () => {
         logger,
         baseTokens: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
         trackerStateChecker: async (t) => t,
-        spawnRunner: async () => successResult({ input: 10, output: 5, total: 15 }, "ses_toktest"),
+        apiExec: apiScript({ sessionId: "ses_toktest" }).exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(result.usage).toEqual({ input_tokens: 20, output_tokens: 10, total_tokens: 30 });
@@ -891,7 +1022,8 @@ describe("runAttempt", () => {
         promptTemplate: "do it",
         logger,
         baseTokens: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
-        spawnRunner: async () => successResult({ input: 10, output: 5, total: 15 }, "ses_oneshot"),
+        apiExec: apiScript({ sessionId: "ses_oneshot" }).exec,
+        sleep: () => Promise.resolve(),
       });
       const wsPath = resolveWorkspacePath("ABC-123", root);
       const sidecar = readSessionSidecar(wsPath);
@@ -905,27 +1037,23 @@ describe("runAttempt", () => {
 });
 
 describe("agent resolution per turn", () => {
-  it("uses the task's agent label on turn 1", async () => {
+  it("uses the task's agent label on turn 1 (session.create body)", async () => {
     const root = tempRoot();
     try {
       const config = makeConfig(root);
       config.opencode.agents = ["Build", "Review"];
-      const cmds: string[][] = [];
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask({ labels: ["agent:review"] }),
         attempt: null,
         config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async (cmd) => {
-          cmds.push(cmd);
-          return successResult();
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
-      const idx = cmds[0]?.indexOf("--agent") ?? -1;
-      expect(idx).toBeGreaterThan(-1);
-      expect(cmds[0]?.[idx + 1]).toBe("Review");
+      expect(state.createBodies[0]?.agent).toBe("Review");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -937,8 +1065,8 @@ describe("agent resolution per turn", () => {
       const config = makeConfig(root);
       config.opencode.agents = ["Build", "Review"];
       config.agent.max_turns = 2;
-      const cmds: string[][] = [];
       let check = 0;
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask({ labels: ["agent:review"] }),
         attempt: null,
@@ -949,28 +1077,23 @@ describe("agent resolution per turn", () => {
           check++;
           return check === 1 ? makeTask({ labels: ["agent:build"] }) : null;
         },
-        spawnRunner: async (cmd) => {
-          cmds.push(cmd);
-          return successResult({ input: 1, output: 1, total: 2 });
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
-      expect(cmds).toHaveLength(2);
-      const a1 = cmds[0]?.[cmds[0].indexOf("--agent") + 1];
-      const a2 = cmds[1]?.[cmds[1].indexOf("--agent") + 1];
-      expect(a1).toBe("Review");
-      expect(a2).toBe("Build");
+      expect(state.createBodies[0]?.agent).toBe("Review");
+      expect(state.switchAgents).toEqual([{ agent: "Build" }]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("uses the default agent each turn when there is no agent label", async () => {
+  it("uses the default agent when there is no agent label", async () => {
     const root = tempRoot();
     try {
       const config = makeConfig(root);
       config.agent.max_turns = 2;
-      const cmds: string[][] = [];
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask({ labels: ["bug"] }),
         attempt: null,
@@ -978,14 +1101,12 @@ describe("agent resolution per turn", () => {
         promptTemplate: "do it",
         logger,
         trackerStateChecker: async (t) => t,
-        spawnRunner: async (cmd) => {
-          cmds.push(cmd);
-          return successResult({ input: 1, output: 1, total: 2 });
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
-      const a1 = cmds[0]?.[cmds[0].indexOf("--agent") + 1];
-      expect(a1).toBe("build");
+      expect(state.createBodies[0]?.agent).toBe("build");
+      expect(state.switchAgents).toHaveLength(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -998,14 +1119,17 @@ describe("inactivity timeout", () => {
     try {
       const config = makeConfig(root);
       config.opencode.inactivity_timeout_ms = 0;
+      config.opencode.turn_timeout_ms = 0;
       config.agent.max_turns = 1;
+      const { exec } = apiScript();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => successResult(),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
     } finally {
@@ -1017,20 +1141,19 @@ describe("inactivity timeout", () => {
     const root = tempRoot();
     try {
       const config = makeConfig(root);
-      config.agent.max_turns = 1;
+      config.opencode.inactivity_timeout_ms = 1;
+      const { exec } = apiScript({ outcome: null, tokens: null });
+      const clock = clockSleep();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({
-          exitCode: -1,
-          stdout: "",
-          stderr: "",
-          timedOut: true,
-          timedOutReason: "inactivity",
-        }),
+        apiExec: exec,
+        sleep: clock.sleep,
+        now: clock.now,
+        interruptGraceMs: 5,
       });
       expect(result.status).toBe("timed_out");
       expect(result.error).toContain("inactivity_timeout");
@@ -1038,84 +1161,7 @@ describe("inactivity timeout", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
-
-  it("classifies wall-clock timeout as turn_timeout", async () => {
-    const root = tempRoot();
-    try {
-      const config = makeConfig(root);
-      config.agent.max_turns = 1;
-      const result = await runAttempt({
-        task: makeTask(),
-        attempt: null,
-        config,
-        promptTemplate: "do it",
-        logger,
-        spawnRunner: async () => ({
-          exitCode: -1,
-          stdout: "",
-          stderr: "",
-          timedOut: true,
-          timedOutReason: "wall_clock",
-        }),
-      });
-      expect(result.status).toBe("timed_out");
-      expect(result.error).toContain("turn_timeout");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("classifies timedOut without reason as turn_timeout (backward compat)", async () => {
-    const root = tempRoot();
-    try {
-      const config = makeConfig(root);
-      config.agent.max_turns = 1;
-      const result = await runAttempt({
-        task: makeTask(),
-        attempt: null,
-        config,
-        promptTemplate: "do it",
-        logger,
-        spawnRunner: async () => ({
-          exitCode: -1,
-          stdout: "",
-          stderr: "",
-          timedOut: true,
-        }),
-      });
-      expect(result.status).toBe("timed_out");
-      expect(result.error).toContain("turn_timeout");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("passes inactivity_timeout_ms to spawnRunner", async () => {
-    const root = tempRoot();
-    try {
-      const config = makeConfig(root);
-      config.opencode.inactivity_timeout_ms = 123456;
-      config.agent.max_turns = 1;
-      let receivedInactivity = -1;
-      const result = await runAttempt({
-        task: makeTask(),
-        attempt: null,
-        config,
-        promptTemplate: "do it",
-        logger,
-        spawnRunner: async (_cmd, _cwd, _timeout, inactivityTimeout) => {
-          receivedInactivity = inactivityTimeout;
-          return successResult();
-        },
-      });
-      expect(result.status).toBe("succeeded");
-      expect(receivedInactivity).toBe(123456);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
 });
-
 describe("parseOpencodeLine", () => {
   it("parses text event", () => {
     const e = parseOpencodeLine(
@@ -1300,6 +1346,12 @@ describe("runAttempt activity capture", () => {
       config.opencode.model = "anthropic/claude-sonnet-4-5";
       config.opencode.variant = "high";
       config.agent.max_turns = 1;
+      const { exec } = apiScript({
+        tokens: null,
+        messages: [
+          { content: [{ type: "text", text: "working" }, { type: "tool", tool: "read" }], tokens: null },
+        ],
+      });
       const activity: ActivityEvent[] = [];
       const workerEvents: WorkerEvent[] = [];
       const result = await runAttempt({
@@ -1310,11 +1362,8 @@ describe("runAttempt activity capture", () => {
         logger,
         events: { onEvent: (e) => workerEvents.push(e) },
         onActivity: (e) => activity.push(e),
-        spawnRunner: async (_cmd, _cwd, _t, _i, _s, onOpencodeEvent) => {
-          onOpencodeEvent?.({ type: "text", text: "working", sessionId: "ses_x" });
-          onOpencodeEvent?.({ type: "tool_use", tool: "read", sessionId: "ses_x" });
-          return successResult();
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(activity.map((a) => a.type)).toEqual(["text", "tool_use"]);
@@ -1335,6 +1384,26 @@ describe("runAttempt activity capture", () => {
     try {
       const config = makeConfig(root);
       config.agent.max_turns = 1;
+      const { exec } = apiScript({
+        messages: [
+          {
+            content: [
+              {
+                type: "tool",
+                tool: "bash",
+                state: {
+                  status: "completed",
+                  input: { command: "false" },
+                  output: "",
+                  metadata: { exit: 1, truncated: false },
+                  time: { created: 1000, ran: 1050, completed: 1300 },
+                },
+              },
+            ],
+            tokens: null,
+          },
+        ],
+      });
       const activity: ActivityEvent[] = [];
       const result = await runAttempt({
         task: makeTask(),
@@ -1343,20 +1412,8 @@ describe("runAttempt activity capture", () => {
         promptTemplate: "do it",
         logger,
         onActivity: (e) => activity.push(e),
-        spawnRunner: async (_cmd, _cwd, _t, _i, _s, onOpencodeEvent) => {
-          onOpencodeEvent?.({
-            type: "tool_use",
-            tool: "bash",
-            input: { command: "false" },
-            output: "",
-            exit: 1,
-            title: "false",
-            status: "completed",
-            durationMs: 300,
-            sessionId: "ses_x",
-          });
-          return successResult();
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       const tool = activity.find((a) => a.type === "tool_use");
@@ -1364,7 +1421,6 @@ describe("runAttempt activity capture", () => {
       expect(tool?.input).toEqual({ command: "false" });
       expect(tool?.output).toBe("");
       expect(tool?.exit).toBe(1);
-      expect(tool?.title).toBe("false");
       expect(tool?.status).toBe("completed");
       expect(tool?.durationMs).toBe(300);
     } finally {
@@ -1386,7 +1442,8 @@ describe("runAttempt activity capture", () => {
         promptTemplate: "do it",
         logger,
         events: { onEvent: (e) => workerEvents.push(e) },
-        spawnRunner: async () => successResult(),
+        apiExec: apiScript().exec,
+        sleep: () => Promise.resolve(),
       });
       const started = workerEvents.find((e) => e.event === "turn_started");
       expect(started?.model).toBeNull();
@@ -1397,60 +1454,20 @@ describe("runAttempt activity capture", () => {
     }
   });
 
-  it("captures real opencode stdout into onActivity via the default runner", async () => {
-    const root = tempRoot();
-    const scriptPath = join(tmpdir(), `tasking-int-activity-${Date.now()}.mjs`);
-    writeFileSync(
-      scriptPath,
-      [
-        "console.log(JSON.stringify({type:'step_start',sessionID:'ses_real'}));",
-        "console.log(JSON.stringify({type:'text',sessionID:'ses_real',part:{text:'working hard'}}));",
-        "console.log(JSON.stringify({type:'tool_use',sessionID:'ses_real',part:{tool:'read'}}));",
-        "console.log(JSON.stringify({type:'step_finish',sessionID:'ses_real',part:{tokens:{input:5,output:7,total:12}}}));",
-        "process.exit(0);",
-      ].join("\n"),
-      "utf8",
-    );
-    try {
-      const config = makeConfig(root);
-      config.opencode.command = `node ${scriptPath}`;
-      config.opencode.model = "anthropic/claude-sonnet-4-5";
-      config.agent.max_turns = 1;
-      const activity: ActivityEvent[] = [];
-      const workerEvents: WorkerEvent[] = [];
-      const result = await runAttempt({
-        task: makeTask(),
-        attempt: null,
-        config,
-        promptTemplate: "do it",
-        logger,
-        events: { onEvent: (e) => workerEvents.push(e) },
-        onActivity: (e) => activity.push(e),
-      });
-      expect(result.status).toBe("succeeded");
-      expect(result.session_id).toBe("ses_real");
-      const types = activity.map((a) => a.type);
-      expect(types).toContain("text");
-      expect(types).toContain("tool_use");
-      expect(types).toContain("step_finish");
-      const textEvt = activity.find((a) => a.type === "text");
-      expect(textEvt?.text).toBe("working hard");
-      expect(textEvt?.turn).toBe(1);
-      const started = workerEvents.find((e) => e.event === "turn_started");
-      expect(started?.model).toBe("anthropic/claude-sonnet-4-5");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-      rmSync(scriptPath, { force: true });
-    }
-  });
 });
 
 describe("step_usage events", () => {
-  it("emits step_usage for each step_finish token report and turn_completed carries no usage", async () => {
+  it("emits step_usage for each token-bearing message and turn_completed carries no usage", async () => {
     const root = tempRoot();
     try {
       const config = makeConfig(root);
       config.agent.max_turns = 1;
+      const { exec } = apiScript({
+        messages: [
+          { content: [], tokens: { input: 100, output: 50, reasoning: 0 } },
+          { content: [], tokens: { input: 10, output: 5, reasoning: 0 } },
+        ],
+      });
       const workerEvents: WorkerEvent[] = [];
       await runAttempt({
         task: makeTask(),
@@ -1459,19 +1476,8 @@ describe("step_usage events", () => {
         promptTemplate: "do it",
         logger,
         events: { onEvent: (e) => workerEvents.push(e) },
-        spawnRunner: async (_cmd, _cwd, _t, _i, _s, onOpencodeEvent) => {
-          onOpencodeEvent?.({
-            type: "step_finish",
-            tokens: { input: 100, output: 50, total: 150 },
-            sessionId: "ses_x",
-          });
-          onOpencodeEvent?.({
-            type: "step_finish",
-            tokens: { input: 10, output: 5, total: 15 },
-            sessionId: "ses_x",
-          });
-          return successResult();
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       const stepUsages = workerEvents.filter((e) => e.event === "step_usage");
       expect(stepUsages).toHaveLength(2);

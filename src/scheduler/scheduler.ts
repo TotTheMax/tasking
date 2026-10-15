@@ -26,13 +26,8 @@ export interface SchedulerDeps {
   config: () => EffectiveConfig;
   logger: Logger;
   runAttemptFn: typeof runAttempt;
-  spawnRunner?: (
-    cmd: string[],
-    cwd: string,
-    timeout: number,
-    inactivityTimeout: number,
-    signal?: AbortSignal,
-  ) => Promise<unknown>;
+  apiExec?: import("../driver/api-client.js").ApiExecFn;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const CONTINUATION_DELAY_MS = 1000;
@@ -304,7 +299,8 @@ export class Scheduler extends EventEmitter {
         promptTemplate: config.prompt_template,
         logger: this.deps.logger.child({ task_identifier: task.identifier }),
         trackerStateChecker,
-        spawnRunner: this.deps.spawnRunner as never,
+        apiExec: this.deps.apiExec,
+        sleep: this.deps.sleep,
         sessionId: entry.session_id,
         startTurn,
         signal: entry.abort?.signal,

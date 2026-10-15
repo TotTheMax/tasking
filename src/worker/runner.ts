@@ -6,6 +6,9 @@ import type {
   TrackerConfig,
 } from "../config/config-types.js";
 import type { WorkspaceConfig } from "../config/config-types.js";
+import { defaultApiExec, type ApiExecFn } from "../driver/api-client.js";
+import { runTurn, type TurnDriverEvent } from "../driver/turn-driver.js";
+import { switchSessionAgent } from "../driver/session-ops.js";
 import { injectMcpConfig } from "../mcp/inject.js";
 import type { ActivityEvent } from "../observability/activity-store.js";
 import type { Logger } from "../observability/logger.js";
@@ -60,14 +63,10 @@ export interface RunAttemptOptions {
   trackerStateChecker?: (task: Task) => Promise<Task | null>;
   events?: WorkerEvents;
   onActivity?: (evt: ActivityEvent) => void;
-  spawnRunner?: (
-    cmd: string[],
-    cwd: string,
-    timeout: number,
-    inactivityTimeout: number,
-    signal?: AbortSignal,
-    onOpencodeEvent?: (evt: OpencodeEvent) => void,
-  ) => Promise<SubprocessResult>;
+  apiExec?: ApiExecFn;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  interruptGraceMs?: number;
   sessionId?: string | null;
   startTurn?: number;
   baseTokens?: { input_tokens: number; output_tokens: number; total_tokens: number };
@@ -357,25 +356,9 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
   const { task, attempt, config, promptTemplate, logger } = opts;
   const started_at = Date.now();
   const usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
-  const spawnRunner =
-    opts.spawnRunner ??
-    ((
-      cmd: string[],
-      cwd: string,
-      timeout: number,
-      inactivityTimeout: number,
-      signal?: AbortSignal,
-      onOpencodeEvent?: (evt: OpencodeEvent) => void,
-    ) =>
-      runDefaultSubprocess(
-        cmd,
-        cwd,
-        timeout,
-        inactivityTimeout,
-        signal,
-        config.env,
-        onOpencodeEvent,
-      ));
+  const apiExec = opts.apiExec ?? defaultApiExec();
+  const sleep =
+    opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
   let workspace: Workspace;
   try {
@@ -425,6 +408,7 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
   let lastError: string | null = null;
   let currentTask = task;
   let sessionId: string | null = opts.sessionId ?? null;
+  let knownAgent: string | null = null;
   const baseTokens = opts.baseTokens ?? { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
 
   try {
@@ -448,8 +432,19 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
           default_agent: config.opencode.agent,
         });
       }
-      const opencodeForTurn = { ...config.opencode, agent: resolved.agent };
       const turnNo = turn;
+      if (knownAgent !== null && resolved.agent !== knownAgent && sessionId) {
+        try {
+          await switchSessionAgent(apiExec, { command: config.opencode.command, serverUrl: config.opencode.server_url }, sessionId, resolved.agent);
+        } catch (e) {
+          logger.warn("session agent switch failed", {
+            task_identifier: task.identifier,
+            agent: resolved.agent,
+            error: toTaskingError(e).message,
+          });
+        }
+      }
+      knownAgent = resolved.agent;
 
       opts.events?.onEvent?.({
         event: "turn_started",
@@ -460,68 +455,80 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
         variant: config.opencode.variant,
       });
 
-      const cmd = buildOpencodeCommand(opencodeForTurn, workspace.path, prompt, sessionId);
-      logger.info("launching opencode run", {
+      logger.info("launching opencode v2 turn", {
         task_identifier: task.identifier,
         turn,
         agent: resolved.agent,
         session_id: sessionId ?? undefined,
       });
 
-      const onOpencodeEvent =
+      const onEvent =
         opts.onActivity || opts.events?.onEvent
-          ? (evt: OpencodeEvent) => {
+          ? (evt: TurnDriverEvent) => {
               if (opts.onActivity) {
                 const activity: ActivityEvent = { ts: Date.now(), turn: turnNo, type: evt.type };
                 if (evt.text !== undefined) activity.text = evt.text;
                 if (evt.tool !== undefined) activity.tool = evt.tool;
-                if (evt.tokens !== undefined) activity.tokens = evt.tokens;
-                if (evt.title !== undefined) activity.title = evt.title;
                 if (evt.input !== undefined) activity.input = evt.input;
                 if (evt.output !== undefined) activity.output = evt.output;
-                if (evt.error !== undefined) activity.error = evt.error;
                 if (evt.exit !== undefined) activity.exit = evt.exit;
                 if (evt.status !== undefined) activity.status = evt.status;
                 if (evt.durationMs !== undefined) activity.durationMs = evt.durationMs;
                 if (evt.truncated !== undefined) activity.truncated = evt.truncated;
                 opts.onActivity(activity);
               }
-              if (evt.tokens !== undefined && opts.events?.onEvent) {
+              if (evt.type === "step_usage" && evt.usage !== undefined && opts.events?.onEvent) {
                 opts.events.onEvent({
                   event: "step_usage",
                   timestamp: Date.now(),
                   usage: {
-                    input_tokens: evt.tokens.input,
-                    output_tokens: evt.tokens.output,
-                    total_tokens: evt.tokens.total,
+                    input_tokens: evt.usage.input_tokens,
+                    output_tokens: evt.usage.output_tokens,
+                    total_tokens: evt.usage.total_tokens,
                   },
                 });
               }
             }
           : undefined;
 
-      let result: SubprocessResult;
+      let result: Awaited<ReturnType<typeof runTurn>>;
       try {
-        result = await spawnRunner(
-          cmd,
-          workspace.path,
-          config.opencode.turn_timeout_ms,
-          config.opencode.inactivity_timeout_ms,
-          opts.signal,
-          onOpencodeEvent,
-        );
+        result = await runTurn({
+          exec: apiExec,
+          base: {
+            command: config.opencode.command,
+            serverUrl: config.opencode.server_url,
+          },
+          directory: workspace.path,
+          prompt,
+          sessionId,
+          createOptions: {
+            model: config.opencode.model,
+            variant: config.opencode.variant,
+            agent: resolved.agent,
+            autoApprove: config.opencode.auto_approve,
+          },
+          pollIntervalMs: config.opencode.poll_interval_ms,
+          permissionTimeoutMs: config.opencode.permission_timeout_ms,
+          turnTimeoutMs: config.opencode.turn_timeout_ms,
+          inactivityTimeoutMs: config.opencode.inactivity_timeout_ms,
+          interruptGraceMs: opts.interruptGraceMs,
+          sleep,
+          now: opts.now,
+          onEvent,
+          signal: opts.signal,
+        });
       } catch (e) {
         lastStatus = "failed";
         lastError = toTaskingError(e).message;
         break;
       }
 
-      const extracted = result.sessionAndUsage ?? extractSessionAndUsage(result.stdout);
-      usage.input_tokens += extracted.usage.input_tokens;
-      usage.output_tokens += extracted.usage.output_tokens;
-      usage.total_tokens += extracted.usage.total_tokens;
-      if (extracted.session_id) {
-        sessionId = extracted.session_id;
+      usage.input_tokens += result.usage.input_tokens;
+      usage.output_tokens += result.usage.output_tokens;
+      usage.total_tokens += result.usage.total_tokens;
+      if (result.sessionId) {
+        sessionId = result.sessionId;
         writeSessionSidecar(workspace.path, sessionId, turn, {
           input_tokens: baseTokens.input_tokens + usage.input_tokens,
           output_tokens: baseTokens.output_tokens + usage.output_tokens,
@@ -535,16 +542,14 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
         session_id: sessionId ?? undefined,
       });
 
-      if (result.timedOut) {
+      if (result.status === "timed_out") {
         lastStatus = "timed_out";
-        const reason =
-          result.timedOutReason === "inactivity" ? "inactivity_timeout" : "turn_timeout";
-        lastError = `turn ${turn} timed out (${reason})`;
+        lastError = `turn ${turn} timed out (${result.error ?? "turn_timeout"})`;
         break;
       }
-      if (result.exitCode !== 0) {
+      if (result.status === "failed" || result.status === "error" || result.status === "interrupted") {
         lastStatus = "failed";
-        lastError = `turn ${turn} exited with code ${result.exitCode}`;
+        lastError = result.error ?? `turn ${turn} ${result.status}`;
         break;
       }
 

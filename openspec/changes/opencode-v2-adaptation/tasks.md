@@ -14,7 +14,7 @@
 - [x] 2.4 中断梯子（写失败测试先：interrupt 后宽限内出终态、宽限后清理残留、interrupt 产生 interrupted 终态；再实现）
 - [x] 2.5 计时器矩阵（写失败测试先：pending 期间 turn_timeout/inactivity 暂停、permission_timeout 接管并倒计时、超时自动 reject 后恢复执行计时；再实现）
 - [x] 2.6 假 opencode CLI mock helper（实现 `tests/helpers/opencode-mock.ts`：生成可执行脚本 + PATH 注入 + 剧本断言，剧本覆盖 fixtures 各场景）
-- [ ] 2.7 worker 切换（写失败测试先：runAttempt 经驱动器跑通首轮/续轮/sidecar 写入/tracker 检查循环/重试语义、agent 每 turn 解析与边界切换、auto_approve=true 全链路；再改 runner.ts 接线，删 spawnRunner 子进程路径调用）
+- [x] 2.7 worker 切换（写失败测试先：runAttempt 经驱动器跑通首轮/续轮/sidecar 写入/tracker 检查循环/重试语义、agent 每 turn 解析与边界切换、auto_approve=true 全链路；再改 runner.ts 接线，删 spawnRunner 子进程路径调用）
 - [ ] 2.8 重启清扫（写失败测试先：active 会话被 interrupt、非 active 不动作、清扫失败不阻塞启动；再在 daemon 启动接入，sidecar 与 direct_sessions 为来源）
 
 ## 3. S3 同步审批

@@ -8,6 +8,10 @@
 **Reason**: 无子进程树，超时/中止改走 `session.interrupt` 梯子。
 **Migration**: 中断语义由 `opencode-v2-driver` 的"中断梯子"承接；kill grace/进程组击杀代码随 run 路径退役。
 
+### Requirement: rate-limit 提取
+**Reason**: v2 轮询数据源（session.get/message.list）不含 rate-limit 载荷。
+**Migration**: `state.rate_limits` 停止更新；若将来 v2 暴露用量限额数据再以独立变更恢复。
+
 ## MODIFIED Requirements
 
 ### Requirement: 有界续轮循环

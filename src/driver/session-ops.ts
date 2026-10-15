@@ -246,3 +246,21 @@ export async function setSessionPermissions(
     exec,
   );
 }
+
+export async function switchSessionAgent(
+  exec: ApiExecFn,
+  base: SessionOpBase,
+  sessionID: string,
+  agent: string,
+): Promise<void> {
+  await execApi(
+    {
+      command: base.command,
+      serverUrl: base.serverUrl,
+      operation: "session.switchAgent",
+      params: { sessionID },
+      data: { agent },
+    },
+    exec,
+  );
+}
