@@ -1,0 +1,48 @@
+data: {"id":"evt_139dc631f001FO5WADy87nvVJ9","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_139dc6762001t0sZN5rW3Rz1Cm","created":1791972108130,"type":"project.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"id":"3812d4e55569cd47d2ee782bca1ad781c95da7fa","canonical":"/tmp/opencode/sandbox-proj","time":{"created":1791971816001,"updated":1791971816001,"active":1791972108130},"sandboxes":[]}}
+
+data: {"id":"evt_139dc68db001epuQeZJ6822tYJ","created":1791972108507,"type":"session.created","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec6239817ffeOC7aqIYthYwtCq","slug":"crisp-wizard","version":"2.0.29","projectID":"3812d4e55569cd47d2ee782bca1ad781c95da7fa","location":{"directory":"/tmp/opencode/sandbox-proj"},"subpath":""},"durable":{"aggregateID":"ses_ec6239817ffeOC7aqIYthYwtCq","seq":0,"version":1}}
+
+data: {"id":"evt_139dc690c001fSFfE3iouJeQOa","created":1791972108556,"type":"mcp.status.changed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"server":"jira"}}
+
+data: {"id":"evt_139dc690d001GXz4a9gtbq8B33","created":1791972108557,"type":"integration.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_139dc6910001rm4jiv1YlVBk5b","created":1791972108560,"type":"provider.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_139dc6916001nZ4d1h72xVySl1","created":1791972108566,"type":"model.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_139dc6918001IZm43JeiV1R7t2","created":1791972108568,"type":"agent.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_139dc69180028pmkjEw1m3u85f","created":1791972108568,"type":"command.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_139dc6919001MLXI8egp6p37hl","created":1791972108569,"type":"skill.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_139dc691c001W5Bp0dGYbiLZ83","created":1791972108572,"type":"websearch.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_139dc693d002m2RdzsbTA8to76","created":1791972108605,"type":"reference.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_139dc693e001UJFgX41T4BP3QG","created":1791972108606,"type":"plugin.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_139dc693f00199qremdnQdwUKc","created":1791972108607,"type":"session.inbox.enqueued","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"inboxID":"msg_139dc68ed001YG0HySsZ13cQ1X","sessionID":"ses_ec6239817ffeOC7aqIYthYwtCq","item":{"type":"user","payload":{"text":"\"Reply with exactly: OK\"","files":[]},"delivery":"steer"}},"durable":{"aggregateID":"ses_ec6239817ffeOC7aqIYthYwtCq","seq":1,"version":1}}
+
+data: {"id":"evt_139dc6966001NotlEF855Z1QfX","created":1791972108646,"type":"session.execution.started","data":{"sessionID":"ses_ec6239817ffeOC7aqIYthYwtCq"},"durable":{"aggregateID":"ses_ec6239817ffeOC7aqIYthYwtCq","seq":2,"version":1}}
+
+data: {"id":"evt_139dc6973001RIEkPXx3RwWEWB","created":1791972108659,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec6239817ffeOC7aqIYthYwtCq","delta":{"core/codemode":"e6428fd7742161f6c3a6c86e53cbbe2c6e4dcc462bbf1a1a07bc4fcbeb9e0b0b","core/skill-guidance":"e61e3501694b2181f62d9de1fd228e5c9dadd6b6dcebfb3f7cd87d6b5bcaecc7","core/date":"69dc8438f9eb203ca34f520e89b000bba5bd89c8b9ebd3624d24e9ee37f64b0c","core/environment":"6b221619ef96d4948291c4b662014233a62e2365137b7b23f12f8cc7dc0f7fa7"}},"durable":{"aggregateID":"ses_ec6239817ffeOC7aqIYthYwtCq","seq":3,"version":2}}
+
+data: {"id":"evt_139dc6976001kweRYYOkPpZOq3","created":1791972108662,"type":"session.inbox.delivered","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec6239817ffeOC7aqIYthYwtCq","inboxID":"msg_139dc68ed001YG0HySsZ13cQ1X"},"durable":{"aggregateID":"ses_ec6239817ffeOC7aqIYthYwtCq","seq":4,"version":1}}
+
+data: {"id":"evt_139dc6999001aKApMWLYetEGuM","created":1791972108697,"type":"mcp.resources.changed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"server":"jira"}}
+
+data: {"id":"evt_139dc6999002rT0NcTEatdvNkz","created":1791972108697,"type":"mcp.status.changed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"server":"jira"}}
+
+data: {"id":"evt_139dc699b00162FnD9h2UjXMGY","created":1791972108699,"type":"command.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_139dc6e0d0014P9K1c1IFHcHy8","created":1791972109837,"type":"session.step.started","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec6239817ffeOC7aqIYthYwtCq","agent":"build","model":{"id":"cat-jam-free","providerID":"opencode"},"assistantMessageID":"msg_139dc6984001PJ0wcHzih5t4Dg","started":1791972108685},"durable":{"aggregateID":"ses_ec6239817ffeOC7aqIYthYwtCq","seq":5,"version":1}}
+
+data: {"id":"evt_139dc6e12001XjYYN6rwsQLXZU","created":1791972109842,"type":"session.step.failed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec6239817ffeOC7aqIYthYwtCq","assistantMessageID":"msg_139dc6984001PJ0wcHzih5t4Dg","error":{"type":"provider.auth","message":"Upstream request failed: Endpoint is unavailable.","status":403,"response":{"body":"{\"error\":{\"type\":\"server_error\",\"message\":\"Upstream request failed: Endpoint is unavailable.\"}}"}}},"durable":{"aggregateID":"ses_ec6239817ffeOC7aqIYthYwtCq","seq":6,"version":1}}
+
+data: {"id":"evt_139dc6e150013Wau82rAoUyyd1","created":1791972109845,"type":"session.execution.failed","data":{"sessionID":"ses_ec6239817ffeOC7aqIYthYwtCq","error":{"type":"provider.auth","message":"Upstream request failed: Endpoint is unavailable.","status":403,"response":{"body":"{\"error\":{\"type\":\"server_error\",\"message\":\"Upstream request failed: Endpoint is unavailable.\"}}"}}},"durable":{"aggregateID":"ses_ec6239817ffeOC7aqIYthYwtCq","seq":7,"version":1}}
+

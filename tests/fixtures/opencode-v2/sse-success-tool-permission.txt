@@ -1,0 +1,170 @@
+data: {"id":"evt_13a22a77f001oeUbMTD14g32RS","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_13a22abdd0010y4WIJjNcgOdyC","created":1791976713181,"type":"project.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"id":"3812d4e55569cd47d2ee782bca1ad781c95da7fa","canonical":"/tmp/opencode/sandbox-proj","time":{"created":1791976713179,"updated":1791976713179,"active":1791976713181},"sandboxes":[]}}
+
+data: {"id":"evt_13a22ac8d001NLbbEZWQBIHA6n","created":1791976713357,"type":"session.created","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","slug":"stellar-meadow","version":"2.0.29","projectID":"3812d4e55569cd47d2ee782bca1ad781c95da7fa","location":{"directory":"/tmp/opencode/sandbox-proj"},"subpath":"","model":{"id":"glm-5.3","providerID":"zhipuai-coding-plan"}},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":0,"version":1}}
+
+data: {"id":"evt_13a22ad3a001Ax8QxJbRsFKreE","created":1791976713530,"type":"mcp.status.changed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"server":"google-patents-mcp"}}
+
+data: {"id":"evt_13a22ad3b001cR24Et3C0FOae0","created":1791976713531,"type":"mcp.status.changed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"server":"exa"}}
+
+data: {"id":"evt_13a22ad3b002Y0DqsbkVzPhTRW","created":1791976713531,"type":"mcp.status.changed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"server":"jira"}}
+
+data: {"id":"evt_13a22ad3c0017j3URetvkVX29D","created":1791976713532,"type":"integration.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22ad3f001Degk0dhtRveKKQ","created":1791976713535,"type":"provider.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22ad470014vmgaLX0hNiC01","created":1791976713543,"type":"model.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22ad48001kQpG7xsVAFDDEf","created":1791976713544,"type":"agent.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22ad49001IT3uQlEkZZLlJu","created":1791976713545,"type":"command.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22ad49002sRYem5HNKB2XYa","created":1791976713545,"type":"skill.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22ad4b0017TbYs33FGpeIwE","created":1791976713547,"type":"websearch.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22ad62001203I40Z07of6zD","created":1791976713570,"type":"reference.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22ad6200207Z7v0F04UAxY5","created":1791976713570,"type":"plugin.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22ad63001bQ0PngwMwdtvb4","created":1791976713571,"type":"session.inbox.enqueued","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"inboxID":"msg_13a22ad07001ruftAZ3lA2jtC0","sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","item":{"type":"user","payload":{"text":"\"Run this shell command: echo hello-v2-spike. Then reply with exactly: DONE\"","files":[]},"delivery":"steer"}},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":1,"version":1}}
+
+data: {"id":"evt_13a22ad7d001ddRbpEU29WfFm2","created":1791976713597,"type":"session.execution.started","data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx"},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":2,"version":1}}
+
+data: {"id":"evt_13a22ad87001ZD6iXtXx1WJUu8","created":1791976713607,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","delta":{"core/codemode":"e6428fd7742161f6c3a6c86e53cbbe2c6e4dcc462bbf1a1a07bc4fcbeb9e0b0b","core/skill-guidance":"d75e6f80870697faa02bb04fd687bc978108aab7b9feb053df23092003faf415","core/date":"69dc8438f9eb203ca34f520e89b000bba5bd89c8b9ebd3624d24e9ee37f64b0c","core/environment":"6b221619ef96d4948291c4b662014233a62e2365137b7b23f12f8cc7dc0f7fa7"}},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":3,"version":2}}
+
+data: {"id":"evt_13a22ad88001csnlWiwKt1k4pG","created":1791976713608,"type":"session.inbox.delivered","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","inboxID":"msg_13a22ad07001ruftAZ3lA2jtC0"},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":4,"version":1}}
+
+data: {"id":"evt_13a22adb4001ZCiDf6XbaBR87r","created":1791976713652,"type":"mcp.resources.changed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"server":"jira"}}
+
+data: {"id":"evt_13a22adb4002UmHgZMTjub7GTt","created":1791976713652,"type":"mcp.status.changed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"server":"jira"}}
+
+data: {"id":"evt_13a22adb5002Sut4NiEH7c8mhP","created":1791976713653,"type":"command.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22b473001TBs3NSeFXg7Cxn","created":1791976715379,"type":"models-dev.refreshed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22b4df001pjbrunOHNWNiLy","created":1791976715487,"type":"integration.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22b515001PpcuWkDEbQvee8","created":1791976715541,"type":"provider.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22b51c0016Os9sEG9cvyj3c","created":1791976715548,"type":"model.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22b52b00146sOGydDyK8Ry4","created":1791976715563,"type":"session.step.started","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","agent":"build","model":{"id":"glm-5.3","providerID":"zhipuai-coding-plan","variant":"default"},"assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","started":1791976713636},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":5,"version":1}}
+
+data: {"id":"evt_13a22b531001e23UVsYWehj3iX","created":1791976715569,"type":"session.reasoning.started","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","ordinal":0,"state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":6,"version":1}}
+
+data: {"id":"evt_13a22b539001SUCT0Md3rhIRbC","created":1791976715577,"type":"mcp.resources.changed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"server":"exa"}}
+
+data: {"id":"evt_13a22b5390024FcaADaMV6i3Jm","created":1791976715577,"type":"mcp.status.changed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"server":"exa"}}
+
+data: {"id":"evt_13a22b53b0021154QQT4A4v3vz","created":1791976715579,"type":"command.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22b597001Kw0akzMpks1wh9","created":1791976715671,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","ordinal":0,"delta":"The user wants me to run a simple shell command and then reply with exactly \"DONE\". This is straightforward"}}
+
+data: {"id":"evt_13a22b60e001hjyNVvIyKOyYP3","created":1791976715790,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","ordinal":0,"delta":" — just execute `"}}
+
+data: {"id":"evt_13a22b68f001s7g6pLZ4BFM25m","created":1791976715919,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","ordinal":0,"delta":"echo hello-v2-spike` and respond with DONE"}}
+
+data: {"id":"evt_13a22b6a9001DuFvX0uLlUxp3k","created":1791976715945,"type":"provider.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22b6b3001sm4X6X7MTo6K52","created":1791976715955,"type":"model.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{}}
+
+data: {"id":"evt_13a22b6b4001gCp4TLXmcYx0R1","created":1791976715956,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","ordinal":0,"delta":"."}}
+
+data: {"id":"evt_13a22b6b5001QN6AM1R1DbS00m","created":1791976715957,"type":"session.tool.input.started","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","id":"call_2e52107f35944531a9446ead","name":"shell"},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":7,"version":1}}
+
+data: {"id":"evt_13a22b70b001kq6PNOrhUAys0t","created":1791976716043,"type":"session.reasoning.ended","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","ordinal":0,"text":"The user wants me to run a simple shell command and then reply with exactly \"DONE\". This is straightforward — just execute `echo hello-v2-spike` and respond with DONE.","state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":8,"version":1}}
+
+data: {"id":"evt_13a22b70d001ZUbsi34D026ncQ","created":1791976716045,"type":"session.tool.input.ended","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","id":"call_2e52107f35944531a9446ead","text":"{\"command\":\"echo hello-v2-spike\"}"},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":9,"version":1}}
+
+data: {"id":"evt_13a22b70e0015vJK71bg0MU47P","created":1791976716046,"type":"session.tool.called","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","id":"call_2e52107f35944531a9446ead","input":{"command":"echo hello-v2-spike"},"executed":false},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":10,"version":1}}
+
+data: {"id":"evt_13a22b7100016i0OwBKBdDIF3V","created":1791976716048,"type":"session.step.streamed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6"},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":11,"version":1}}
+
+data: {"id":"evt_13a22b72c002OEEj3cDm0sOVkS","created":1791976716076,"type":"permission.asked","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"id":"per_13a22b72c001KecGVAYgo642Ed","sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","action":"shell","resources":["echo hello-v2-spike"],"save":["echo *"],"source":{"type":"tool","messageID":"msg_13a22ad99001VvGwiu5Un4zZS6","id":"call_2e52107f35944531a9446ead"}}}
+
+data: {"id":"evt_13a22b72f0010RPMj9DhZ19YdY","created":1791976716079,"type":"permission.replied","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","requestID":"per_13a22b72c001KecGVAYgo642Ed","reply":"once"}}
+
+data: {"id":"evt_13a22b732001AQVyHC14rzbCHO","created":1791976716082,"type":"shell.created","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"info":{"id":"sh_13a22b72f002aIQIoSBGpP2EDX","status":"running","command":"echo hello-v2-spike","cwd":"/tmp/opencode/sandbox-proj","shell":"/bin/bash","file":"/home/xjiang3/.local/share/opencode/shell/3812d4e55569cd47d2ee782bca1ad781c95da7fa/sh_13a22b72f002aIQIoSBGpP2EDX.out","metadata":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx"},"time":{"started":1791976716079}}}}
+
+data: {"id":"evt_13a22b732002R0R3mnWT3tOiP7","created":1791976716082,"type":"session.tool.progress","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","id":"call_2e52107f35944531a9446ead","metadata":{"shellID":"sh_13a22b72f002aIQIoSBGpP2EDX"}}}
+
+data: {"id":"evt_13a22b735001XpWbRZ3nXVDfay","created":1791976716085,"type":"shell.exited","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"id":"sh_13a22b72f002aIQIoSBGpP2EDX","exit":0,"status":"exited"}}
+
+data: {"id":"evt_13a22b736001kYxs8TlQ48WKxh","created":1791976716086,"type":"session.tool.success","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","id":"call_2e52107f35944531a9446ead","content":[{"type":"text","text":"hello-v2-spike\n"}],"metadata":{"status":"completed","truncated":false,"exit":0},"executed":false},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":12,"version":2}}
+
+data: {"id":"evt_13a22b738001icJ6hpTTcZF0oP","created":1791976716088,"type":"session.step.ended","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22ad99001VvGwiu5Un4zZS6","finish":"tool-calls","rawFinish":"tool_calls","cost":0,"tokens":{"input":3522,"output":16,"reasoning":37,"cache":{"read":1920,"write":0}}},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":13,"version":1}}
+
+data: {"id":"evt_13a22b73a001GeWyplVX2p9VWX","created":1791976716090,"type":"session.usage.updated","data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","cost":0,"tokens":{"input":3522,"output":16,"reasoning":37,"cache":{"read":1920,"write":0}}}}
+
+data: {"id":"evt_13a22b740001fmCkeqBSk6EogK","created":1791976716096,"type":"session.instructions.updated","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","delta":{"core/codemode":"7c12676bd4174ca25d46167a1d443e849dbe911b589cd60e1caa9f4a8734de57"},"text":"The Code Mode tool catalog has changed.\n\nNew tools are available in addition to those previously listed:\n  - tools.exa.web_fetch_exa({\n  /** URLs to read. Batch multiple URLs in one call. */\n  urls: Array<string>,\n  /** Maximum characters to extract per page (default: 3000). @minimum 1 */\n  maxCharacters?: number,\n}): Promise<unknown> // Read a webpage's full content as clean markdown. Use after web_search_exa when highlights are insufficient or to read...\n  - tools.exa.web_search_exa({\n  /**\n   * Natural language search query. Should be a semantically rich description of the ideal page, not just keywords. Optionally include category:<type> (company, people) to focus results — e.g. 'category:people John Doe software engineer'.\n   * @minLength 1\n   */\n  query: string,\n  /** Number of search results to return (default: 10). */\n  numResults?: number,\n}): Promise<unknown> // Search the web for any topic and get clean, ready-to-use content.\n  - tools.jira.jira_rest({\n  /** HTTP method (GET, POST, PUT, DELETE) */\n  method: \"GET\" | \"POST\" | \"PUT\" | \"DELETE\",\n  /** Jira REST API path (e.g. /issue/OS-262, /issue/OS-262/transitions, /issue/OS-262/comment) */\n  path: string,\n  /** Optional JSON request body */\n  body?: {},\n}): Promise<unknown> // Execute a Jira REST API call. Uses the tracker credentials configured in WORKFLOW.md (agent never sees tokens).\n  - tools.jira.jira_upload_attachment({\n  /** Jira issue key (e.g. OS-262) */\n  issue_key: string,\n  /** Name of the attachment file (e.g. screenshot.png) */\n  filename: string,\n  /** Base64-encoded file content */\n  content: string,\n}): Promise<unknown> // Upload a file attachment to a Jira issue. Uses the tracker credentials configured in WORKFLOW.md (agent never sees to..."},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":14,"version":2}}
+
+data: {"id":"evt_13a22bd4b001ZhOWNHpStcjGAR","created":1791976717643,"type":"session.step.started","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","agent":"build","model":{"id":"glm-5.3","providerID":"zhipuai-coding-plan","variant":"default"},"assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","started":1791976716108},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":15,"version":1}}
+
+data: {"id":"evt_13a22bd4d00142N8CvpqfBoZJp","created":1791976717645,"type":"session.reasoning.started","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":16,"version":1}}
+
+data: {"id":"evt_13a22bdb5001VUXQ9ra3tY3HwU","created":1791976717749,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"delta":"The user"}}
+
+data: {"id":"evt_13a22be2b001kV0s8cHGdjTL4z","created":1791976717867,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"delta":" asked me to run a shell command and reply with exactly \"DONE\". I"}}
+
+data: {"id":"evt_13a22beb0001Cw7xR49cpP2CH9","created":1791976718000,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"delta":" already ran the command in my previous turn. Now there's just"}}
+
+data: {"id":"evt_13a22bf2f001OidKNDul70bKe7","created":1791976718127,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"delta":" a system update about new tools, but no"}}
+
+data: {"id":"evt_13a22bfb7001MtC36IJzvywRuu","created":1791976718263,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"delta":" new user request. The previous instruction"}}
+
+data: {"id":"evt_13a22c043001zoqAY8U7IvQ3jV","created":1791976718403,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"delta":" was to reply with exactly \"DONE\" after running the command."}}
+
+data: {"id":"evt_13a22c0c4001mhCqNUnJslb2lY","created":1791976718532,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"delta":" The command ran successfully. So my"}}
+
+data: {"id":"evt_13a22c107001IOiunILEDH6H8Y","created":1791976718599,"type":"session.usage.updated","data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","cost":0,"tokens":{"input":3546,"output":26,"reasoning":284,"cache":{"read":2432,"write":0}}}}
+
+data: {"id":"evt_13a22c108001C6Z73fpvaR5ZFX","created":1791976718600,"type":"session.renamed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","title":"Running echo hello-v2-spike command"},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":18,"version":1}}
+
+data: {"id":"evt_13a22c113001C0IIev4wj82Dn6","created":1791976718611,"type":"session.reasoning.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"delta":" reply should be exactly \"DONE\"."}}
+
+data: {"id":"evt_13a22c114001GXiwrPdW2kSKVu","created":1791976718612,"type":"session.text.started","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":19,"version":1}}
+
+data: {"id":"evt_13a22c12b001bJxFx8TFw4oEDO","created":1791976718635,"type":"session.reasoning.ended","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"text":"The user asked me to run a shell command and reply with exactly \"DONE\". I already ran the command in my previous turn. Now there's just a system update about new tools, but no new user request. The previous instruction was to reply with exactly \"DONE\" after running the command. The command ran successfully. So my reply should be exactly \"DONE\".","state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":20,"version":1}}
+
+data: {"id":"evt_13a22c12c001jTD7gQyBfITwCJ","created":1791976718636,"type":"session.text.delta","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"delta":"DONE"}}
+
+data: {"id":"evt_13a22c12c002Nthaj5Bzqzf6Ip","created":1791976718636,"type":"session.text.ended","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","ordinal":0,"text":"DONE"},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":21,"version":1}}
+
+data: {"id":"evt_13a22c12e001a72kSqEneHMIEn","created":1791976718638,"type":"session.step.streamed","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7"},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":22,"version":1}}
+
+data: {"id":"evt_13a22c12f001RW26yQT2jEUVoS","created":1791976718639,"type":"session.step.ended","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","assistantMessageID":"msg_13a22b744001P2Pm5ZhmXrTDU7","finish":"stop","rawFinish":"stop","cost":0,"tokens":{"input":534,"output":3,"reasoning":73,"cache":{"read":5440,"write":0}}},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":23,"version":1}}
+
+data: {"id":"evt_13a22c1300015NZ38WEkUC6BXD","created":1791976718640,"type":"session.usage.updated","data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","cost":0,"tokens":{"input":4080,"output":29,"reasoning":357,"cache":{"read":7872,"write":0}}}}
+
+data: {"id":"evt_13a22c131001N3WCKjkbPgYHMl","created":1791976718641,"type":"session.execution.succeeded","data":{"sessionID":"ses_ec5dd53dfffei9gWH6mjRAEOPx"},"durable":{"aggregateID":"ses_ec5dd53dfffei9gWH6mjRAEOPx","seq":24,"version":1}}
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
