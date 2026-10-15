@@ -32,6 +32,8 @@ import { Scheduler } from "../scheduler/scheduler.js";
 import { TaskingError } from "../shared/errors.js";
 import { classifyOpencodeVersion, probeOpencodeVersion } from "../shared/opencode-version.js";
 import { createInitialState } from "../shared/types.js";
+import { defaultApiExec } from "../driver/api-client.js";
+import { collectWorkspaceSessionIds, sweepActiveSessions } from "../driver/sweep.js";
 import { setLocale, setTranslateWarnLogger, translate } from "../translate/locale.js";
 import { runAttempt } from "../worker/runner.js";
 import { deleteSession } from "../workspace/manager.js";
@@ -275,6 +277,31 @@ async function runStart(args: string[]): Promise<number> {
   );
   const runtimeState = () => (scheduler !== null ? scheduler.state : trackerlessState);
   const requestRefreshFn = () => scheduler?.requestRefresh() ?? false;
+
+  const sweepIds = new Set(collectWorkspaceSessionIds(configMgr.current.workspace.root));
+  if (configMgr.current.feishu.enabled) {
+    const sweepStore = new BindingStore(
+      join(configMgr.current.workspace.root, "bindings.db"),
+    );
+    try {
+      for (const s of sweepStore.listDirectSessionsByStatus("running")) {
+        if (s.session_id) sweepIds.add(s.session_id);
+      }
+    } finally {
+      sweepStore.close();
+    }
+  }
+  if (sweepIds.size > 0) {
+    await sweepActiveSessions({
+      exec: defaultApiExec(),
+      base: {
+        command: configMgr.current.opencode.command,
+        serverUrl: configMgr.current.opencode.server_url,
+      },
+      sessionIds: [...sweepIds],
+      logger,
+    });
+  }
 
   const daemon = new Daemon({
     configManager: configMgr,
