@@ -8,8 +8,8 @@
 
 ## 2. S2 turn 驱动器
 
-- [ ] 2.1 api-CLI 调用封装（写失败测试先：命令拼装（server_url 透传/sessionID 路径参数/JSON body）、成功/失败/超时解析；再实现 spawn 封装——可注入 exec 以便 mock）
-- [ ] 2.2 会话生命周期门面（写失败测试先：首 turn create 参数（location/model ref 拆分/agent/全放 ruleset）、续轮 prompt、删除；再实现，含 Model.Ref `{id,providerID,variant}` 映射）
+- [x] 2.1 api-CLI 调用封装（写失败测试先：命令拼装（server_url 透传/sessionID 路径参数/JSON body）、成功/失败/超时解析；再实现 spawn 封装——可注入 exec 以便 mock）
+- [x] 2.2 会话生命周期门面（写失败测试先：首 turn create 参数（location/model ref 拆分/agent/全放 ruleset）、续轮 prompt、删除；再实现，含 Model.Ref `{id,providerID,variant}` 映射）
 - [ ] 2.3 轮询循环（写失败测试先：outcome 三态结算、message diff 产活动事件（text/tool 详情字段）、tokens 合计口径（input+output+reasoning）、单次轮询失败不判败；再实现——用假 opencode CLI 剧本驱动）
 - [ ] 2.4 中断梯子（写失败测试先：interrupt 后宽限内出终态、宽限后清理残留、interrupt 产生 interrupted 终态；再实现）
 - [ ] 2.5 计时器矩阵（写失败测试先：pending 期间 turn_timeout/inactivity 暂停、permission_timeout 接管并倒计时、超时自动 reject 后恢复执行计时；再实现）
