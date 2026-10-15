@@ -204,6 +204,31 @@ export async function deleteSession(
   );
 }
 
+export interface SessionMessage {
+  id: string;
+  type: string;
+  content?: Array<Record<string, unknown>>;
+  tokens?: SessionTokens;
+  [key: string]: unknown;
+}
+
+export async function listSessionMessages(
+  exec: ApiExecFn,
+  base: SessionOpBase,
+  sessionID: string,
+): Promise<SessionMessage[]> {
+  const res = await execApi(
+    {
+      command: base.command,
+      serverUrl: base.serverUrl,
+      operation: "session.message.list",
+      params: { sessionID },
+    },
+    exec,
+  );
+  return (res?.data as SessionMessage[] | undefined) ?? [];
+}
+
 export async function setSessionPermissions(
   exec: ApiExecFn,
   base: SessionOpBase,

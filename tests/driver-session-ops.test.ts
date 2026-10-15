@@ -7,6 +7,7 @@ import {
   getSession,
   interruptSession,
   listPendingPermissions,
+  listSessionMessages,
   promptSession,
   replyPermission,
   setSessionPermissions,
@@ -154,5 +155,15 @@ describe("session operations", () => {
     await setSessionPermissions(exec, base, "ses_1", null);
     const args = captured.args[0] ?? [];
     expect(args[args.indexOf("--data") + 1]).toBe('{"permissions":null}');
+  });
+
+  it("listSessionMessages returns assistant messages with content arrays", async () => {
+    const { exec, captured } = recorder([
+      '{"data":[{"id":"msg_1","type":"assistant","content":[{"type":"text","text":"hi"}]},{"id":"msg_0","type":"user"}]}',
+    ]);
+    const messages = await listSessionMessages(exec, base, "ses_1");
+    expect(messages).toHaveLength(2);
+    expect(messages[0]?.id).toBe("msg_1");
+    expect(captured.args[0]?.[2]).toBe("session.message.list");
   });
 });
