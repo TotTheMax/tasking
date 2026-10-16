@@ -136,6 +136,12 @@ describe.skipIf(!enabled)("integrated direct approval E2E (semi-automated)", () 
     const bindings = new BindingStore(join(root, "b.db"));
     const feishu = new FeishuSource(config.feishu, logger);
     let cardPosted = false;
+    const stampedCards: string[] = [];
+    const originalUpdateCard = feishu.updateCard.bind(feishu);
+    feishu.updateCard = async (messageId: string, card: unknown) => {
+      stampedCards.push(JSON.stringify(card));
+      return originalUpdateCard(messageId, card);
+    };
     const originalReplyCard = feishu.replyCardInThread.bind(feishu);
     feishu.replyCardInThread = async (rootId: string, card: unknown) => {
       const res = await originalReplyCard(rootId, card);
@@ -208,6 +214,10 @@ describe.skipIf(!enabled)("integrated direct approval E2E (semi-automated)", () 
       }
       expect(cardPosted, "approval card was never posted to the thread").toBe(true);
       expect(completed, "turn did not complete after the approval").toBe(true);
+      expect(
+        stampedCards.some((c) => c.includes("已允许")),
+        "the approval card was not stamped as allowed (a timeout reject also completes the turn)",
+      ).toBe(true);
       logger.info("integrated direct approval E2E verified end to end");
     } finally {
       listener?.stop();
