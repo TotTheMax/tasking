@@ -104,6 +104,12 @@ interface ApiScriptOptions {
     content?: Array<Record<string, unknown>>;
     tokens?: { input: number; output: number; reasoning: number } | null;
   }>;
+  messagesPerTurn?: Array<
+    Array<{
+      content?: Array<Record<string, unknown>>;
+      tokens?: { input: number; output: number; reasoning: number } | null;
+    }>
+  >;
 }
 
 function apiScript(opts: ApiScriptOptions = {}) {
@@ -144,8 +150,14 @@ function apiScript(opts: ApiScriptOptions = {}) {
     }
     if (op === "session.permission.list") return ok('{"data":[]}');
     if (op === "session.message.list") {
-      const data = messages.map((m, i) => ({
-        id: `msg_${i + 1}`,
+      const turnMessages =
+        opts.messagesPerTurn && opts.messagesPerTurn.length > 0
+          ? (opts.messagesPerTurn[
+              Math.min(state.prompts.length - 1, opts.messagesPerTurn.length - 1)
+            ] ?? [])
+          : messages;
+      const data = turnMessages.map((m, i) => ({
+        id: opts.messagesPerTurn ? `msg_${state.prompts.length}_${i + 1}` : `msg_${i + 1}`,
         type: "assistant",
         content: m.content ?? [],
         ...(m.tokens
@@ -359,6 +371,33 @@ describe("runAttempt", () => {
     }
   });
 
+  it("does not re-emit earlier turns' messages across continuation turns", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 2;
+      const { exec } = apiScript({
+        messages: [{ content: [{ type: "text", text: "same history" }], tokens: null }],
+      });
+      const activity: ActivityEvent[] = [];
+      await runAttempt({
+        task: makeTask(),
+        attempt: null,
+        config,
+        promptTemplate: "do it",
+        logger,
+        trackerStateChecker: async (t) => t,
+        onActivity: (e) => activity.push(e),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
+      });
+      const texts = activity.filter((a) => a.type === "text");
+      expect(texts).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("emits turn_started event for each turn", async () => {
     const root = tempRoot();
     try {
@@ -476,7 +515,13 @@ describe("runAttempt", () => {
         logger,
         baseTokens: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
         trackerStateChecker: async (t) => t,
-        apiExec: apiScript({ sessionId: "ses_toktest" }).exec,
+        apiExec: apiScript({
+          sessionId: "ses_toktest",
+          messagesPerTurn: [
+            [{ content: [], tokens: { input: 10, output: 5, reasoning: 0 } }],
+            [{ content: [], tokens: { input: 10, output: 5, reasoning: 0 } }],
+          ],
+        }).exec,
         sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");

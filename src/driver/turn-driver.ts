@@ -106,6 +106,13 @@ function messageSettled(message: SessionMessage): boolean {
   return typeof time?.completed === "number";
 }
 
+function messageSortKey(message: SessionMessage): number {
+  const time = message.time as Record<string, unknown> | undefined;
+  const completed = typeof time?.completed === "number" ? time.completed : 0;
+  const created = typeof time?.created === "number" ? time.created : 0;
+  return completed || created;
+}
+
 export function diffMessagesToEvents(
   messages: SessionMessage[],
   seen: Map<string, string>,
@@ -113,7 +120,8 @@ export function diffMessagesToEvents(
   const events: TurnDriverEvent[] = [];
   const usage: TurnUsage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
   let lastActivityAt: number | null = null;
-  for (const message of messages) {
+  const ordered = [...messages].sort((a, b) => messageSortKey(a) - messageSortKey(b));
+  for (const message of ordered) {
     if (message.type !== "assistant") continue;
     if (!messageSettled(message)) continue;
     const fingerprint = JSON.stringify(message.content ?? []);
@@ -156,6 +164,7 @@ export interface TurnDriverOptions {
   sleep: (ms: number) => Promise<void>;
   now?: () => number;
   onEvent?: (evt: TurnDriverEvent) => void;
+  seenMessages?: Map<string, string>;
   onPendingPermissions?: (pending: PendingPermission[]) => void | Promise<void>;
   onPermissionReply?: (requestID: string, decision: PermissionDecision) => void;
   onWaitingForApproval?: (waiting: boolean) => void;
@@ -200,7 +209,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
     };
   }
 
-  const seen = new Map<string, string>();
+  const seen = opts.seenMessages ?? new Map<string, string>();
   const now = opts.now ?? Date.now;
   const startAt = now();
   let waitAccumMs = 0;

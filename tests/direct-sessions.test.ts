@@ -3137,6 +3137,39 @@ describe("DirectSessionManager /new deletes the abandoned session", () => {
   });
 });
 
+describe("DirectSessionManager cross-turn dedup", () => {
+  it("reuses one seen-message map across turns of a session", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "summary" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dedup", text: "/chat tasking 第一问" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("答一")]);
+    await mgr.whenIdle();
+    await mgr.handleThreadMessage(
+      msg({
+        message_id: "om_dedup2",
+        root_id: "om_dedup",
+        text: "第二问",
+        create_time: "1700000100",
+      }),
+    );
+    await runner.waitForCall(2);
+    const first = runner.calls[0]?.request.seenMessages;
+    const second = runner.calls[1]?.request.seenMessages;
+    expect(first).toBeDefined();
+    expect(second).toBe(first);
+    runner.finish(1, [textEvent("答二")]);
+    await mgr.whenIdle();
+  });
+});
+
 describe("DirectSessionManager first-turn approval", () => {
   it("posts an approval card to the thread when the first turn pends (session_id not yet persisted)", async () => {
     const feishu = new FakeFeishu();

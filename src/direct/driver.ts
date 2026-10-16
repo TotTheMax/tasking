@@ -25,6 +25,7 @@ export interface DirectTurnRequest {
   inactivityTimeoutMs: number;
   sleep: (ms: number) => Promise<void>;
   onEvent?: (evt: TurnDriverEvent) => void;
+  seenMessages?: Map<string, string>;
   onPendingPermissions?: (pending: PendingPermission[]) => void | Promise<void>;
   onPermissionReply?: (requestID: string, decision: "once" | "always" | "reject") => void;
   onWaitingForApproval?: (waiting: boolean) => void;
@@ -78,6 +79,7 @@ export function createDefaultTurnDriver(exec: ApiExecFn): DirectTurnDriver {
       inactivityTimeoutMs: request.inactivityTimeoutMs,
       sleep: request.sleep,
       onEvent: request.onEvent,
+      seenMessages: request.seenMessages,
       onPendingPermissions: request.onPendingPermissions,
       onPermissionReply: request.onPermissionReply,
       onWaitingForApproval: request.onWaitingForApproval,

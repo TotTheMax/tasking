@@ -65,6 +65,7 @@ export interface RunAttemptOptions {
   apiExec?: ApiExecFn;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  seenMessages?: Map<string, string>;
   interruptGraceMs?: number;
   onPendingPermissions?: (
     pending: import("../driver/session-ops.js").PendingPermission[],
@@ -136,6 +137,7 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
   let currentTask = task;
   let sessionId: string | null = opts.sessionId ?? null;
   let knownAgent: string | null = null;
+  const seenMessages = opts.seenMessages ?? new Map<string, string>();
   const baseTokens = opts.baseTokens ?? { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
 
   try {
@@ -254,6 +256,7 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
           interruptGraceMs: opts.interruptGraceMs,
           sleep,
           now: opts.now,
+          seenMessages,
           onEvent,
           onPendingPermissions: opts.onPendingPermissions,
           onPermissionReply: opts.onPermissionReply,

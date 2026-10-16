@@ -258,6 +258,44 @@ describe("runTurn", () => {
   });
 });
 
+describe("cross-turn message dedup and ordering", () => {
+  it("does not re-emit earlier turns' messages when the seen map is shared", () => {
+    const history = [
+      {
+        id: "msg_1",
+        type: "assistant",
+        content: [{ type: "text", text: "turn one" }],
+        time: { completed: 10 },
+      },
+    ];
+    const seen = new Map<string, string>();
+    const first = diffMessagesToEvents(history, seen);
+    expect(first.events).toHaveLength(1);
+    const second = diffMessagesToEvents(history, seen);
+    expect(second.events).toHaveLength(0);
+  });
+
+  it("processes messages oldest-first so the newest text wins", () => {
+    const newestFirst = [
+      {
+        id: "msg_2",
+        type: "assistant",
+        content: [{ type: "text", text: "newest" }],
+        time: { completed: 20 },
+      },
+      {
+        id: "msg_1",
+        type: "assistant",
+        content: [{ type: "text", text: "oldest" }],
+        time: { completed: 10 },
+      },
+    ];
+    const { events } = diffMessagesToEvents(newestFirst, new Map());
+    const texts = events.filter((e) => e.type === "text").map((e) => e.text);
+    expect(texts).toEqual(["oldest", "newest"]);
+  });
+});
+
 describe("runTurn timers and interrupt ladder", () => {
   function realNowScript(scripts: Script[]): { exec: ApiExecFn; calls: string[] } {
     const { exec, calls } = scriptExec(scripts);

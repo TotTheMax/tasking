@@ -117,6 +117,7 @@ export function hasStateSlot(
 }
 
 export class Scheduler extends EventEmitter {
+  private readonly seenMessagesByTask = new Map<string, Map<string, string>>();
   readonly state: OrchestratorRuntimeState;
   readonly activityStore: ActivityStore;
   private readonly deps: SchedulerDeps;
@@ -307,6 +308,7 @@ export class Scheduler extends EventEmitter {
         trackerStateChecker,
         apiExec: this.deps.apiExec,
         sleep: this.deps.sleep,
+        seenMessages: this.seenMessagesFor(task.id),
         onPendingPermissions: this.deps.approvalEvents
           ? (pending) => {
               if (pending.length > 0 && !entry.waiting_approval) {
@@ -518,6 +520,14 @@ export class Scheduler extends EventEmitter {
   async reconcileRunningIssues(): Promise<void> {
     await this.reconcileStalledRuns();
     await this.reconcileTrackerStates();
+  }
+
+  private seenMessagesFor(taskId: string): Map<string, string> {
+    const existing = this.seenMessagesByTask.get(taskId);
+    if (existing) return existing;
+    const created = new Map<string, string>();
+    this.seenMessagesByTask.set(taskId, created);
+    return created;
   }
 
   private async reconcileStalledRuns(): Promise<void> {

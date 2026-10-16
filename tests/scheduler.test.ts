@@ -664,6 +664,40 @@ describe("session ID propagation", () => {
     }
   });
 
+  it("shares one seen-message map across a task's attempts (continuation dedup)", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 1;
+      const task = makeTask({ id: "dedup-1", state: "In Progress" });
+      const tracker = mockTracker([task]);
+      const maps: Array<Map<string, string> | undefined> = [];
+      const runFn = (async (opts: { seenMessages?: Map<string, string> }) => {
+        maps.push(opts.seenMessages);
+        return {
+          status: "succeeded",
+          error: null,
+          usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+          session_id: "ses_dedup",
+          started_at: Date.now(),
+          ended_at: Date.now(),
+        };
+      }) as never;
+      vi.useFakeTimers();
+      const sched = new Scheduler({ tracker, config: () => config, logger, runAttemptFn: runFn });
+      await sched.tick();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(maps.length).toBeGreaterThanOrEqual(2);
+      expect(maps[0]).toBeDefined();
+      expect(maps[1]).toBe(maps[0]);
+      sched.stop();
+      vi.useRealTimers();
+    } finally {
+      vi.useRealTimers();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("approvalEvents carry the task id (binding lookups need issue_id)", async () => {
     const root = tempRoot();
     try {

@@ -112,6 +112,7 @@ interface SessionRuntime {
   postureOpen: boolean;
   waitingApproval: boolean;
   waitingSince: number | null;
+  seenMessages: Map<string, string>;
   heartbeatTimer: NodeJS.Timeout | null;
   collect: string[] | null;
   collectTimer: NodeJS.Timeout | null;
@@ -1267,6 +1268,7 @@ export class DirectSessionManager {
         postureOpen: false,
         waitingApproval: false,
         waitingSince: null,
+        seenMessages: new Map<string, string>(),
         heartbeatTimer: null,
         collect: null,
         collectTimer: null,
@@ -1871,6 +1873,7 @@ export class DirectSessionManager {
         inactivityTimeoutMs: config.opencode.inactivity_timeout_ms,
         sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
         onEvent,
+        seenMessages: rt.seenMessages,
         onPendingPermissions: (pending) => this.handlePendingPermissions(session.root_id, pending),
         onPermissionReply: (requestID) => this.approvals.markExpired(requestID),
         onWaitingForApproval: (waiting) => {
