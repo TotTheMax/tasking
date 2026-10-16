@@ -102,6 +102,7 @@ src/
 - **Strict TypeScript**, plus `noUncheckedIndexedAccess` (indexed access returns `T | undefined` and must be narrowed) and `noImplicitOverride`. `noPropertyAccessFromIndexSignature` and `exactOptionalPropertyTypes` are off.
 - Biome enforces style: double quotes, semicolons, trailing commas, 100-col.
 - Tests via vitest under `tests/` or co-located `src/**/*.test.ts`; HTTP tests use `tests/helpers/mock-http-server.ts`. Test timeout is 15s.
+- **opencode v2 字段纪律（Fixture 先行）**: any test mock that feeds opencode v2 JSON MUST build its response through `tests/helpers/opencode-fixtures.ts`, which clones the captured payloads under `tests/fixtures/opencode-v2/rest/` (provenance: captured) and patches only values. NEVER hand-roll a v2 payload shape — hand-written shapes drift to v1 field names (`tool`/`state.output`/`state.time`/array `session.active`) and hide field-read bugs, because the code and the mock then share the same wrong assumption. When adding or changing any v2 field read, first capture the real payload (see `tests/fixtures/opencode-v2/provenance.md` for the recipe), add it to `rest/`, then write a fixture-derived test.
 - The `WORKFLOW.md` prompt body is strict Liquid-compatible: unknown variables/filters fail rendering. Keep `tests/prompt.test.ts` green when touching templating.
 - No code comments unless explicitly requested.
 

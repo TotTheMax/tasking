@@ -66,6 +66,7 @@ v2 tokens = `{input, output, reasoning, cache{read,write}}`，无 `total`。合�
 - 单元/E2E：**假 `opencode` CLI**（`tests/helpers/opencode-mock.ts` 生成可执行脚本 + PATH 注入），剧本=spike fixtures（三态 outcome、pending/回复/超时、interrupt、权限拒绝场景）；驱动器全逻辑离线可测
 - 契约：`@opencode/sdk`（devDep，pin 2.0.29）内存运行时断言硬编码 API 形状（operation 名、decision 枚举、Model.Ref 字段）——版本区间扩容的验证工装
 - 真机：`INTEGRATION=1` 体系新增 v2 冒烟（本机 wrapper / ljw）
+- **v2 字段纪律（fixture 先行）**：mock 一律经 `tests/helpers/opencode-fixtures.ts` 从 `tests/fixtures/opencode-v2/rest/` 的真实抓取载荷派生，禁止手写 v2 形状（手写会漂回 v1 字段名，与代码共享错误假设而漏测）。本轮该纪律当场抓出 `durationMs` 读 `state.time`（真实在条目级 `time`）等错配；规则写入 AGENTS.md Conventions 与 development.md（双语）。
 - 回路：审批卡与姿态按钮进 `tests/card-roundtrip.test.ts`（三场景：再点一次/换卡后点/payload 缺字段）
 
 ### D8 切片（tasks.md 骨架）
