@@ -110,6 +110,7 @@ npm test
 - **真实 API 集成（live 环境可达时必跑）**：同样的子系统变更，在 live 测试环境可达时（本地开发含内网路由）还必须运行 `npm run test:integration`（`INTEGRATION=1`，真实飞书测试 bot/群 + 真实 Jira TEST 项目）。凭据从真实环境变量或仓库根 `.env` 文件解析（`cp .env.example .env` 填写个人测试环境）；无代码默认值——`INTEGRATION=1` 且缺失时快速失败并列出缺失键。环境不可达时（如 CI 的 ubuntu-latest）该测试被跳过，但须在 commit message 或 MR 描述中注明原因。真实集成能拦截 mock 假阳性（见 `docs/known-issues.md` 与 ADR 0010）。
 - **其他变更**：按需测试——运行路由映射表（`AGENTS.md`）中对应子系统的单测文件；若变更影响端到端行为，再加跑相关 E2E 套件。
 - **真实 opencode v2 冒烟**：`tests/integration-opencode-v2.test.ts`（`INTEGRATION=1`）自起私有 v2 `serve`（临时 config/db，provider key 取自本地 auth.json）驱动 create/prompt/pending/reply/outcome 与 interrupt；provider 由 `OPENCODE_SMOKE_MODEL`（默认 `siliconflow-cn/Qwen/Qwen3.5-4B`）决定，`OPENCODE_SMOKE_SHARED=1` 时改用机器共享服务（适合依赖 console workspace 的模型）；无 v2 二进制或无凭据、或 provider 配额耗尽时以明确原因跳过。
+- **Jira 路径真机 E2E**：`npm run test:jira-worker`（`INTEGRATION=1 JIRA_WORKER=1`）在真实 Jira TEST 项目建 issue（唯一 label 隔离候选）→ 调度器派发 → worker 建工作区 + 注入 MCP → **真实 opencode v2 turn** 建文件 → 沿真实工作流逐跳转终态 → 下一 tick 回收工作区；issue 在 finally 删除（ADR 0015）。
 - **整合真机 E2E（半自动）**：`npm run test:direct-approval`（`INTEGRATION=1 DIRECT_APPROVAL=1`）跑完整跨组件闭环——`/chat` → 直连 turn → 真实 opencode v2（受管 serve）执行 shell → 工作区 `ask` 挂起 → 真实飞书审批卡发到话题 → 人工点「允许一次」→ 真实 WS 路由回填 opencode 会话 → turn 完成。
 - **真实飞书审批卡冒烟（半自动）**：`npm run test:card-smoke`（`INTEGRATION=1 CARD_SMOKE=1`）把真实审批卡发到 intake 群，人工点「允许一次」两次，验证真实 WS 事件通道 → 路由器 → 协调器只 reply 一次并原位盖章；需测试 app 已订阅 `card.action.trigger`。
 - 新增端到端测试文件时，请同步加入 `package.json` 的 `test:e2e` 脚本文件列表。
