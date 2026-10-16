@@ -44,7 +44,13 @@ export function mapContentEntry(entry: Record<string, unknown>): TurnDriverEvent
   }
   if (type === "tool") {
     const evt: TurnDriverEvent = { type: "tool_use" };
-    if (typeof entry.tool === "string") evt.tool = entry.tool;
+    const toolName =
+      typeof entry.name === "string"
+        ? entry.name
+        : typeof entry.tool === "string"
+          ? entry.tool
+          : null;
+    if (toolName !== null) evt.tool = toolName;
     const state = entry.state as Record<string, unknown> | undefined;
     if (state) {
       if (typeof state.status === "string") evt.status = state.status;

@@ -38,6 +38,23 @@ describe("mapContentEntry", () => {
     expect(evt.durationMs).toBe(500);
   });
 
+  it("reads the tool name from the v2 `name` field (not v1 `tool`)", () => {
+    const evts = mapContentEntry({
+      type: "tool",
+      id: "call_1",
+      name: "shell",
+      executed: false,
+      state: { status: "completed", input: { command: "echo x" }, metadata: { exit: 0 } },
+    });
+    expect(evts).toHaveLength(1);
+    expect((evts[0] as Record<string, unknown>).tool).toBe("shell");
+  });
+
+  it("still accepts the legacy `tool` field", () => {
+    const evts = mapContentEntry({ type: "tool", tool: "read" });
+    expect((evts[0] as Record<string, unknown>).tool).toBe("read");
+  });
+
   it("degrades gracefully when state fields are missing", () => {
     const evts = mapContentEntry({ type: "tool", tool: "shell" }, "msg_1");
     expect(evts).toHaveLength(1);
