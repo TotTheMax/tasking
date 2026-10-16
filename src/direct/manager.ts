@@ -147,6 +147,7 @@ export class DirectSessionManager {
   private readonly cardActionSeen = new Map<string, number>();
   private readonly memberCache = new Map<string, { at: number; names: Map<string, string> }>();
   private pendingWork = 0;
+  private readonly approvalRoots = new Map<string, string>();
   private readonly approvalCards = new Map<
     string,
     { messageId: string; rootId: string; request: ApprovalRequest }
@@ -327,9 +328,16 @@ export class DirectSessionManager {
     rootId: string,
     pending: PendingPermission[],
   ): Promise<void> {
+    const bySession = new Map<string, PendingPermission[]>();
     for (const p of pending) {
+      this.approvalRoots.set(p.sessionID, rootId);
       if (this.approvals.state(p.id) !== undefined) continue;
-      this.approvals.ingest(p.sessionID, [p]);
+      const list = bySession.get(p.sessionID) ?? [];
+      list.push(p);
+      bySession.set(p.sessionID, list);
+    }
+    for (const [sessionId, items] of bySession) {
+      this.approvals.ingest(sessionId, items);
     }
   }
 
@@ -367,6 +375,8 @@ export class DirectSessionManager {
   }
 
   private sessionRootByApproval(request: ApprovalRequest): string | null {
+    const recorded = this.approvalRoots.get(request.sessionId);
+    if (recorded !== undefined) return recorded;
     for (const rootId of this.runtime.keys()) {
       const session = this.deps.store.getDirectSession(rootId);
       if (session?.session_id === request.sessionId) return rootId;

@@ -3137,6 +3137,37 @@ describe("DirectSessionManager /new deletes the abandoned session", () => {
   });
 });
 
+describe("DirectSessionManager first-turn approval", () => {
+  it("posts an approval card to the thread when the first turn pends (session_id not yet persisted)", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_appr1", text: "/chat tasking 跑个命令" }));
+    await runner.waitForCall(1);
+    const call = runner.calls[0];
+    expect(call).toBeDefined();
+    await call?.request.onPendingPermissions?.([
+      {
+        id: "per_first",
+        sessionID: "ses_first_turn",
+        action: "shell",
+        resources: ["echo x"],
+        save: ["echo *"],
+      },
+    ]);
+    expect(feishu.cards.length).toBeGreaterThan(0);
+    expect(feishu.cards[0]?.rootId).toBe("om_appr1");
+    runner.finish(0, [textEvent("done")]);
+    await mgr.whenIdle();
+  });
+});
+
 describe("DirectSessionManager turn logging", () => {
   it("logs the effective command and posture for each turn", async () => {
     const lines: string[] = [];
