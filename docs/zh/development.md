@@ -109,7 +109,8 @@ npm test
 - **Mock 驱动 E2E（硬门禁）**：修改**飞书适配器**、**Jira 适配器**、**调度器**或**飞书↔Jira comment bridge** 逻辑后，必须运行 `npm run test:e2e`（`tests/e2e.test.ts` + `tests/bridge-flow.test.ts`）。该测试无外部依赖，CI 的 `npm test` 已强制。
 - **真实 API 集成（live 环境可达时必跑）**：同样的子系统变更，在 live 测试环境可达时（本地开发含内网路由）还必须运行 `npm run test:integration`（`INTEGRATION=1`，真实飞书测试 bot/群 + 真实 Jira TEST 项目）。凭据从真实环境变量或仓库根 `.env` 文件解析（`cp .env.example .env` 填写个人测试环境）；无代码默认值——`INTEGRATION=1` 且缺失时快速失败并列出缺失键。环境不可达时（如 CI 的 ubuntu-latest）该测试被跳过，但须在 commit message 或 MR 描述中注明原因。真实集成能拦截 mock 假阳性（见 `docs/known-issues.md` 与 ADR 0010）。
 - **其他变更**：按需测试——运行路由映射表（`AGENTS.md`）中对应子系统的单测文件；若变更影响端到端行为，再加跑相关 E2E 套件。
-- **真实 opencode v2 冒烟**：`tests/integration-opencode-v2.test.ts`（`INTEGRATION=1`）自起私有 v2 `serve`（临时 config/db，provider key 取自本地 auth.json）驱动 create/prompt/pending/reply/outcome 与 interrupt；无 v2 二进制或无凭据、或 provider 配额耗尽时以明确原因跳过。
+- **真实 opencode v2 冒烟**：`tests/integration-opencode-v2.test.ts`（`INTEGRATION=1`）自起私有 v2 `serve`（临时 config/db，provider key 取自本地 auth.json）驱动 create/prompt/pending/reply/outcome 与 interrupt；provider 由 `OPENCODE_SMOKE_MODEL`（默认 `siliconflow-cn/Qwen/Qwen3.5-4B`）决定，`OPENCODE_SMOKE_SHARED=1` 时改用机器共享服务（适合依赖 console workspace 的模型）；无 v2 二进制或无凭据、或 provider 配额耗尽时以明确原因跳过。
+- **真实飞书审批卡冒烟（半自动）**：`npm run test:card-smoke`（`INTEGRATION=1 CARD_SMOKE=1`）把真实审批卡发到 intake 群，人工点「允许一次」两次，验证真实 WS 事件通道 → 路由器 → 协调器只 reply 一次并原位盖章；需测试 app 已订阅 `card.action.trigger`。
 - 新增端到端测试文件时，请同步加入 `package.json` 的 `test:e2e` 脚本文件列表。
 
 ## 开发运行

@@ -431,6 +431,7 @@ export function buildApprovalCard(
     elements.push(approvalButton("✖ 拒绝", "approve_reject", req, "danger"));
   }
   return {
+    schema: "2.0",
     config: { update_multi: true },
     header: {
       title: { tag: "plain_text", content: "权限审批" },

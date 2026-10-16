@@ -642,6 +642,12 @@ describe("approval card round-trip", () => {
     });
   }
 
+  it("is card JSON 2.0 (schema 2.0, else Feishu drops body.elements)", () => {
+    const card = approvalCard() as { schema?: string; body?: unknown };
+    expect(card.schema).toBe("2.0");
+    expect(card.body).toBeDefined();
+  });
+
   it("dispatches an allow-once button through the real router and replies once", async () => {
     const harness = startRoundTrip({
       config: makeRoundTripConfig(server),

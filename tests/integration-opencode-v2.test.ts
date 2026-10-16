@@ -10,7 +10,7 @@
  * (OPENCODE_V2_BIN overrides) or when no provider key is available.
  */
 import { execFile, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -18,7 +18,32 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const INTEGRATION = process.env.INTEGRATION === "1";
 const BIN = process.env.OPENCODE_V2_BIN ?? "opencode-v2";
 const PASSWORD = "tasking-smoke-pass";
-const MODEL = process.env.OPENCODE_SMOKE_MODEL ?? "zhipuai-coding-plan/glm-5.3";
+const MODEL = process.env.OPENCODE_SMOKE_MODEL ?? "siliconflow-cn/Qwen/Qwen3.5-4B";
+// OPENCODE_SMOKE_SHARED=1 drives the machine's own shared service instead of
+// an isolated private serve. Use it when the model depends on the user's
+// configured console workspace (e.g. opencode/deepseek-v4.1-flash).
+const SHARED = process.env.OPENCODE_SMOKE_SHARED === "1";
+
+let dir = "";
+let child: ReturnType<typeof spawn> | null = null;
+let url = "";
+let env: NodeJS.ProcessEnv = {};
+
+const PROVIDER_ENV: Record<string, string> = {
+  "zhipuai-coding-plan": "ZAI_API_KEY",
+  "siliconflow-cn": "SILICONFLOW_CN_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+  "github-copilot": "GITHUB_TOKEN",
+};
+
+function serverArgs(extra: string[]): string[] {
+  return SHARED ? ["api", ...extra] : ["api", "--server", url, ...extra];
+}
+
+function runSync(args: string[]): string {
+  const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+  return execFileSync(BIN, args, { env, encoding: "utf8", timeout: 30_000 });
+}
 
 function run(
   args: string[],
@@ -40,14 +65,50 @@ function run(
   });
 }
 
+function providerId(): string {
+  return MODEL.includes("/") ? (MODEL.split("/")[0] ?? "") : "";
+}
+
+function modelId(): string {
+  const idx = MODEL.indexOf("/");
+  return idx === -1 ? MODEL : MODEL.slice(idx + 1);
+}
+
 function readProviderKey(): string | null {
   try {
     const raw = JSON.parse(
       readFileSync(join(homedir(), ".local", "share", "opencode", "auth.json"), "utf8"),
     ) as Record<string, { key?: string }>;
-    return raw["zhipuai-coding-plan"]?.key ?? null;
+    return raw[providerId()]?.key ?? null;
   } catch {
     return null;
+  }
+}
+
+// The built-in `opencode` provider authenticates through the console token
+// (opencode-go) rather than a provider key in auth.json.
+function isBuiltinProvider(): boolean {
+  return providerId() === "opencode";
+}
+
+function providerCatalog(): { baseURL: string } | null {
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(homedir(), ".cache", "opencode", "models.json"), "utf8"),
+    ) as Record<string, { api?: string }>;
+    const entry = raw[providerId()];
+    if (entry?.api) return { baseURL: entry.api };
+  } catch {
+    void 0;
+  }
+  return null;
+}
+
+async function waitForAsync(cond: () => Promise<boolean>, timeoutMs = 60_000): Promise<void> {
+  const start = Date.now();
+  while (!(await cond())) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timeout");
+    await new Promise((r) => setTimeout(r, 500));
   }
 }
 
@@ -60,10 +121,6 @@ async function waitFor(cond: () => boolean, timeoutMs = 60_000): Promise<void> {
 }
 
 describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
-  let dir = "";
-  let child: ReturnType<typeof spawn> | null = null;
-  let url = "";
-  let env: NodeJS.ProcessEnv = {};
   let providerKey: string | null = null;
 
   beforeAll(async () => {
@@ -72,17 +129,35 @@ describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
       console.warn(`smoke skipped: ${BIN} is not opencode v2 (${version.stdout.trim()})`);
       return;
     }
-    providerKey = readProviderKey();
+    providerKey = isBuiltinProvider()
+      ? (process.env.OPENCODE_CONSOLE_TOKEN ?? "builtin")
+      : readProviderKey();
     if (providerKey === null) {
-      console.warn("smoke skipped: no zhipuai-coding-plan key in auth.json");
+      console.warn(`smoke skipped: no ${providerId()} key in auth.json`);
       return;
     }
     dir = mkdtempSync(join(tmpdir(), "tasking-smoke-"));
     mkdirSync(join(dir, "work", ".opencode"), { recursive: true });
+    mkdirSync(join(dir, "config"), { recursive: true });
     writeFileSync(
       join(dir, "work", ".opencode", "opencode.json"),
       JSON.stringify({ permissions: [{ action: "shell", resource: "*", effect: "ask" }] }),
     );
+    const catalog = isBuiltinProvider() ? null : providerCatalog();
+    if (catalog !== null) {
+      writeFileSync(
+        join(dir, "config", "opencode.json"),
+        JSON.stringify({
+          providers: {
+            [providerId()]: {
+              baseURL: catalog.baseURL,
+              models: { [modelId()]: { name: modelId() } },
+            },
+          },
+        }),
+      );
+    }
+    const envVar = PROVIDER_ENV[providerId()] ?? "OPENCODE_API_KEY";
     env = {
       ...process.env,
       OPENCODE_DISABLE_AUTOUPDATE: "1",
@@ -90,37 +165,49 @@ describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
       OPENCODE_DB: join(dir, "smoke.db"),
       OPENCODE_SERVER_PASSWORD: PASSWORD,
       OPENCODE_PASSWORD: PASSWORD,
-      ZAI_API_KEY: providerKey,
+      ...(isBuiltinProvider() ? {} : { [envVar]: providerKey }),
     };
+    if (SHARED) {
+      await waitFor(() => {
+        try {
+          const out = runSync(["--version"]);
+          return out.includes("2.");
+        } catch {
+          return false;
+        }
+      });
+      return;
+    }
     const port = 48231;
     url = `http://127.0.0.1:${port}`;
+    const serveLogPath = join(dir, "serve.log");
+    const serveLog = openSync(serveLogPath, "a");
     child = spawn(BIN, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
       cwd: join(dir, "work"),
       env,
-      stdio: "ignore",
+      stdio: ["ignore", serveLog, serveLog],
       detached: true,
     });
     child.unref();
-    await waitFor(() => {
-      try {
-        const res = execFileSyncInfo();
-        return res;
-      } catch {
-        return false;
-      }
-    });
-  });
-
-  function execFileSyncInfo(): boolean {
-    // cheap probe without spawning: rely on api server.info
-    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
     try {
-      const out = execFileSync(BIN, ["api", "--server", url, "server.info"], {
-        env,
-        encoding: "utf8",
-        timeout: 10_000,
+      await waitForAsync(probeReady, 60_000);
+    } catch (e) {
+      console.warn(
+        "smoke serve failed to become ready; serve.log:\n",
+        readFileSync(serveLogPath, "utf8").slice(0, 2000),
+      );
+      throw e;
+    }
+  }, 120_000);
+
+  async function probeReady(): Promise<boolean> {
+    try {
+      const res = await fetch(`${url}/api/info`, {
+        headers: {
+          Authorization: `Basic ${Buffer.from(`opencode:${PASSWORD}`).toString("base64")}`,
+        },
       });
-      return out.includes("version");
+      return res.ok;
     } catch {
       return false;
     }
@@ -137,20 +224,17 @@ describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
       }
     }
     if (dir !== "") rmSync(dir, { recursive: true, force: true });
-  });
+  }, 60_000);
 
   it("drives create → pending → reply → outcome", async () => {
     if (providerKey === null) return;
     const created = await run(
       [
-        "api",
-        "--server",
-        url,
-        "session.create",
+        ...serverArgs(["session.create"]),
         "--data",
         JSON.stringify({
           location: { directory: join(dir, "work") },
-          model: { id: MODEL.split("/")[1] ?? MODEL, providerID: MODEL.split("/")[0] ?? "" },
+          model: { id: modelId(), providerID: providerId() },
         }),
       ],
       env,
@@ -161,10 +245,7 @@ describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
 
     await run(
       [
-        "api",
-        "--server",
-        url,
-        "session.prompt",
+        ...serverArgs(["session.prompt"]),
         "--param",
         `sessionID=${sessionID}`,
         "--data",
@@ -174,23 +255,41 @@ describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
     );
 
     let pendingID: string | null = null;
-    const deadline = Date.now() + 120_000;
+    const deadline = Date.now() + 240_000;
+    let nudged = false;
     while (pendingID === null) {
-      if (Date.now() > deadline) throw new Error("waitFor timeout waiting for pending approval");
+      if (Date.now() > deadline) {
+        console.warn(
+          `smoke diagnostics (messages): ${sessionMessagesRaw(sessionID).slice(0, 1200)}`,
+        );
+        throw new Error("waitFor timeout waiting for pending approval");
+      }
       if (sessionHitProviderLimit(sessionID)) {
         console.warn("smoke skipped: provider quota/limit reached before the approval flow");
         return;
       }
       pendingID = execFileSyncInfoList(sessionID);
-      if (pendingID === null) await new Promise((r) => setTimeout(r, 1000));
+      if (pendingID === null) {
+        if (!nudged && Date.now() > deadline - 150_000) {
+          nudged = true;
+          await run(
+            [
+              ...serverArgs(["session.prompt", "--param", `sessionID=${sessionID}`]),
+              "--data",
+              JSON.stringify({
+                text: "You must use the shell tool now: run `echo smoke-test` with it.",
+              }),
+            ],
+            env,
+          );
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
     }
 
     const reply = await run(
       [
-        "api",
-        "--server",
-        url,
-        "session.permission.reply",
+        ...serverArgs(["session.permission.reply"]),
         "--param",
         `sessionID=${sessionID}`,
         "--param",
@@ -213,14 +312,11 @@ describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
     if (providerKey === null) return;
     const created = await run(
       [
-        "api",
-        "--server",
-        url,
-        "session.create",
+        ...serverArgs(["session.create"]),
         "--data",
         JSON.stringify({
           location: { directory: join(dir, "work") },
-          model: { id: MODEL.split("/")[1] ?? MODEL, providerID: MODEL.split("/")[0] ?? "" },
+          model: { id: modelId(), providerID: providerId() },
           permissions: [{ action: "*", resource: "*", effect: "allow" }],
         }),
       ],
@@ -229,10 +325,7 @@ describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
     const sessionID = (JSON.parse(created.stdout) as { data: { id: string } }).data.id;
     await run(
       [
-        "api",
-        "--server",
-        url,
-        "session.prompt",
+        ...serverArgs(["session.prompt"]),
         "--param",
         `sessionID=${sessionID}`,
         "--data",
@@ -242,7 +335,7 @@ describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
     );
     await new Promise((r) => setTimeout(r, 8000));
     const res = await run(
-      ["api", "--server", url, "session.interrupt", "--param", `sessionID=${sessionID}`],
+      [...serverArgs(["session.interrupt", "--param", `sessionID=${sessionID}`])],
       env,
     );
     expect(res.code).toBe(0);
@@ -254,7 +347,7 @@ describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
     try {
       const out = execFileSync(
         BIN,
-        ["api", "--server", url, "session.permission.list", "--param", `sessionID=${sessionID}`],
+        serverArgs(["session.permission.list", "--param", `sessionID=${sessionID}`]),
         { env, encoding: "utf8", timeout: 15_000 },
       );
       const data = (JSON.parse(out) as { data?: Array<{ id: string }> }).data ?? [];
@@ -264,12 +357,25 @@ describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
     }
   }
 
+  function sessionMessagesRaw(sessionID: string): string {
+    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+    try {
+      return execFileSync(
+        BIN,
+        serverArgs(["session.message.list", "--param", `sessionID=${sessionID}`]),
+        { env, encoding: "utf8", timeout: 15_000 },
+      );
+    } catch (e) {
+      return `message.list failed: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+
   function sessionHitProviderLimit(sessionID: string): boolean {
     const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
     try {
       const out = execFileSync(
         BIN,
-        ["api", "--server", url, "session.message.list", "--param", `sessionID=${sessionID}`],
+        serverArgs(["session.message.list", "--param", `sessionID=${sessionID}`]),
         { env, encoding: "utf8", timeout: 15_000 },
       );
       return /provider\.(rate-limit|quota|auth)/.test(out);
@@ -283,7 +389,7 @@ describe.skipIf(!INTEGRATION)("real opencode v2 smoke", () => {
     try {
       const out = execFileSync(
         BIN,
-        ["api", "--server", url, "session.get", "--param", `sessionID=${sessionID}`],
+        serverArgs(["session.get", "--param", `sessionID=${sessionID}`]),
         { env, encoding: "utf8", timeout: 15_000 },
       );
       return (JSON.parse(out) as { data?: { outcome?: string } }).data?.outcome ?? "";

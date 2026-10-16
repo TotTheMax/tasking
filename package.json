@@ -51,7 +51,8 @@
     "test:e2e": "vitest run tests/e2e.test.ts tests/bridge-flow.test.ts tests/trackerless.test.ts",
     "test:integration": "INTEGRATION=1 vitest run tests/integration-real.test.ts tests/integration-direct.test.ts tests/integration-opencode-v2.test.ts",
     "prepublishOnly": "npm run build",
-    "test:event-flow": "INTEGRATION=1 vitest run tests/integration-event-flow.test.ts"
+    "test:event-flow": "INTEGRATION=1 vitest run tests/integration-event-flow.test.ts",
+    "test:card-smoke": "INTEGRATION=1 CARD_SMOKE=1 vitest run tests/integration-card-smoke.test.ts"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.73.0",
