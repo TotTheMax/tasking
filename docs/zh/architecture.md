@@ -8,7 +8,7 @@
 
 ```
 Jira (结构化) ──► 确定性调度器 ──┐
-                                 ├──► 共享 Task 模型 ──► 工作区 ──► opencode run worker
+                                 ├──► 共享 Task 模型 ──► 工作区 ──► opencode v2 worker
 飞书 (直连会话) ──► direct worker ─┘
 ```
 
@@ -35,7 +35,7 @@ Jira 路径采用 Symphony 式的确定性调度,**热循环中不使用任何 L
 流程:
 
 1. **接入**:飞书 IM 文本消息 @mention 机器人后,幂等接入持久 inbox(SQLite)。
-2. **分诊**:route agent(一个 `opencode run` 子进程,使用 triage agent profile)按 tick 有界运行,通过 `inbox.pop_untriaged`/`inbox.mark_decision`/`feishu.reply` 工具读取、决策、回复。
+2. **分诊**:route agent(经 opencode api 驱动,使用 triage agent profile；**未实现**)按 tick 有界运行,通过 `inbox.pop_untriaged`/`inbox.mark_decision`/`feishu.reply` 工具读取、决策、回复。
 3. **派发**:决策为"可派发"的条目归一化为 `Task`,经共享 worker 路径派发(受同一并发预算约束),inbox 条目标记为 `dispatched`。
 
 route agent 同一时刻最多一个运行(除非另行配置),**不阻塞**结构化调度器。
@@ -46,9 +46,9 @@ route agent 同一时刻最多一个运行(除非另行配置),**不阻塞**结�
 
 - **共享 Task 模型**:Jira 归一化产出 `Task` 类型（route agent 产出为规划，未实现）。
 - **共享工作区管理器**:per-task 工作区创建/复用/hooks/安全不变式。
-- **共享 worker**:`opencode run` 子进程,OS 级进程隔离。
+- **共享 worker**:经 `opencode api` 驱动 opencode v2 会话（共享后台服务）。
 
-全局并发(`agent.max_concurrent_agents`)封顶 Jira worker 的 `opencode run` 子进程数。飞书直连会话走**独立**预算(`feishu.direct.max_concurrent`,默认 5),交互式 `/chat` 不会排在 Jira 队列之后;因此机器上的子进程总数可达两者之和。
+全局并发(`agent.max_concurrent_agents`)封顶 Jira worker 的并发 turn 数。飞书直连会话走**独立**预算(`feishu.direct.max_concurrent`,默认 5),交互式 `/chat` 不会排在 Jira 队列之后。
 
 `feishu.direct.verbosity: detailed`（默认）时每个 turn 会发一张可原地更新的**轮次卡片**(Turn card):会话状态头部 + 工具调用的折叠面板(失败默认展开)+ 控制按钮;turn 结束时该卡被封存(按钮行换成一行统计),下一轮另发一张。卡片是**过程面**,每 turn 那条完成文本是**结果面**(可引用、可搜索)。两个平台约束驱动了这个形态:飞书单卡上限 30KB 且更新为整卡替换,所以卡片按轮拆分并在单轮内做预算降级;卡片更新与话题内新消息都不产生推送通知,通知由飞书自身的会话语义负责。
 
@@ -78,23 +78,27 @@ route agent 同一时刻最多一个运行(除非另行配置),**不阻塞**结�
 
 Jira 归一化:`labels` 修剪并小写;`priority` 仅整数;`blocked_by` 从 issue link 派生;时间戳从 ISO-8601 解析。（route agent 产出的 `Task` 为规划路径，未实现。）
 
-## worker 子进程隔离
+## worker 的 opencode v2 驱动
 
-每个任务 attempt 以独立 `opencode run` 子进程执行:
+每个任务 attempt 经 `opencode api` 驱动 opencode v2 会话（tasking 0.7 要求 `opencode >=2.0 <3`，见 ADR 0035）：
 
 ```bash
-opencode run --format json --auto --dir <workspace> --agent <build> "<rendered prompt>"
+opencode api session.create --data '{"location":{"directory":"<workspace>"},"model":{...}}'
+opencode api session.prompt --param sessionID=<ses_...> --data '{"text":"<rendered prompt>"}'
+opencode api session.get / session.permission.list / session.message.list   # 轮询
+opencode api session.interrupt --param sessionID=<ses_...>                  # 超时/中止
 ```
 
-- **OS 级隔离**:每个 worker 是独立进程,cwd 为 per-task 工作区路径。
-- **权限放行**:默认追加 `--auto` 标志(`opencode.auto_approve: true`),自动放行未被 `.opencode/opencode.json` 显式拒绝的权限请求,适配无人值守运行。设为 `false` 时 agent 遇到权限确认会 hang 到 turn timeout。
-- **JSON 事件流**:所有 `opencode run` 调用使用 `--format json`,从结构化事件流中提取 session ID 与 token 用量。
-- **有界 session 续轮循环(对齐 Symphony 模式)**:worker 内 turn 1 用完整 prompt 创建 opencode session;turn 2+ 使用 `-s <sessionID>` 续接同一 session(agent 跨 turn 保持完整对话上下文)。worker 退出后,continuation retry 创建**全新 session**(不传旧 session ID),agent 从 `git log`/文件系统重新评估进度——避免对话历史膨胀和错误沿袭。每次成功后重新检查 tracker 状态,若仍活跃且未达 `max_turns`,启动续轮调用。
-- **session 生命周期管理**:turn 1 创建 session 并写入 workspace sidecar 文件(`.tasking-session.json`);turn 2+ 续接同一 session;continuation retry 全新 session;任务进入 terminal 状态触发工作区清理时,从 sidecar 读取 last session ID 执行 `opencode session delete`。
+- **共享后台服务**:默认自动发现机器上的用户级 opencode 服务（与用户自己的 TUI 同源），tasking 不管理该进程；`opencode.server_url` 可显式指定。
+- **进度与终态靠轮询**（ADR 0037）：`session.get` 的 `outcome`（succeeded/failed/interrupted）为终态；`session.message.list` 的 settled assistant 消息 diff 提供工具条目（`state.input`/`state.metadata.exit`/`state.time`）与文本；`session.permission.list` 提供待审批单。
+- **权限姿态**（ADR 0036）：`auto_approve: true` 建会话携带全放 ruleset；`false` 时听工作区 `.opencode` 规则，`ask` 会挂起并投放审批卡（见 usage）。姿态变更经 `session.update` 即时生效。
+- **有界 session 续轮循环**:worker 内 turn 1 用完整 prompt 创建 opencode session;turn 2+ 对同一 session 继续 `session.prompt`(agent 跨 turn 保持完整对话上下文)。worker 退出后,continuation retry 创建**全新 session**。每次成功后重新检查 tracker 状态,若仍活跃且未达 `max_turns`,启动续轮调用；agent 每 turn 重解析并在 turn 边界经会话切换生效。
+- **session 生命周期管理**:turn 1 创建 session 并写入 workspace sidecar 文件(`.tasking-session.json`);turn 2+ 复用同一 session;任务进入 terminal 状态触发工作区清理时,从 sidecar 读取 last session ID 删除会话。
 - **attempt 生命周期**:经历 `preparing_workspace` → `building_prompt` → `launching_agent` → `finishing`,终态为 `succeeded`/`failed`/`timed_out`/`stalled`/`canceled_by_reconciliation`。
-- **失败分类**:墙钟超时(`turn_timeout_ms`)→ `timed_out`(`turn_timeout`);不活跃超时(`inactivity_timeout_ms`)→ `timed_out`(`inactivity_timeout`);子进程异常退出 → `failed`;停滞(scheduler 检测)→ `stalled`。
-- **三层超时模型**:不活跃超时(10min,subprocess 层,stdout/stderr 无数据即杀)→ 墙钟超时(1h,绝对上限,到点必杀)→ 停滞超时(2h,scheduler 层,worker 整体卡死兜底)。三层独立运行,先触发者先终止子进程。不活跃和墙钟在 subprocess 内先发 SIGTERM(仅父进程),10s 宽限未退出则升级为进程组 SIGKILL(与 `tasking stop` 的 daemon 终止节奏一致,见 ADR 0020);停滞在 scheduler 层通过 AbortSignal 直接进程组 SIGKILL。
-- **token 提取**:从 `opencode run --format json` 的 `step_finish` 事件累加 `part.tokens`;不可用时回退到进程级计时。
+- **失败分类**:墙钟超时(`turn_timeout_ms`)→ `timed_out`(`turn_timeout`);不活跃超时(`inactivity_timeout_ms`)→ `timed_out`(`inactivity_timeout`);会话 failed 终态 → `failed`;停滞(scheduler 检测)→ `stalled`。
+- **计时器矩阵**:不活跃超时(10min,轮询周期无新消息)→ 墙钟超时(1h,执行预算)→ 停滞超时(2h,scheduler 层)。**等待审批期间不活跃与墙钟暂停**,由审批预算(30min)接管并自动拒绝。超时/中止走中断梯子(`session.interrupt` → 短宽限 → 清理残留 api 进程),不再有进程组击杀。
+- **token 提取**:轮询到的消息与会话 tokens 累加(合计 = input+output+reasoning,cache 单列);不可用时回退到计时。
+- **daemon 重启清扫**:启动时对持久记录的会话经 `session.active` 过滤，仍在执行的补发 `interrupt`，任务按失败进正常重试。
 - **工作区保留**:成功 attempt 后不删除工作区,供后续续轮复用。
 
 启动 worker 前,强制三条安全不变式(见下文)。
@@ -184,4 +188,4 @@ Scheduler 继承 `EventEmitter`,在 dispatch/workerExit/retry/reconcile 时 emit
 
 ## 设计出处
 
-本架构移植自 [Symphony](https://github.com/openai/symphony) SPEC,做了三个替换(Linear→Jira、Codex app-server→`opencode run`、Elixir→TypeScript)并规划一个增量(route agent + inbox，**未实现**)。完整设计决策见 `openspec/changes/bootstrap-tasking-runtime/design.md`。
+本架构移植自 [Symphony](https://github.com/openai/symphony) SPEC,做了三个替换(Linear→Jira、Codex app-server→opencode v2 API、Elixir→TypeScript)并规划一个增量(route agent + inbox，**未实现**)。完整设计决策见 `openspec/changes/bootstrap-tasking-runtime/design.md`。

@@ -1,0 +1,7 @@
+# Three-tier permission model with synchronous approval
+
+Permissions are layered: ① the workspace's own `.opencode/opencode.json` rules (user-owned; tasking injects only `mcp.servers`), ② a session-level ruleset (`session.create` carries an allow-all ruleset when `auto_approve: true`; posture buttons and `/auto` translate to `session.update` open/recall, effective immediately), ③ per-request approval cards (`decision: once | always | reject`). `auto_approve: false` now means "ask permissions pend for approval" instead of v1's "auto-reject".
+
+**Context.** v1 had only `--auto`: all-or-nothing per turn, and `ask` permissions were auto-rejected because a non-interactive `run` has nobody to answer. v2 sessions can pend a permission and any client may reply, which makes human-in-the-loop approvals possible for the first time (the spike verified the full reply loop on 2.0.29, including `always` saving a pattern rule server-side).
+
+**Consequences.** Jira tasks default `auto_approve: true` (unchanged unattended behaviour); setting it false now yields real approvals in the bound thread. Direct sessions default `false`: the thread gets approval cards with allow-once/always/reject, and the posture buttons recall/open the session ruleset. "Always" rules live in opencode's own saved permissions (machine-level, per command pattern) and are not managed by tasking. Waiting pauses the execution and inactivity timers while a dedicated permission budget (`opencode.permission_timeout_ms`, default 30 minutes) runs; expiry auto-rejects and the turn continues.

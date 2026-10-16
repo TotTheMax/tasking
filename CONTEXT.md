@@ -23,7 +23,7 @@ A single dispatch of a Task to a worker; `null` on first dispatch, incremented o
 _Avoid_: Run, iteration
 
 **Turn**:
-One invocation of `opencode run` within an attempt; the worker loops turns up to `max_turns`, persisting the opencode session between turns.
+One prompt-driven unit within an attempt, submitted through the opencode v2 API; the worker loops turns up to `max_turns`, reusing the same opencode session between turns.
 
 **Workspace**:
 A per-task directory (a cloned repo) where the agent runs; preserved across review pauses, removed on terminal.
@@ -233,6 +233,14 @@ _Avoid_: 按钮事件, card callback
 The single result a direct session posts when a turn ends — that turn's final answer plus its stats line. It is a plain text message under `summary`/`quiet` and a markdown result card under `detailed`; the process-only turn card never repeats it.
 _Avoid_: summary message, result message
 
+**Approval card (审批卡)**:
+The Feishu card that represents one pending permission request — allow once / always allow / reject — posted into the topic that owns the turn (the bound Jira thread or the direct session thread). It stamps in place once resolved (allowed/rejected/timed out/cancelled/handled elsewhere) and stays as a record.
+_Avoid_: 权限弹窗, permission prompt, approval dialog
+
+**Permission posture (权限姿态)**:
+The session-level decision of whether `ask` permissions pend for approval or run without asking — the v2 replacement for v1's `--auto` flag. Open (allow-all session ruleset) / once (open until the next turn boundary) / default (follow the workspace's own rules); toggled by the card buttons and `/auto`, applied through `session.update`.
+_Avoid_: auto mode, --auto, bypass
+
 ### Interaction surfaces (交互面)
 
 **回访路径 (revisit path)**:
@@ -279,16 +287,16 @@ _Avoid_: Settings screen, config dump
 The order `tasking tui` picks the dashboard port: explicit `--port`, then the `.tasking/daemon.json` port in the current directory, then a probed fallback of `8080`. Lets `tui` attach to the local daemon via daemon.json, or to any daemon on a conventional port (e.g. remote) without local metadata.
 _Avoid_: Port guessing, auto-discovery
 
-**Opencode event stream**:
-The newline-delimited JSON events opencode emits on stdout with `opencode run --format json` — `step_start` / `step_finish` (token usage) / `text` (assistant text) / `tool_use` (tool calls, carrying the full execution detail in `part.state`); the source of a running task's activity data.
-_Avoid_: opencode stdout, event log
+**Activity snapshot (活动快照)**:
+A polled `session.message.list` diff of an opencode v2 session's settled assistant messages — their `content[]` entries (text and tool calls) and per-message tokens; the source of a running task's activity data. Replaces the v1 stdout event stream.
+_Avoid_: event stream, opencode stdout, SSE
 
 **Tool call (工具调用)**:
-A single tool invocation in the activity stream (from opencode's `tool_use` event), captured with its execution detail — the arguments (`state.input`, e.g. the bash `command`), stdout (`state.output`), exit code (`state.metadata.exit`), a ready-made one-line summary (`state.title`), and duration (`state.time`). The activity view shows the summary inline and the full detail on expand.
+A single tool invocation in the activity snapshot (a `type:"tool"` entry in a settled assistant message), captured with its execution detail — the arguments (`state.input`, e.g. the bash `command`), stdout (`state.output`), exit code (`state.metadata.exit`), and duration (`state.time`). The activity view shows the summary inline and the full detail on expand.
 _Avoid_: Tool use, tool event
 
 **Activity view (活动视图)**:
-A TUI mode (key `a` from `detail-running`) that renders a running task's opencode interaction stream — assistant text, tool calls (one-line execution summaries that expand to the full command/arguments/output/duration), step token deltas, plus the current model/agent/variant — sampled from the in-memory `ActivityStore` at 1 Hz. Serves requirement "对用户透明友好" (transparent view of what the agent is doing).
+A TUI mode (key `a` from `detail-running`) that renders a running task's opencode activity snapshot — assistant text, tool calls (one-line execution summaries that expand to the full command/arguments/output/duration), step token deltas, plus the current model/agent/variant — sampled from the in-memory `ActivityStore` at 1 Hz. Serves requirement "对用户透明友好" (transparent view of what the agent is doing).
 _Avoid_: Activity monitor, event viewer
 
 **Log view (日志视图)**:
@@ -308,7 +316,7 @@ The TUI scrolling convention shared by Log, Config, and Activity views: `↓`/wh
 _Avoid_: Inverted scroll, natural scrolling
 
 **Step usage (步骤用量)**:
-The per-request token report opencode attaches to each `step_finish` event: `input`, `output`, `reasoning`, and `cache.read`/`cache.write`. Its `total` field folds in cache re-reads (every request re-reads the whole context), so `total` grows monotonically across requests. tasking intentionally sums these `total` values for daemon-wide cost accounting (see ADR 0013).
+The per-message token report opencode v2 attaches to a settled assistant message: `input`, `output`, `reasoning`, and `cache.read`/`cache.write` (no `total` field). tasking sums `input + output + reasoning` for daemon-wide accounting, counting cache reads separately (see ADR 0037).
 _Avoid_: Cumulative tokens, session tokens
 
 ### Agent selection

@@ -1,5 +1,7 @@
 # Three-Layer Timeout Model
 
+> **Updated in 0.7**: the worker now drives opencode v2 sessions through `opencode api` (ADR 0035); subprocesses and process-group kills are gone, and timeouts/aborts use the interrupt ladder (`session.interrupt` → short grace → clean up residual api processes). The subprocess-layer/process-group-SIGKILL mechanics below describe 0.6.x (the `support/v1` branch); the v2 timer matrix lives in [Architecture](./architecture.md) and ADR 0037.
+
 The tasking worker subprocess (`opencode run`) uses three layers of timeout protection. Each layer operates independently; whichever triggers first terminates the subprocess. Subprocess-layer timeouts escalate: SIGTERM for graceful exit → 10s kill grace → process-group SIGKILL (see ADR 0020).
 
 ## Model Overview

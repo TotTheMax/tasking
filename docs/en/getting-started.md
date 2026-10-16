@@ -9,7 +9,7 @@ The shortest path to a running tasking. Two routes: **Feishu direct** (the defau
 | Item | Check |
 |------|-------|
 | Node.js 22+ | `node --version` ≥ v22 |
-| opencode CLI on `PATH` | `opencode --version` (see [opencode.ai](https://opencode.ai)) |
+| opencode **v2** (`>=2.0 <3`) on `PATH` | `opencode --version` (see [opencode.ai](https://opencode.ai); upgrade from v1 with `opencode upgrade --major`) |
 | Feishu custom-app admin | required for the direct mainline (below) |
 | Jira account | only when connecting Jira (chapter 2) |
 
@@ -149,7 +149,7 @@ env:
   GITLAB_TOKEN: glpat-xxxxxxxxxxxxxxxxxxxx
   GITLAB_HOST: 192.168.10.180
 opencode:
-  command: opencode run
+  command: opencode
   agent: build
 ```
 

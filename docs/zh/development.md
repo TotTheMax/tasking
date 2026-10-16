@@ -8,7 +8,7 @@
 |------|------|------|
 | Node.js | 22+ | 运行时与构建工具链;`package.json` 的 `engines` 字段声明 `>=22` |
 | npm | 10+ | 随 Node 安装 |
-| opencode CLI | 与本机 opencode 版本一致 | worker 子进程依赖;本地开发需在 `PATH` 上可执行 `opencode run` |
+| opencode CLI | **v2**（`>=2.0 <3`） | worker 经 `opencode api` 驱动；本地开发需在 `PATH` 上可执行 `opencode`（v1 请 `opencode upgrade --major`） |
 | Jira 凭据 | 可选 | 真实集成测试从真实 `JIRA_E2E_*` 环境变量或仓库根 `.env` 文件解析（`cp .env.example .env` 填写个人环境；无代码默认值——`INTEGRATION=1` 且缺失时快速失败并列出缺失键）；未设 `INTEGRATION=1` 时该测试干净跳过 |
 | 飞书凭据 | 可选 | 真实集成测试从真实 `FEISHU_E2E_*` 环境变量或仓库根 `.env` 文件解析（同上）；未设 `INTEGRATION=1` 时干净跳过 |
 
@@ -49,7 +49,7 @@ src/
 │   └── manager.ts    # 动态 watch + 重载(保留上一良好配置)
 ├── scheduler/        # 结构化调度器(Symphony 式确定性调度)
 │   └── scheduler.ts  # 轮询 tick、状态机、并发、退避 retry、reconcile
-├── worker/           # opencode run 子进程 worker
+├── worker/           # turn 循环（经 opencode v2 api 驱动）
 │   ├── runner.ts     # 子进程启动、续轮循环、失败分类、token 提取
 │   └── prompt.ts     # 严格 Liquid 模板渲染、续轮指引构建
 ├── workspace/        # per-task 工作区管理与安全不变式
@@ -86,7 +86,7 @@ src/
 | `npm test` | 运行全部测试 | `vitest run`,CI 必须通过 |
 | `npm run test:watch` | 测试监听模式 | `vitest`,开发时自动重跑 |
 | `npm run test:e2e` | 运行 mock 驱动的端到端测试 | `vitest run tests/e2e.test.ts tests/bridge-flow.test.ts`（调度链路 + 飞书↔Jira bridge 全流程） |
-| `npm run test:integration` | 运行真实 API 集成测试 | `INTEGRATION=1 vitest run tests/integration-real.test.ts`（真实飞书测试 bot/群 + 真实 Jira TEST 项目） |
+| `npm run test:integration` | 运行真实 API 集成测试 | `INTEGRATION=1 vitest run tests/integration-real.test.ts tests/integration-direct.test.ts tests/integration-opencode-v2.test.ts`（真实飞书测试 bot/群 + 真实 Jira TEST 项目 + 真实 opencode v2 冒烟） |
 
 ### 构建产物
 
@@ -109,6 +109,7 @@ npm test
 - **Mock 驱动 E2E（硬门禁）**：修改**飞书适配器**、**Jira 适配器**、**调度器**或**飞书↔Jira comment bridge** 逻辑后，必须运行 `npm run test:e2e`（`tests/e2e.test.ts` + `tests/bridge-flow.test.ts`）。该测试无外部依赖，CI 的 `npm test` 已强制。
 - **真实 API 集成（live 环境可达时必跑）**：同样的子系统变更，在 live 测试环境可达时（本地开发含内网路由）还必须运行 `npm run test:integration`（`INTEGRATION=1`，真实飞书测试 bot/群 + 真实 Jira TEST 项目）。凭据从真实环境变量或仓库根 `.env` 文件解析（`cp .env.example .env` 填写个人测试环境）；无代码默认值——`INTEGRATION=1` 且缺失时快速失败并列出缺失键。环境不可达时（如 CI 的 ubuntu-latest）该测试被跳过，但须在 commit message 或 MR 描述中注明原因。真实集成能拦截 mock 假阳性（见 `docs/known-issues.md` 与 ADR 0010）。
 - **其他变更**：按需测试——运行路由映射表（`AGENTS.md`）中对应子系统的单测文件；若变更影响端到端行为，再加跑相关 E2E 套件。
+- **真实 opencode v2 冒烟**：`tests/integration-opencode-v2.test.ts`（`INTEGRATION=1`）自起私有 v2 `serve`（临时 config/db，provider key 取自本地 auth.json）驱动 create/prompt/pending/reply/outcome 与 interrupt；无 v2 二进制或无凭据、或 provider 配额耗尽时以明确原因跳过。
 - 新增端到端测试文件时，请同步加入 `package.json` 的 `test:e2e` 脚本文件列表。
 
 ## 开发运行

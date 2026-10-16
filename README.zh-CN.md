@@ -9,7 +9,7 @@
 - **结构化（Jira）：** 确定性的轮询/派发/对账/重试调度器——热循环中无 LLM。
 - **飞书：** 群内 `/chat` 直接跑 opencode 的直连会话，加上与 Jira 的评论双向镜像桥。LLM `route agent`（inbox 分诊）**未实现**。
 
-两者汇聚到共享的 `Task` 模型、共享的工作区管理器与共享的 `opencode run` worker。
+两者汇聚到共享的 `Task` 模型、共享的工作区管理器与共享的 opencode v2 worker（经 `opencode api` 驱动；tasking 0.7 要求 `opencode >=2.0 <3`）。
 
 `tasking` 在调度层面参考了 [Symphony](https://github.com/openai/symphony)的协调模型，在此基础进行扩展。
 
@@ -63,7 +63,7 @@ tasking logs       # 查看近期结构化日志
 - `workspace.root` — 每任务工作区根（默认 `<tmp>/tasking_workspaces`）
 - `hooks.*` — `after_create` / `before_run` / `after_run` / `before_remove` shell hooks
 - `agent.*` — `max_concurrent_agents`、`max_turns`、`max_retry_backoff_ms`、按状态上限
-- `opencode.*` — worker 命令（默认 `opencode run`）、agent profile、turn/stall 超时
+- `opencode.*` — opencode 命令（默认 `opencode`）、agent profile、model/variant、turn/stall/审批超时、轮询间隔
 - `router.*` — **未实现**：resolver 会解析但无运行时代码消费（预留供将来 route agent 分诊）
 - `feishu.*` — 飞书源应用凭据与 `enabled` 标志；`feishu.direct` 启用 `/chat` 固定目录 opencode 直连会话（绕过 Jira；见 `docs/configuration.md`）
 - `server.port` — 可选 HTTP dashboard 端口
@@ -74,13 +74,13 @@ prompt 正文是严格 Liquid 兼容模板，带 `task`（或 `issue`）与 `att
 
 ```
 Jira (structured) ──► deterministic scheduler ──┐
-                                                  ├──► shared Task model ──► workspace ──► opencode run
+                                                  ├──► shared Task model ──► workspace ──► opencode v2 (api)
 Feishu (direct sessions) ──► direct worker ──┘
 ```
 
 - **结构化路径：** Symphony 式轮询 tick → 状态机 → 对账 → 指数退避重试。热循环中无 LLM。
 - **飞书路径：** 群内 `/chat` 直连会话（在配置目录跑 opencode，一个话题一个会话），加上 issue 话题 ↔ Jira 评论的双向镜像桥。规划的 route agent inbox 分诊**未实现**。
-- **Worker：** `opencode run --dir <workspace> --agent <build> "<prompt>"` 子进程，按任务做 OS 级隔离。
+- **Worker：** 按任务经 `opencode api` 驱动 opencode v2 会话（`session.create` → `session.prompt` → 轮询 → `session.interrupt`）。
 - **状态：** 编排器调度状态在内存中（重启 = 重新轮询 tracker）；直连会话绑定是持久 SQLite。
 
 完整设计决策见 [`openspec/changes/archive/2026-06-23-bootstrap-tasking-runtime/design.md`](./openspec/changes/archive/2026-06-23-bootstrap-tasking-runtime/design.md)。
@@ -97,7 +97,7 @@ Feishu (direct sessions) ──► direct worker ──┘
 
 `tasking` 面向**可信环境**、高信任配置：
 
-- `opencode run` worker 以 daemon 的 OS 权限运行。按需用 opencode 的 approval/sandbox 设置收紧执行。
+- opencode worker 以 daemon 的 OS 权限运行。按需用 opencode 的 approval/sandbox 设置收紧执行；`ask` 权限会以飞书审批卡呈现。
 - **Hook 脚本完全可信** — `WORKFLOW.md` hooks（`after_create`、`before_run` 等）以 `bash -lc` 在工作区目录运行任意 shell。只运行你可控来源的 hook。
 - 工作区 hooks 受 `hooks.timeout_ms`（默认 60s）约束，避免 daemon 挂起。
 - 编排器**不做 tracker 写入** — 工单变更（状态流转、评论）发生在 coding agent 内部经其工具完成，而非编排器业务逻辑。
@@ -105,7 +105,7 @@ Feishu (direct sessions) ──► direct worker ──┘
 
 ### Approval 与 sandbox 策略
 
-Approval、sandbox 与用户输入行为委托给 `opencode run` 自身策略。通过 `opencode.*` 块配置。需要用户输入的运行视为硬失败（不会无限 stall）。
+Approval 与 sandbox 行为委托给 opencode 自身的权限策略，经 `opencode.*` 块与各工作区的 `.opencode` 配置设定。`ask` 权限会挂起等待飞书审批卡（默认 30 分钟预算，到点自动拒绝）。
 
 ## 开发
 
@@ -123,3 +123,11 @@ npm run dev -- start  # 经 tsx 运行
 MIT——见 [LICENSE](./LICENSE)。
 
 tasking 的调度模型与内置 agent 技能借鉴自 [openai/symphony](https://github.com/openai/symphony)（Apache-2.0），其许可声明适用于这些部分。
+
+
+## 0.7.0 破坏性变更
+
+- **要求 opencode v2**：tasking 0.7 要求 `opencode >=2.0 <3`，v1 或 v3+ 拒绝启动（用 `opencode upgrade --major` 升级）。opencode v1 支持冻结在 `support/v1` 分支（0.6.x）。
+- **`opencode.command` 默认值** 从 `opencode run` 改为 `opencode`；已有 `WORKFLOW.md` 需相应修改。
+- **`auto_approve: false` 语义变更**：`ask` 权限改为挂起等待飞书审批卡（v1 是自动拒绝）；`--auto`/`--dir`/`--variant` 标志已移除。
+- **进度改为轮询**（默认每 2 秒）；token 合计 = `input + output + reasoning`（v2 无 `total` 字段）。

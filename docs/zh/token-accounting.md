@@ -1,5 +1,7 @@
 # Token 记账规则
 
+> **0.7 更新**：token 来源已从 `opencode run --format json` 事件流改为轮询 v2 会话消息（`session.message.list` / `session.get`）。v2 的 tokens 为 `{input, output, reasoning, cache}`（**无 `total`**），合计口径 = `input + output + reasoning`，cache 单列（ADR 0037）。下文事件流模型对应 0.6.x。
+
 > 适配 tasking 的 `opencode run --format json` 事件模型。
 
 ## 基本原则

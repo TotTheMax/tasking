@@ -114,7 +114,7 @@ Worker concurrency and retry strategy.
 
 | Field | Type | Default | Required | Description |
 |------|------|--------|------|------|
-| `max_concurrent_agents` | integer | `10` | no | Caps concurrent Jira worker `opencode run` subprocesses. Feishu direct sessions run on a separate budget (`feishu.direct.max_concurrent`), so the machine-wide subprocess total can reach the sum of the two |
+| `max_concurrent_agents` | integer | `10` | no | Caps concurrent Jira worker turns. Feishu direct sessions run on a separate budget (`feishu.direct.max_concurrent`). |
 | `max_turns` | positive integer | `20` | no | Upper bound on session continuation turns within one worker. Turn 1 creates an opencode session, turns 2+ use `-s <sessionID>` to continue the same session (the agent retains full conversation context across turns). After the worker exits, a continuation retry creates a brand-new session (the agent re-evaluates progress from `git log`). Set to `1` for single-turn execution only. |
 | `max_retry_backoff_ms` | integer | `300000` (5 minutes) | no | Cap on the failure backoff delay |
 | `max_concurrent_agents_by_state` | map<string, positive integer> | `{}` | no | Per-state concurrency caps; state keys are lowercased; non-positive or non-numeric entries are ignored |
@@ -132,21 +132,24 @@ The key `In Progress` is normalized to `in progress` for lookup; unconfigured st
 
 ## `opencode` Block
 
-Worker (`opencode run` subprocess) configuration.
+Configuration for the worker's opencode v2 driver (tasking 0.7 requires `opencode >=2.0 <3` and drives turns through `opencode api`; see ADR 0035).
 
 | Field | Type | Default | Required | Description |
 |------|------|--------|------|------|
-| `command` | string (shell) | `opencode run` | yes (dispatch) | Worker startup command; split on whitespace into command + args |
-| `agent` | string | `build` | no | `--agent` argument value, i.e. the opencode agent profile; the per-task fallback default |
+| `command` | string (shell) | `opencode` | yes (dispatch) | opencode executable command; split on whitespace into command + args (no longer contains `run` since 0.7) |
+| `agent` | string | `build` | no | Session agent, i.e. the opencode agent profile; the per-task fallback default |
 | `agents` | string[] | `[]` | no | Advisory catalog of known opencode agent profiles; when non-empty it is surfaced by the `/agent` command and gives a friendly hint for unknown names; when empty no validation is performed (any `agent:<name>` label passes through). It is not a hard allowlist |
-| `model` | string\|null | `null` | no | `--model` argument value (`provider/model` format); when `null` or empty string, the flag is not appended and opencode's default model is used |
-| `variant` | string\|null | `null` | no | `--variant` argument value (provider-specific reasoning tier, e.g. `high`/`max`/`minimal`); when `null` or empty string, the flag is not appended. Independent of `model` |
-| `turn_timeout_ms` | integer | `3600000` (1 hour) | no | Hard wall-clock total timeout for a single turn; kills on expiry regardless of activity. On timeout the attempt is marked `timed_out` (`turn_timeout`) |
-| `stall_timeout_ms` | integer | `7200000` (2 hours) | no | Stall detection threshold (scheduler layer, checks whether the worker is stuck); `<= 0` disables. Set to a value greater than `turn_timeout_ms` to ensure it only acts as a fallback when both wall-clock and inactivity have failed |
-| `inactivity_timeout_ms` | integer | `600000` (10 minutes) | no | Inactivity timeout (subprocess layer, checks raw stdout/stderr bytes); the timer is reset when data is received, and if silent for longer than this value, the process is terminated with SIGTERM. `<= 0` disables the inactivity timeout |
-| `auto_approve` | boolean | `true` | no | Auto-approve opencode permission requests (appends the `--auto` flag); when `false`, you must configure permission rules manually via `.opencode/opencode.json` |
+| `model` | string\|null | `null` | no | `provider/model` format, mapped to the session's `Model.Ref`; when `null` or empty, the server default model is used |
+| `variant` | string\|null | `null` | no | Provider-specific reasoning tier (e.g. `high`/`max`/`minimal`), mapped to `Model.Ref.variant`. Independent of `model` |
+| `turn_timeout_ms` | integer | `3600000` (1 hour) | no | Wall-clock execution timeout for a single turn (**paused while waiting for approval**); on expiry the interrupt ladder runs and the attempt is marked `timed_out` (`turn_timeout`) |
+| `stall_timeout_ms` | integer | `7200000` (2 hours) | no | Stall detection threshold (scheduler layer); `<= 0` disables. A turn waiting for approval is never judged stalled |
+| `inactivity_timeout_ms` | integer | `600000` (10 minutes) | no | Inactivity timeout (no new messages across poll cycles, **paused while waiting for approval**); `<= 0` disables |
+| `auto_approve` | boolean | `true` | no | Session-level permission posture: `true` creates the session with an allow-all ruleset (overriding workspace `ask` rules); `false` follows the workspace's rules — **`ask` permissions then pend for an approval card** (v1's "auto-reject" semantics are retired; see ADR 0036) |
+| `poll_interval_ms` | integer | `2000` | no | Poll interval (progress/approvals/terminal state all read at this cadence; see ADR 0037) |
+| `permission_timeout_ms` | integer | `1800000` (30 minutes) | no | Approval wait budget; takes over timing while a permission pends, then auto-rejects and stamps the card |
+| `server_url` | string\|null | `null` | no | Escape hatch: when non-empty every api call passes `--server <url>`; default auto-discovers the machine's shared background service |
 
-The actual worker startup command is: `<command> [--auto] --dir <workspace> --agent <agent> [--model <model>] [--variant <variant>] "<prompt>"`. `--model`/`--variant` are appended only when the corresponding field is non-empty. The `--agent` value is re-resolved each turn from the task's `agent:<name>` label (if present), falling back to `opencode.agent`; see the `/agent` command in the [Feishu↔Jira comment bridge](./usage.md) and ADR 0011.
+Turns are driven through `opencode api`: the first turn runs `session.create` (explicit location = workspace, `Model.Ref`, allow-all ruleset when configured) then `session.prompt`; progress and terminal state come from polling `session.get` / `session.permission.list` / `session.message.list`; timeouts/aborts go through `session.interrupt`. The `agent` is re-resolved each turn from the task's `agent:<name>` label (if present), falling back to `opencode.agent`, and switches at turn boundaries; see the `/agent` command in the [Feishu↔Jira comment bridge](./usage.md) and ADR 0011.
 
 ## `router` Block
 
@@ -195,7 +198,7 @@ Feishu direct-to-opencode session configuration. When `feishu.enabled` is true, 
 | `enabled` | boolean | `true` (when the section exists) | no | An explicit `enabled: false` inside the section turns direct sessions off |
 | `projects` | map (name → path string, or `{ path, auto_approve }`) | `{}` | no | Project name → directory mapping, used by `/chat <project> <msg>`. The object form's `auto_approve` overrides the global value |
 | `path_roots` | string[] | `[]` | no | Directory prefix whitelist for ad-hoc path mode (`/chat /abs/path <msg>`); empty = unrestricted |
-| `auto_approve` | boolean | `false` | no | When true, passes `--auto` to `opencode run` (auto-approves permissions not explicitly denied). Default false: the permission stance is governed by the target directory's own `.opencode` permission config — `ask` entries are safely auto-rejected and reported in the turn summary |
+| `auto_approve` | boolean | `false` | no | When true, the session carries an allow-all ruleset (auto-approves permissions not explicitly denied). Default false: the permission stance is governed by the target directory's own `.opencode` permission config — `ask` entries **pend for an approval card** (since 0.7; v1's auto-reject is retired) |
 | `verbosity` | `quiet`\|`summary`\|`detailed` | `detailed` | no | How much is mirrored to Feishu: `quiet` posts only the final answer text (permission-rejection notices kept); `summary` adds a one-line stats footer (⏱/🔧/tokens) — the explicit fallback for older clients; `detailed` (default) posts one updatable per-turn process card (collapsible tool panels + interrupt/retry/full-output/end buttons; failed panels expanded) plus a markdown result card rendered at turn end (headings/tables/code blocks render; oversized answers are sent as a `.md` attachment). Collapsible panels need Feishu/Lark client >= V7.9; older clients render an upgrade placeholder (result delivery unaffected) |
 | `max_concurrent` | integer | `5` | no | Daemon-wide cap on concurrent direct turns (independent of Jira's `max_concurrent_agents`); turns are always serialized per directory/session |
 | `idle_ttl_ms` | integer | `2592000000` (30 days) | no | How long an idle session stays alive before being marked expired (the opencode session on disk is not deleted) |
@@ -334,7 +337,7 @@ This ensures temporary configuration corruption does not stop reconciliation of 
 
 ## `env` Block
 
-Environment variables injected into the worker subprocess (`opencode run`). Values support `$VAR` indirection (same semantics as `tracker.api_key`); when it resolves to an empty string, an empty string value is injected. A missing `env` section defaults to an empty object.
+Environment variables injected into the worker driver process. Values support `$VAR` indirection (same semantics as `tracker.api_key`); when it resolves to an empty string, an empty string value is injected. A missing `env` section defaults to an empty object.
 
 Values from `config.env` take precedence over inherited `process.env` — values explicitly declared in WORKFLOW.md override the daemon process's environment variables.
 

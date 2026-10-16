@@ -38,6 +38,6 @@
 - [x] 5.2 TUI 等待审批状态与倒计时（详情页/直连区块显示，写失败测试先再实现）
 - [x] 5.3 契约测试（`@opencode/sdk` devDep pin 2.0.29：内存运行时断言 operation 名、decision 枚举、Model.Ref 字段、mcp.servers 行为——版本区间扩容工装）
 - [x] 5.4 真机冒烟（INTEGRATION 体系新增 v2 用例：本机 wrapper 或 ljw 跑 create/prompt/pending/reply/interrupt 全链路；不可达时记录原因）
-- [ ] 5.5 文档双语（configuration.md opencode 段重写、usage.md 审批卡与姿态说明、architecture.md 运行时流程、getting-started 前置 opencode v2 + `opencode upgrade --major`、development.md 测试策略更新；docs-links 测试过）
-- [ ] 5.6 CONTEXT.md 术语更新（Turn 定义改写、Opencode event stream→轮询快照术语、Step usage 合计口径、新增 Approval card/Permission posture；ADR 四篇：v2-only 与驱动形态、三层权限模型、轮询替代事件流、分支与版本策略）
-- [ ] 5.7 全门禁与发布准备（lint/typecheck/test/test:e2e 全绿；CHANGELOG 0.7.0 破坏性说明：要求 opencode >=2.0 <3、command 默认值变化、auto_approve=false 行为升级为审批）
+- [x] 5.5 文档双语（configuration.md opencode 段重写、usage.md 审批卡与姿态说明、architecture.md 运行时流程、getting-started 前置 opencode v2 + `opencode upgrade --major`、development.md 测试策略更新；docs-links 测试过）
+- [x] 5.6 CONTEXT.md 术语更新（Turn 定义改写、Opencode event stream→轮询快照术语、Step usage 合计口径、新增 Approval card/Permission posture；ADR 四篇：v2-only 与驱动形态、三层权限模型、轮询替代事件流、分支与版本策略）
+- [x] 5.7 全门禁与发布准备（lint/typecheck/test/test:e2e 全绿；CHANGELOG 0.7.0 破坏性说明：要求 opencode >=2.0 <3、command 默认值变化、auto_approve=false 行为升级为审批）

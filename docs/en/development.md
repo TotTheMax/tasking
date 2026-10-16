@@ -8,7 +8,7 @@ This document targets project contributors, covering environment setup, director
 |------|------|------|
 | Node.js | 22+ | Runtime and build toolchain; the `engines` field in `package.json` declares `>=22` |
 | npm | 10+ | Installed with Node |
-| opencode CLI | matches the local opencode version | worker subprocess dependency; local development requires `opencode run` to be executable on `PATH` |
+| opencode CLI | **v2** (`>=2.0 <3`) | the worker drives turns through `opencode api`; local development requires `opencode` to be executable on `PATH` (on v1 run `opencode upgrade --major`) |
 | Jira credentials | optional | real integration tests resolve from real `JIRA_E2E_*` env vars or the repo-root `.env` file (`cp .env.example .env` with your own env; no committed defaults — `INTEGRATION=1` fails fast listing missing keys); the test cleanly skips when `INTEGRATION=1` is not set |
 | Feishu credentials | optional | real integration tests resolve from real `FEISHU_E2E_*` env vars or the repo-root `.env` file (same as above); it cleanly skips when `INTEGRATION=1` is not set |
 
@@ -49,7 +49,7 @@ src/
 │   └── manager.ts    # 动态 watch + 重载(保留上一良好配置)
 ├── scheduler/        # 结构化调度器(Symphony 式确定性调度)
 │   └── scheduler.ts  # 轮询 tick、状态机、并发、退避 retry、reconcile
-├── worker/           # opencode run 子进程 worker
+├── worker/           # turn loop (driven through the opencode v2 api)
 │   ├── runner.ts     # 子进程启动、续轮循环、失败分类、token 提取
 │   └── prompt.ts     # 严格 Liquid 模板渲染、续轮指引构建
 ├── workspace/        # per-task 工作区管理与安全不变式
@@ -109,6 +109,7 @@ Two end-to-end suites cover flows that unit/component tests cannot. Run them per
 - **Mock-driven E2E (hard gate)**: after changing the **Feishu adapter**, **Jira adapter**, **scheduler**, or the **Feishu↔Jira comment bridge**, you must run `npm run test:e2e` (`tests/e2e.test.ts` + `tests/bridge-flow.test.ts`). It has no external dependencies and is already enforced in CI via `npm test`.
 - **Real API integration (must run when the live env is reachable)**: for the same subsystem changes, run `npm run test:integration` (`INTEGRATION=1`, real Feishu test bot/group + real Jira TEST project) whenever the live test environment is reachable (local dev with an intranet route). Credentials resolve from real env vars or the repo-root `.env` file (`cp .env.example .env` for your own test env); there are no committed defaults — `INTEGRATION=1` fails fast listing missing keys. When the environment is unreachable (e.g. CI's ubuntu-latest) the suite is skipped, but state the reason in the commit message or MR description. Real integration catches mock false positives (see `docs/known-issues.md` and ADR 0010).
 - **Other changes**: test as needed — run the routing-map unit test files (`AGENTS.md`) for the touched subsystem, plus the relevant E2E suite if the change affects end-to-end behavior.
+- **Real opencode v2 smoke**: `tests/integration-opencode-v2.test.ts` (`INTEGRATION=1`) spawns a private v2 `serve` (temp config/db, provider key read from the local auth.json) and drives create/prompt/pending/reply/outcome plus interrupt; it skips with an explicit reason when no v2 binary or credentials exist, or when the provider quota is exhausted.
 - When adding a new end-to-end test file, add it to the `test:e2e` script file list in `package.json`.
 
 ## Dev Run
