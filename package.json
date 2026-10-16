@@ -28,7 +28,11 @@
   "bin": {
     "tasking": "dist/cli/index.js"
   },
-  "files": ["dist", "assets", "README.md"],
+  "files": [
+    "dist",
+    "assets",
+    "README.md"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -57,6 +61,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@opencode/client": "2.0.29",
+    "@opencode/sdk": "2.0.29",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^2.1.9",

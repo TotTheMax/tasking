@@ -152,11 +152,11 @@ describe("session operations", () => {
     );
   });
 
-  it("setSessionPermissions(null) clears posture", async () => {
+  it("setSessionPermissions(null) clears posture with an empty ruleset", async () => {
     const { exec, captured } = recorder([""]);
     await setSessionPermissions(exec, base, "ses_1", null);
     const args = captured.args[0] ?? [];
-    expect(args[args.indexOf("--data") + 1]).toBe('{"permissions":null}');
+    expect(args[args.indexOf("--data") + 1]).toBe('{"permissions":[]}');
   });
 
   it("listSessionMessages returns assistant messages with content arrays", async () => {

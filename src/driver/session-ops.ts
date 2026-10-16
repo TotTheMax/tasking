@@ -241,7 +241,7 @@ export async function setSessionPermissions(
       serverUrl: base.serverUrl,
       operation: "session.update",
       params: { sessionID },
-      data: { permissions: rules },
+      data: { permissions: rules ?? [] },
     },
     exec,
   );
