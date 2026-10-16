@@ -218,6 +218,47 @@ describe("runTurn timers and interrupt ladder", () => {
     return { exec, calls };
   }
 
+  it("a poll timeout does not fail the turn (warn and continue)", async () => {
+    let calls = 0;
+    const exec: ApiExecFn = async (args) => {
+      const op = args[2] ?? "";
+      if (op === "session.prompt") {
+        return { exitCode: 0, stdout: '{"data":{}}', stderr: "", timedOut: false };
+      }
+      if (op === "session.get") {
+        calls += 1;
+        if (calls === 1) {
+          return { exitCode: null, stdout: "", stderr: "", timedOut: true };
+        }
+        return {
+          exitCode: 0,
+          stdout: '{"data":{"id":"ses_x","outcome":"succeeded"}}',
+          stderr: "",
+          timedOut: false,
+        };
+      }
+      if (op === "session.permission.list") {
+        return { exitCode: 0, stdout: '{"data":[]}', stderr: "", timedOut: false };
+      }
+      if (op === "session.message.list") {
+        return { exitCode: 0, stdout: '{"data":[]}', stderr: "", timedOut: false };
+      }
+      return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+    };
+    const result = await runTurn({
+      exec,
+      base: { command: "opencode" },
+      directory: "/w",
+      prompt: "p",
+      sessionId: "ses_x",
+      createOptions: { autoApprove: false },
+      pollIntervalMs: 1,
+      permissionTimeoutMs: 60000,
+      sleep: idleSleep,
+    });
+    expect(result.status).toBe("succeeded");
+  });
+
   it("wall-clock timeout triggers interrupt and settles timed_out", async () => {
     const { exec, calls } = realNowScript([
       { operation: "session.prompt", respond: '{"data":{"id":"m"}}' },

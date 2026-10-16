@@ -519,6 +519,7 @@ export class Scheduler extends EventEmitter {
     if (config.opencode.stall_timeout_ms <= 0) return;
     const now = Date.now();
     for (const [taskId, entry] of this.state.running) {
+      if (entry.waiting_approval) continue;
       const lastActivity = entry.last_event_at ?? entry.started_at;
       if (now - lastActivity > config.opencode.stall_timeout_ms) {
         await this.terminateRunning(taskId, false, "stalled");

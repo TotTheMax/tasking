@@ -664,6 +664,34 @@ describe("session ID propagation", () => {
     }
   });
 
+  it("does not terminate a run waiting for approval (stall skips it)", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 1;
+      config.opencode.stall_timeout_ms = 1;
+      const task = makeTask({ id: "1", state: "In Progress" });
+      const tracker = mockTracker([task]);
+      const neverResolve = () => new Promise(() => {});
+      const sched = makeScheduler(tracker, config, undefined, neverResolve as never);
+      await sched.tick();
+      const entry = sched.state.running.get(task.id);
+      expect(entry).toBeDefined();
+      if (entry) {
+        entry.waiting_approval = true;
+        entry.waiting_since = Date.now();
+        entry.last_event_at = Date.now() - 10_000;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      await sched.reconcileRunningIssues();
+      expect(sched.state.running.get(task.id)).toBeDefined();
+      expect(sched.state.retry_attempts.get(task.id)).toBeUndefined();
+      sched.stop();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("full chain — continuation retry propagates session_id to runAttempt", async () => {
     const root = tempRoot();
     vi.useFakeTimers();

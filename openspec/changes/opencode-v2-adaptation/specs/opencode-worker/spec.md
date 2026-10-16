@@ -23,7 +23,7 @@
 
 #### Scenario: continuation retry 续接已有 session
 - **WHEN** worker 正常退出后 continuation retry 触发
-- **THEN** 新 worker 复用上次返回的 sessionID 续接同一 session，使用全量 prompt
+- **THEN** 新 worker 复用上次返回的 sessionID 续接同一 session（首轮发送渲染后的 prompt，startTurn > 1 时发送续轮指引）
 
 #### Scenario: 最大 turn 上限封顶循环
 - **WHEN** 续轮循环达到 `agent.max_turns`

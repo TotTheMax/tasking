@@ -47,10 +47,7 @@ export function buildSnapshot(
             waiting_approval: true,
             waiting_remaining_ms:
               entry.waiting_since != null
-                ? Math.max(
-                    0,
-                    (extras.permissionTimeoutMs ?? 1800000) - (now - entry.waiting_since),
-                  )
+                ? Math.max(0, (extras.permissionTimeoutMs ?? 1800000) - (now - entry.waiting_since))
                 : null,
           }
         : {}),

@@ -1,3 +1,8 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { OpenCode } from "@opencode/client";
+import { OpenCode as Sdk } from "@opencode/sdk";
 /**
  * Contract harness for the opencode v2 API shapes tasking hardcodes.
  *
@@ -11,11 +16,6 @@
  * permission listing are exercised — no model turns.
  */
 import { describe, expect, it } from "vitest";
-import { OpenCode } from "@opencode/client";
-import { OpenCode as Sdk } from "@opencode/sdk";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 describe("opencode v2 API contract (pinned sdk+client 2.0.29)", () => {
   it("session.create accepts location, Model.Ref and a permissions ruleset", async () => {

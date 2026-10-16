@@ -1215,6 +1215,22 @@ export const PATTERNS: PatternRule[] = [
   },
   {
     re: new RegExp(
+      `^${normalizeTemplate('opencode 服务已注册但不可达（${service.url ?? ""}）——尝试 opencode service restart；daemon 将尝试自动拉起')}$`,
+    ),
+    en: "opencode service is registered but unreachable ($1) — try opencode service restart; the daemon will try to start it",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("opencode 认证探测失败（${auth.detail}）——模型调用将失败，请运行 opencode auth login")}$`,
+    ),
+    en: "opencode auth probe failed ($1) — model calls will fail; run opencode auth login",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate(" · ⏳ 等待审批（剩 ${mins}m）")}$`),
+    en: " · ⏳ waiting for approval (${mins}m left)",
+  },
+  {
+    re: new RegExp(
       `^${normalizeTemplate("🔐 **等待审批** · ${req.action}\n${resources}${saveNote}")}$`,
     ),
     en: "🔐 **Waiting for approval** · $1\n$2",

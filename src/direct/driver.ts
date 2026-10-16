@@ -1,5 +1,7 @@
 import type { ApiExecFn } from "../driver/api-client.js";
+
 import {
+  ALLOW_ALL_RULES,
   type PendingPermission,
   createSession,
   setSessionPermissions,
@@ -24,6 +26,7 @@ export interface DirectTurnRequest {
   sleep: (ms: number) => Promise<void>;
   onEvent?: (evt: TurnDriverEvent) => void;
   onPendingPermissions?: (pending: PendingPermission[]) => void | Promise<void>;
+  onPermissionReply?: (requestID: string, decision: "once" | "always" | "reject") => void;
   onWaitingForApproval?: (waiting: boolean) => void;
   signal?: AbortSignal;
 }
@@ -33,8 +36,6 @@ export interface DirectTurnOutcome extends TurnResult {
 }
 
 export type DirectTurnDriver = (request: DirectTurnRequest) => Promise<DirectTurnOutcome>;
-
-const ALLOW_ALL = [{ action: "*", resource: "*", effect: "allow" as const }];
 
 export function createDefaultTurnDriver(exec: ApiExecFn): DirectTurnDriver {
   return async (request) => {
@@ -53,7 +54,7 @@ export function createDefaultTurnDriver(exec: ApiExecFn): DirectTurnDriver {
       sessionId = session.id;
       postureOpen = request.autoApprove;
     } else if (request.autoApprove && !postureOpen) {
-      await setSessionPermissions(exec, base, sessionId, ALLOW_ALL);
+      await setSessionPermissions(exec, base, sessionId, ALLOW_ALL_RULES);
       postureOpen = true;
     } else if (!request.autoApprove && postureOpen) {
       await setSessionPermissions(exec, base, sessionId, null);
@@ -78,11 +79,10 @@ export function createDefaultTurnDriver(exec: ApiExecFn): DirectTurnDriver {
       sleep: request.sleep,
       onEvent: request.onEvent,
       onPendingPermissions: request.onPendingPermissions,
+      onPermissionReply: request.onPermissionReply,
       onWaitingForApproval: request.onWaitingForApproval,
       signal: request.signal,
     });
     return { ...result, postureOpened: postureOpen };
   };
 }
-
-export { ALLOW_ALL };

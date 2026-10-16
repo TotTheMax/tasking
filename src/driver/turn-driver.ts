@@ -26,7 +26,6 @@ export interface TurnDriverEvent {
   durationMs?: number;
   status?: string;
   usage?: { input_tokens: number; output_tokens: number; total_tokens: number };
-  tokens?: { input: number; output: number; total: number };
 }
 
 export interface TurnUsage {
@@ -35,10 +34,7 @@ export interface TurnUsage {
   total_tokens: number;
 }
 
-export function mapContentEntry(
-  entry: Record<string, unknown>,
-  _messageId: string,
-): TurnDriverEvent[] {
+export function mapContentEntry(entry: Record<string, unknown>): TurnDriverEvent[] {
   const type = entry.type;
   if (type === "text" && typeof entry.text === "string") {
     return [{ type: "text", text: entry.text }];
@@ -106,22 +102,14 @@ export function diffMessagesToEvents(
     const time = message.time as Record<string, number>;
     if (typeof time.completed === "number") lastActivityAt = time.completed;
     for (const entry of message.content ?? []) {
-      events.push(...mapContentEntry(entry, message.id));
+      events.push(...mapContentEntry(entry));
     }
     const { usage: msgUsage, hasTokens } = messageTokensUsage(message);
     if (hasTokens) {
       usage.input_tokens += msgUsage.input_tokens;
       usage.output_tokens += msgUsage.output_tokens;
       usage.total_tokens += msgUsage.total_tokens;
-      events.push({
-        type: "step_usage",
-        usage: msgUsage,
-        tokens: {
-          input: msgUsage.input_tokens,
-          output: msgUsage.output_tokens,
-          total: msgUsage.total_tokens,
-        },
-      });
+      events.push({ type: "step_usage", usage: msgUsage });
     }
   }
   return { events, usage, lastActivityAt };
@@ -207,7 +195,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
     try {
       await interruptSession(opts.exec, opts.base, sessionId);
     } catch {
-      // interrupt failure: settle as timeout anyway; no persistent child to clean
+      void 0;
     }
     const grace = opts.interruptGraceMs ?? 10000;
     const graceUntil = now() + grace;
@@ -217,7 +205,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
         const session = await getSession(opts.exec, opts.base, sessionId);
         if (session.outcome !== null) break;
       } catch {
-        // grace poll failures are non-fatal
+        void 0;
       }
     }
     return { status: "timed_out", sessionId, usage, error: reason };
@@ -241,7 +229,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
       try {
         pending = await listPendingPermissions(opts.exec, opts.base, sessionId);
       } catch {
-        // pending-list failure is non-fatal for the poll cycle
+        void 0;
       }
       const nowTs = now();
       if (pending.length > 0) {
@@ -258,7 +246,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
               await replyPermission(opts.exec, opts.base, sessionId, p.id, "reject");
               opts.onPermissionReply?.(p.id, "reject");
             } catch {
-              // reject failure: keep waiting for natural resolution
+              void 0;
             }
           }
           pendingSince = nowTs;
@@ -284,8 +272,6 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
       usage.output_tokens += diff.usage.output_tokens;
       usage.total_tokens += diff.usage.total_tokens;
     } catch (e) {
-      if (e instanceof ApiError && e.category === "opencode_api_timeout") throw e;
-      // transient poll failure: warn-and-continue at the next interval
       void e;
     }
 

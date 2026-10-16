@@ -35,7 +35,12 @@ import { ConsoleLogger, type Logger } from "../observability/logger.js";
 import { TerminalDashboard } from "../observability/terminal-dashboard.js";
 import { Scheduler } from "../scheduler/scheduler.js";
 import { TaskingError, toTaskingError } from "../shared/errors.js";
-import { classifyOpencodeVersion, probeOpencodeVersion } from "../shared/opencode-version.js";
+import {
+  classifyOpencodeVersion,
+  probeOpencodeAuth,
+  probeOpencodeService,
+  probeOpencodeVersion,
+} from "../shared/opencode-version.js";
 import { createInitialState } from "../shared/types.js";
 import { setLocale, setTranslateWarnLogger, translate } from "../translate/locale.js";
 import { runAttempt } from "../worker/runner.js";
@@ -212,6 +217,20 @@ async function runStart(args: string[]): Promise<number> {
   if (ocGate?.status === "unvalidated") {
     console.error(ocGate.message);
   }
+  {
+    const service = probeOpencodeService();
+    if (service.status === "unreachable") {
+      console.error(
+        `opencode 服务已注册但不可达（${service.url ?? ""}）——尝试 opencode service restart；daemon 将尝试自动拉起`,
+      );
+    }
+    const auth = probeOpencodeAuth();
+    if (!auth.ok) {
+      console.error(
+        `opencode 认证探测失败（${auth.detail}）——模型调用将失败，请运行 opencode auth login`,
+      );
+    }
+  }
 
   loadDotenvIfPresent(dirname(workflowPath));
 
@@ -362,9 +381,15 @@ async function runStart(args: string[]): Promise<number> {
           jiraApprovals.markExpired(event.requestID);
           return;
         }
+        const bySession = new Map<string, typeof event.pending>();
         for (const p of event.pending) {
           sessionIssueIndex.set(p.sessionID, taskIdentifier);
-          jiraApprovals.ingest(p.sessionID, [p]);
+          const list = bySession.get(p.sessionID) ?? [];
+          list.push(p);
+          bySession.set(p.sessionID, list);
+        }
+        for (const [sessionId, pending] of bySession) {
+          jiraApprovals.ingest(sessionId, pending);
         }
       },
     });

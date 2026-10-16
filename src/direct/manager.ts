@@ -12,7 +12,7 @@ import type { DirectConfig, EffectiveConfig } from "../config/config-types.js";
 import { type ApiExecFn, defaultApiExec } from "../driver/api-client.js";
 import { ApprovalCoordinator, type ApprovalRequest } from "../driver/approval.js";
 import type { PendingPermission, PermissionDecision } from "../driver/session-ops.js";
-import { replyPermission, setSessionPermissions } from "../driver/session-ops.js";
+import { ALLOW_ALL_RULES, replyPermission, setSessionPermissions } from "../driver/session-ops.js";
 import type { TurnDriverEvent } from "../driver/turn-driver.js";
 import type { ActivityEvent } from "../observability/activity-store.js";
 import type { Logger } from "../observability/logger.js";
@@ -32,7 +32,7 @@ import {
   isFailed,
   toolSummary,
 } from "./card.js";
-import { ALLOW_ALL, type DirectTurnDriver, createDefaultTurnDriver } from "./driver.js";
+import { type DirectTurnDriver, createDefaultTurnDriver } from "./driver.js";
 
 export interface DirectFeishuPort {
   replyInThread(
@@ -276,7 +276,7 @@ export class DirectSessionManager {
       return this.handleLifecycleAction(name, session, rt, action);
     }
     if (name === "approve_once" || name === "approve_always" || name === "approve_reject") {
-      return await this.handleApprovalAction(name, session, value);
+      return await this.handleApprovalAction(name, value);
     }
     if (name === "perm" || name === "perm_on" || name === "perm_once" || name === "perm_cancel") {
       return await this.handlePermissionAction(name, session, rt);
@@ -367,11 +367,7 @@ export class DirectSessionManager {
   }
 
   private sessionRootByApproval(request: ApprovalRequest): string | null {
-    for (const rt of this.runtime.entries()) {
-      void rt;
-    }
-    for (const [rootId, rt] of this.runtime) {
-      void rt;
+    for (const rootId of this.runtime.keys()) {
       const session = this.deps.store.getDirectSession(rootId);
       if (session?.session_id === request.sessionId) return rootId;
     }
@@ -414,15 +410,12 @@ export class DirectSessionManager {
 
   private async handleApprovalAction(
     name: string,
-    session: DirectSession,
     value: DirectCardActionValue,
   ): Promise<CardActionReply> {
-    void session;
     const requestID = typeof value.request_id === "string" ? value.request_id : null;
     if (!requestID) {
       return { toast: { type: "error", content: "审批单标识缺失，无法处理" } };
     }
-    void session;
     const decision: PermissionDecision =
       name === "approve_once" ? "once" : name === "approve_always" ? "always" : "reject";
     const outcome = await this.approvals.reply(requestID, decision);
@@ -453,7 +446,7 @@ export class DirectSessionManager {
         this.deps.apiExec ?? defaultApiExec(),
         { command: cfg.opencode.command, serverUrl: cfg.opencode.server_url },
         sessionId,
-        open ? ALLOW_ALL : null,
+        open ? ALLOW_ALL_RULES : null,
       );
       rt.postureOpen = open;
     } catch (e) {
@@ -506,6 +499,18 @@ export class DirectSessionManager {
     const state: TurnCardState = {
       ...rt.turn,
       autoPosture: this.turnAutoPosture(fresh, rt),
+      ...(rt.waitingApproval
+        ? {
+            waitingRemainingMs:
+              rt.waitingSince !== null
+                ? Math.max(
+                    0,
+                    this.deps.config().opencode.permission_timeout_ms -
+                      (Date.now() - rt.waitingSince),
+                  )
+                : null,
+          }
+        : {}),
       agentOverride: fresh.agent_override,
     };
     if (confirm) state.confirmPermission = true;
@@ -1097,7 +1102,10 @@ export class DirectSessionManager {
               waiting_approval: true,
               waiting_remaining_ms:
                 rt.waitingSince !== null
-                  ? Math.max(0, config.opencode.permission_timeout_ms - (Date.now() - rt.waitingSince))
+                  ? Math.max(
+                      0,
+                      config.opencode.permission_timeout_ms - (Date.now() - rt.waitingSince),
+                    )
                   : null,
             }
           : {}),
@@ -1481,6 +1489,14 @@ export class DirectSessionManager {
       turn.sessionName = fresh.name ?? sessionName(fresh.path);
       turn.autoPosture = this.turnAutoPosture(fresh, rt);
       turn.agentOverride = fresh.agent_override;
+      turn.waitingRemainingMs = rt.waitingApproval
+        ? rt.waitingSince !== null
+          ? Math.max(
+              0,
+              this.deps.config().opencode.permission_timeout_ms - (Date.now() - rt.waitingSince),
+            )
+          : null
+        : undefined;
       if (rt.turnStartedAt > 0) {
         turn.sessionStatus = fresh.status;
         turn.turns = fresh.turns;
@@ -1805,7 +1821,13 @@ export class DirectSessionManager {
         const activity: ActivityEvent = { ts: Date.now(), turn: turnNo, type: evt.type };
         if (evt.text !== undefined) activity.text = evt.text;
         if (evt.tool !== undefined) activity.tool = evt.tool;
-        if (evt.tokens !== undefined) activity.tokens = evt.tokens;
+        if (evt.usage !== undefined) {
+          activity.tokens = {
+            input: evt.usage.input_tokens,
+            output: evt.usage.output_tokens,
+            total: evt.usage.total_tokens,
+          };
+        }
         if (evt.title !== undefined) activity.title = evt.title;
         if (evt.input !== undefined) activity.input = evt.input;
         if (evt.output !== undefined) activity.output = evt.output;
@@ -1840,6 +1862,7 @@ export class DirectSessionManager {
         sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
         onEvent,
         onPendingPermissions: (pending) => this.handlePendingPermissions(session.root_id, pending),
+        onPermissionReply: (requestID) => this.approvals.markExpired(requestID),
         onWaitingForApproval: (waiting) => {
           rt.waitingApproval = waiting;
           rt.waitingSince = waiting ? Date.now() : null;

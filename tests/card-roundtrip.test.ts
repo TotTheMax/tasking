@@ -534,6 +534,48 @@ describe("direct round-trip guard", () => {
   });
 });
 
+describe("turn card waiting marker", () => {
+  it("renders the waiting-for-approval countdown in the header", () => {
+    const card = buildTurnCard({
+      rootId: "om_r",
+      sessionName: "s",
+      sessionStatus: "running",
+      turns: 1,
+      totalTokens: 0,
+      queued: 0,
+      turn: 1,
+      phase: "running",
+      toolCalls: 0,
+      durationSec: 0,
+      turnTokens: 0,
+      texts: [],
+      tools: [],
+      waitingRemainingMs: 12 * 60_000,
+    }) as { header?: { title?: { content?: string } } };
+    expect(card.header?.title?.content ?? "").toContain("等待审批");
+    expect(card.header?.title?.content ?? "").toContain("12m");
+  });
+
+  it("omits the marker when not waiting", () => {
+    const card = buildTurnCard({
+      rootId: "om_r",
+      sessionName: "s",
+      sessionStatus: "running",
+      turns: 1,
+      totalTokens: 0,
+      queued: 0,
+      turn: 1,
+      phase: "running",
+      toolCalls: 0,
+      durationSec: 0,
+      turnTokens: 0,
+      texts: [],
+      tools: [],
+    }) as { header?: { title?: { content?: string } } };
+    expect(card.header?.title?.content ?? "").not.toContain("等待审批");
+  });
+});
+
 describe("approval card round-trip", () => {
   let root: string;
   let store: BindingStore;

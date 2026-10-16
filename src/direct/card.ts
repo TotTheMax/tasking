@@ -24,6 +24,7 @@ export interface TurnCardToolEvent {
 
 export interface TurnCardState {
   rootId: string;
+  waitingRemainingMs?: number | null;
   sessionName: string;
   sessionStatus: TurnCardSessionStatus;
   turns: number;
@@ -259,6 +260,12 @@ function renderFooter(state: TurnCardState): Array<Record<string, unknown>> {
   ];
 }
 
+function renderWaitingMarker(state: TurnCardState): string {
+  if (state.waitingRemainingMs === undefined || state.waitingRemainingMs === null) return "";
+  const mins = Math.max(0, Math.round(state.waitingRemainingMs / 60000));
+  return translate(` · ⏳ 等待审批（剩 ${mins}m）`);
+}
+
 function renderPostureMarker(state: TurnCardState): string {
   const agent = state.agentOverride ? ` · 🧠 ${state.agentOverride}` : "";
   const posture =
@@ -327,7 +334,7 @@ function renderCard(state: TurnCardState, levels: number[]): Record<string, unkn
       template: "blue",
       title: {
         tag: "plain_text",
-        content: `📁 ${state.sessionName} · ${translate(SESSION_STATUS_LABEL[state.sessionStatus])} · ${state.turns} turn${state.turns === 1 ? "" : "s"} · ≈${formatTokens(state.totalTokens)}${queuePart}${renderPostureMarker(state)}`,
+        content: `📁 ${state.sessionName} · ${translate(SESSION_STATUS_LABEL[state.sessionStatus])} · ${state.turns} turn${state.turns === 1 ? "" : "s"} · ≈${formatTokens(state.totalTokens)}${queuePart}${renderWaitingMarker(state)}${renderPostureMarker(state)}`,
       },
     },
     body: { elements },

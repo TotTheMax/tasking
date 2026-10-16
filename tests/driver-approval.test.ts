@@ -92,6 +92,14 @@ describe("ApprovalCoordinator", () => {
     expect(c.state("per_1")).toBe("pending");
   });
 
+  it("ingesting two pendings at once keeps both pending", () => {
+    const { c, onCardRequested } = coordinator();
+    c.ingest("ses_1", [pending("per_1"), pending("per_2")]);
+    expect(c.state("per_1")).toBe("pending");
+    expect(c.state("per_2")).toBe("pending");
+    expect(onCardRequested).toHaveBeenCalledTimes(2);
+  });
+
   it("cancelled approvals (turn interrupted) reject further replies", async () => {
     const { c } = coordinator();
     c.ingest("ses_1", [pending("per_1")]);

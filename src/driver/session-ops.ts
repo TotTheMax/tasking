@@ -11,6 +11,8 @@ export interface PermissionRule {
   effect: "allow" | "ask" | "deny";
 }
 
+export const ALLOW_ALL_RULES: PermissionRule[] = [{ action: "*", resource: "*", effect: "allow" }];
+
 export interface CreateSessionOptions extends SessionOpBase {
   directory: string;
   model?: string | null;
@@ -72,7 +74,7 @@ export async function createSession(
   if (opts.agent) data.agent = opts.agent;
   if (opts.title) data.title = opts.title;
   if (opts.autoApprove) {
-    data.permissions = [{ action: "*", resource: "*", effect: "allow" }];
+    data.permissions = ALLOW_ALL_RULES;
   }
   const res = await execApi(
     {
