@@ -363,7 +363,7 @@ export class DirectSessionManager {
       return;
     }
     try {
-      const res = await replyCard(rootId, card);
+      const res = await replyCard.call(this.deps.feishu, rootId, card);
       if (res.message_id) {
         this.approvalCards.set(request.requestID, { messageId: res.message_id, rootId, request });
       }
@@ -410,7 +410,7 @@ export class DirectSessionManager {
       resolution,
     );
     try {
-      await update(entry.messageId, card);
+      await update.call(this.deps.feishu, entry.messageId, card);
     } catch (e) {
       this.deps.logger.warn("approval card stamp failed", {
         request_id: requestID,

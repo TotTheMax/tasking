@@ -3174,12 +3174,17 @@ describe("DirectSessionManager first-turn approval", () => {
   it("posts an approval card to the thread when the first turn pends (session_id not yet persisted)", async () => {
     const feishu = new FakeFeishu();
     const runner = new FakeRunner();
+    const apiCalls: string[][] = [];
     const mgr = new DirectSessionManager({
       feishu,
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
       turnDriver: runner.spawn,
+      apiExec: async (args) => {
+        apiCalls.push(args);
+        return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+      },
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_appr1", text: "/chat tasking 跑个命令" }));
     await runner.waitForCall(1);
@@ -3194,8 +3199,30 @@ describe("DirectSessionManager first-turn approval", () => {
         save: ["echo *"],
       },
     ]);
-    expect(feishu.cards.length).toBeGreaterThan(0);
-    expect(feishu.cards[0]?.rootId).toBe("om_appr1");
+    const approvalCard = feishu.cards.find((c) => JSON.stringify(c.card).includes("approve_once"));
+    expect(approvalCard).toBeDefined();
+    expect(approvalCard?.rootId).toBe("om_appr1");
+    const approvalJson = JSON.stringify(approvalCard?.card);
+    expect(approvalJson).toContain("per_first");
+    expect(approvalJson).toContain("approve_always");
+    expect(approvalJson).toContain("approve_reject");
+    const reply = await mgr.handleCardAction({
+      messageId: "om_appr1",
+      chatId: "oc_chat",
+      operatorOpenId: "ou_op",
+      operatorName: "张三",
+      value: {
+        action: "approve_once",
+        root_id: "om_appr1",
+        turn: 1,
+        request_id: "per_first",
+        kind: "direct",
+      },
+    });
+    expect(reply?.toast?.content).toContain("已允许");
+    expect(apiCalls.some((a) => a.includes("session.permission.reply"))).toBe(true);
+    const stamped = feishu.updates.find((u) => JSON.stringify(u.card).includes("已允许"));
+    expect(stamped).toBeDefined();
     runner.finish(0, [textEvent("done")]);
     await mgr.whenIdle();
   });

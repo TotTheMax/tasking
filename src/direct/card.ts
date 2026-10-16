@@ -121,10 +121,14 @@ export function isFailed(evt: TurnCardToolEvent): boolean {
 
 export function toolSummary(evt: TurnCardToolEvent): string {
   if (typeof evt.title === "string" && evt.title.trim() !== "") return evt.title;
-  const command = evt.input?.command;
+  const input = evt.input;
+  if (input === undefined) return "";
+  const command = input.command;
   if (typeof command === "string" && command.trim() !== "") return command;
-  const filePath = evt.input?.filePath;
-  if (typeof filePath === "string" && filePath !== "") return filePath;
+  const path = input.path ?? input.filePath;
+  if (typeof path === "string" && path !== "") return path;
+  const pattern = input.pattern;
+  if (typeof pattern === "string" && pattern !== "") return pattern;
   return "";
 }
 

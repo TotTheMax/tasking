@@ -22,6 +22,7 @@ const TEMPLATES = {
   sessionCreate: load<Record<string, unknown>>("session-create"),
   sessionGet: load<Record<string, unknown>>("session-get-terminal"),
   messageList: load<Record<string, unknown>>("message-list-settled"),
+  messageListTools: load<Record<string, unknown>>("message-list-tools"),
   permissionList: load<Record<string, unknown>>("permission-list-pending"),
   sessionActive: load<Record<string, unknown>>("session-active"),
   interrupt: load<Record<string, unknown>>("interrupt"),
@@ -61,14 +62,40 @@ export function assistantMessage(overrides: Record<string, unknown> = {}): Recor
   return { ...clone(envelope), ...overrides };
 }
 
+function scanTool(template: Record<string, unknown>, name: string): Record<string, unknown> | null {
+  for (const m of (template.data as Array<Record<string, unknown>>) ?? []) {
+    for (const c of (m.content as Array<Record<string, unknown>>) ?? []) {
+      if (c.type === "tool" && c.name === name) return clone(c);
+    }
+  }
+  return null;
+}
+
+/** The captured tool entry for `name` (shell falls back to the settled capture). */
+export function capturedToolEntry(name: string): Record<string, unknown> {
+  return (
+    scanTool(TEMPLATES.messageListTools, name) ??
+    scanTool(TEMPLATES.messageList, name) ?? {
+      type: "tool",
+      id: "call_fixture",
+      name,
+      executed: false,
+      state: { status: "completed", input: {}, content: [], metadata: {} },
+      time: { created: 1000, ran: 1100, completed: 1500 },
+    }
+  );
+}
+
 /**
- * A tool content entry in the REAL v2 shape: name + state.content text
- * entries (not v1's tool/state.output).
+ * A tool content entry in the REAL v2 shape (name + state.{input,content},
+ * entry-level time), cloned from the captured entry for `name` so the input
+ * keys (e.g. read/edit/write use `path`, glob/grep use `pattern`) are real.
  */
 export function toolEntry(overrides: {
   id?: string;
   name?: string;
   command?: string;
+  input?: Record<string, unknown>;
   output?: string;
   exit?: number;
   status?: string;
@@ -76,25 +103,23 @@ export function toolEntry(overrides: {
   created?: number;
   completed?: number;
 }): Record<string, unknown> {
-  const created = overrides.created ?? 1000;
+  const name = overrides.name ?? "shell";
+  const entry = capturedToolEntry(name);
+  const time = entry.time as Record<string, unknown>;
+  const created = overrides.created ?? (typeof time.created === "number" ? time.created : 1000);
   const completed = overrides.completed ?? created + 500;
-  const entry: Record<string, unknown> = {
-    type: "tool",
-    id: overrides.id ?? "call_fixture",
-    name: overrides.name ?? "shell",
-    executed: false,
-    state: {
-      status: overrides.status ?? "completed",
-      input: { command: overrides.command ?? "echo fixture" },
-      content: [{ type: "text", text: overrides.output ?? "fixture\n" }],
-      metadata: {
-        status: overrides.status ?? "completed",
-        truncated: overrides.truncated ?? false,
-        exit: overrides.exit ?? 0,
-      },
-    },
-    time: { created, ran: created + 100, completed },
-  };
+  const state = entry.state as Record<string, unknown>;
+  if (overrides.input !== undefined) state.input = overrides.input;
+  else if (overrides.command !== undefined) state.input = { command: overrides.command };
+  if (overrides.status !== undefined) state.status = overrides.status;
+  if (overrides.output !== undefined) state.content = [{ type: "text", text: overrides.output }];
+  const metadata = (state.metadata ?? {}) as Record<string, unknown>;
+  if (overrides.exit !== undefined) metadata.exit = overrides.exit;
+  if (overrides.truncated !== undefined) metadata.truncated = overrides.truncated;
+  if (overrides.status !== undefined) metadata.status = overrides.status;
+  state.metadata = metadata;
+  if (overrides.id !== undefined) entry.id = overrides.id;
+  entry.time = { created, ran: created + 100, completed };
   return entry;
 }
 

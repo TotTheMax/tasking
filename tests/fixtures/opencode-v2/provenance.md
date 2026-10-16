@@ -24,6 +24,7 @@
 | `session-create.json` | `session.create` 响应：`data.{id,projectID,model{id,providerID,variant},cost,tokens{input,output,reasoning,cache{read,write}},time,...}` |
 | `session-get-running.json` / `session-get-terminal.json` | `session.get` 响应：运行中（`outcome:null`）与终态（`outcome:"succeeded"`） |
 | `message-list-pending.json` | 待审批期间的消息列表：工具条目 `state.status:"running"` |
+| `message-list-tools.json` | 多工具真实条目（edit/write/read/glob/grep）：**v2 用 `path`**（read/write/edit），glob/grep 用 `pattern`（v1 的 read 用 `filePath`）——驱动 `toolSummary` 的面板摘要修复 |
 | `message-list-settled.json` | 完成后的消息列表：assistant 消息（`content[]` 含 `type:"tool"`，`name`、`state.{status,input,content[],metadata.{status,truncated,exit}}`、**条目级 `time.{created,ran,completed}`**）、`tokens`、`time.{created,streamed,completed}`；类型含 `idle/assistant/system/user` |
 | `permission-list-pending.json` | `session.permission.list`：`data[{id:"per_…",sessionID,action,resources,save,source{type,messageID,id}}]` |
 | `session-active.json` | `session.active`：`data` 为 **sessionID 为键的 map**（`{ "<ses>": {type:"running"} }`） |

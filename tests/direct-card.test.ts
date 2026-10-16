@@ -5,7 +5,10 @@ import {
   type TurnCardToolEvent,
   buildCompletionCard,
   buildTurnCard,
+  toolSummary,
 } from "../src/direct/card.js";
+import { mapContentEntry } from "../src/driver/turn-driver.js";
+import { capturedToolEntry } from "./helpers/opencode-fixtures.js";
 
 interface CardElement {
   tag: string;
@@ -131,6 +134,22 @@ describe("buildTurnCard tool panels", () => {
   it("notes opencode-side truncation", () => {
     const card = asCard(buildTurnCard(state({ tools: [toolEvent({ truncated: true })] })));
     expect(panels(card)[0]?.elements?.[0]?.content).toContain("opencode truncated");
+  });
+
+  it("summarises captured v2 tool entries by their real input keys", () => {
+    const cases: Array<{ name: string; expect: string }> = [
+      { name: "read", expect: "sample.txt" },
+      { name: "glob", expect: "**/*.txt" },
+      { name: "grep", expect: "hello" },
+      { name: "write", expect: "out.txt" },
+      { name: "edit", expect: "out.txt" },
+    ];
+    for (const c of cases) {
+      const [evt] = mapContentEntry(capturedToolEntry(c.name));
+      expect(toolSummary(evt as TurnCardToolEvent)).toBe(c.expect);
+      const card = asCard(buildTurnCard(state({ tools: [evt as TurnCardToolEvent] })));
+      expect(panels(card)[0]?.header?.title?.content).toContain(c.expect);
+    }
   });
 
   it("collapses successful panels and expands failed ones with a red border", () => {
