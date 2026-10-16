@@ -57,7 +57,21 @@ export function mapContentEntry(entry: Record<string, unknown>): TurnDriverEvent
       if (state.input !== undefined && typeof state.input === "object") {
         evt.input = state.input as Record<string, unknown>;
       }
-      if (typeof state.output === "string") evt.output = state.output;
+      if (typeof state.output === "string") {
+        evt.output = state.output;
+      } else if (Array.isArray(state.content)) {
+        const text = state.content
+          .filter(
+            (c): c is { type: string; text: string } =>
+              typeof c === "object" &&
+              c !== null &&
+              (c as { type?: unknown }).type === "text" &&
+              typeof (c as { text?: unknown }).text === "string",
+          )
+          .map((c) => c.text)
+          .join("");
+        if (text !== "") evt.output = text;
+      }
       const metadata = state.metadata as Record<string, unknown> | undefined;
       if (metadata) {
         if (typeof metadata.exit === "number") evt.exit = metadata.exit;

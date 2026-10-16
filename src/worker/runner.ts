@@ -207,6 +207,13 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
                 if (evt.status !== undefined) activity.status = evt.status;
                 if (evt.durationMs !== undefined) activity.durationMs = evt.durationMs;
                 if (evt.truncated !== undefined) activity.truncated = evt.truncated;
+                if (evt.type === "step_usage" && evt.usage !== undefined) {
+                  activity.tokens = {
+                    input: evt.usage.input_tokens,
+                    output: evt.usage.output_tokens,
+                    total: evt.usage.total_tokens,
+                  };
+                }
                 opts.onActivity(activity);
               }
               if (evt.type === "step_usage" && evt.usage !== undefined && opts.events?.onEvent) {

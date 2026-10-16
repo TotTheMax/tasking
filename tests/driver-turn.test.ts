@@ -55,6 +55,35 @@ describe("mapContentEntry", () => {
     expect((evts[0] as Record<string, unknown>).tool).toBe("read");
   });
 
+  it("reads tool output from state.content text entries (v2 shape)", () => {
+    const evts = mapContentEntry({
+      type: "tool",
+      id: "call_1",
+      name: "shell",
+      state: {
+        status: "completed",
+        input: { command: "echo x" },
+        content: [{ type: "text", text: "x\n" }],
+        metadata: { status: "completed", truncated: false, exit: 0 },
+        time: { created: 1000, ran: 1100, completed: 1500 },
+      },
+    });
+    const evt = evts[0] as Record<string, unknown>;
+    expect(evt.tool).toBe("shell");
+    expect(evt.output).toBe("x\n");
+    expect(evt.exit).toBe(0);
+    expect(evt.durationMs).toBe(500);
+  });
+
+  it("prefers a plain state.output string when present", () => {
+    const evts = mapContentEntry({
+      type: "tool",
+      name: "read",
+      state: { status: "completed", output: "legacy", content: [{ type: "text", text: "v2" }] },
+    });
+    expect((evts[0] as Record<string, unknown>).output).toBe("legacy");
+  });
+
   it("degrades gracefully when state fields are missing", () => {
     const evts = mapContentEntry({ type: "tool", tool: "shell" }, "msg_1");
     expect(evts).toHaveLength(1);

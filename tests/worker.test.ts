@@ -779,6 +779,7 @@ describe("step_usage events", () => {
         ],
       });
       const workerEvents: WorkerEvent[] = [];
+      const activity: ActivityEvent[] = [];
       await runAttempt({
         task: makeTask(),
         attempt: null,
@@ -786,6 +787,7 @@ describe("step_usage events", () => {
         promptTemplate: "do it",
         logger,
         events: { onEvent: (e) => workerEvents.push(e) },
+        onActivity: (e) => activity.push(e),
         apiExec: exec,
         sleep: () => Promise.resolve(),
       });
@@ -803,6 +805,8 @@ describe("step_usage events", () => {
       });
       const completed = workerEvents.find((e) => e.event === "turn_completed");
       expect(completed?.usage).toBeUndefined();
+      const usageActivities = activity.filter((a) => a.type === "step_usage");
+      expect(usageActivities[0]?.tokens).toEqual({ input: 100, output: 50, total: 150 });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

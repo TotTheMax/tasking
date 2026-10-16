@@ -185,6 +185,26 @@ describe("TerminalDashboard", () => {
     expect(output()).toContain("Workspace:");
   });
 
+  it("renders v2 step_usage token lines and reasoning text in the activity view", () => {
+    const state = createInitialState(30000, 10);
+    state.running.set("1", makeRunningEntry("1"));
+    const store = new ActivityStore();
+    store.record("1", {
+      ts: 1,
+      turn: 1,
+      type: "step_usage",
+      tokens: { input: 10, output: 5, total: 15 },
+    });
+    store.record("1", { ts: 2, turn: 1, type: "reasoning", text: "thinking hard" });
+    const { tui, output } = makeTui(state, store);
+    tui.forceRender();
+    tui.handleKey("\r");
+    tui.handleKey("a");
+    tui.forceRender();
+    expect(output()).toContain("tokens +");
+    expect(output()).toContain("thinking hard");
+  });
+
   it("j/k scroll in activity view without crashing", () => {
     const state = createInitialState(30000, 10);
     state.running.set("1", makeRunningEntry("1"));

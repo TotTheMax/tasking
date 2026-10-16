@@ -1415,10 +1415,14 @@ export class TerminalDashboard {
           const color = failed ? YELLOW : CYAN;
           const summary = truncateToWidth(this.toolCallSummary(entry), 35);
           lines.push(`${prefix}${color}${icon} ${summary}${RESET}`);
-        } else if (entry.type === "step_finish" && entry.tokens) {
+        } else if ((entry.type === "step_finish" || entry.type === "step_usage") && entry.tokens) {
           lines.push(`${prefix}${GRAY}◷ tokens +${this.formatCount(entry.tokens.total)}${RESET}`);
         } else if (entry.type === "step_start") {
           lines.push(`${prefix}${GRAY}▶ step${RESET}`);
+        } else if (entry.type === "reasoning" && entry.text !== undefined) {
+          for (const wrapped of this.renderActivityText(entry.text)) {
+            lines.push(`${prefix}${GRAY}💭 ${wrapped}${RESET}`);
+          }
         } else {
           lines.push(`${prefix}${GRAY}${entry.type}${RESET}`);
         }
