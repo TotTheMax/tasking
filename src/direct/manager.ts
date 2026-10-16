@@ -110,6 +110,8 @@ interface SessionRuntime {
   autoOnce: boolean;
   turnUsedOnce: boolean;
   postureOpen: boolean;
+  waitingApproval: boolean;
+  waitingSince: number | null;
   heartbeatTimer: NodeJS.Timeout | null;
   collect: string[] | null;
   collectTimer: NodeJS.Timeout | null;
@@ -1090,6 +1092,15 @@ export class DirectSessionManager {
         input_tokens: s.input_tokens,
         output_tokens: s.output_tokens,
         total_tokens: s.total_tokens,
+        ...(rt?.waitingApproval
+          ? {
+              waiting_approval: true,
+              waiting_remaining_ms:
+                rt.waitingSince !== null
+                  ? Math.max(0, config.opencode.permission_timeout_ms - (Date.now() - rt.waitingSince))
+                  : null,
+            }
+          : {}),
       };
     });
   }
@@ -1236,6 +1247,8 @@ export class DirectSessionManager {
         autoOnce: false,
         turnUsedOnce: false,
         postureOpen: false,
+        waitingApproval: false,
+        waitingSince: null,
         heartbeatTimer: null,
         collect: null,
         collectTimer: null,
@@ -1827,6 +1840,10 @@ export class DirectSessionManager {
         sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
         onEvent,
         onPendingPermissions: (pending) => this.handlePendingPermissions(session.root_id, pending),
+        onWaitingForApproval: (waiting) => {
+          rt.waitingApproval = waiting;
+          rt.waitingSince = waiting ? Date.now() : null;
+        },
         signal: abort.signal,
       });
     } catch (e) {

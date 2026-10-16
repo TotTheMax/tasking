@@ -24,6 +24,7 @@ export interface DirectTurnRequest {
   sleep: (ms: number) => Promise<void>;
   onEvent?: (evt: TurnDriverEvent) => void;
   onPendingPermissions?: (pending: PendingPermission[]) => void | Promise<void>;
+  onWaitingForApproval?: (waiting: boolean) => void;
   signal?: AbortSignal;
 }
 
@@ -77,6 +78,7 @@ export function createDefaultTurnDriver(exec: ApiExecFn): DirectTurnDriver {
       sleep: request.sleep,
       onEvent: request.onEvent,
       onPendingPermissions: request.onPendingPermissions,
+      onWaitingForApproval: request.onWaitingForApproval,
       signal: request.signal,
     });
     return { ...result, postureOpened: postureOpen };

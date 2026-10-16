@@ -308,11 +308,20 @@ export class Scheduler extends EventEmitter {
         apiExec: this.deps.apiExec,
         sleep: this.deps.sleep,
         onPendingPermissions: this.deps.approvalEvents
-          ? (pending) => this.deps.approvalEvents?.(task.identifier, { kind: "pending", pending })
+          ? (pending) => {
+              if (pending.length > 0 && !entry.waiting_approval) {
+                entry.waiting_approval = true;
+                entry.waiting_since = Date.now();
+              }
+              this.deps.approvalEvents?.(task.identifier, { kind: "pending", pending });
+            }
           : undefined,
         onPermissionReply: this.deps.approvalEvents
-          ? (requestID) =>
-              this.deps.approvalEvents?.(task.identifier, { kind: "expired", requestID })
+          ? (requestID) => {
+              entry.waiting_approval = false;
+              entry.waiting_since = null;
+              this.deps.approvalEvents?.(task.identifier, { kind: "expired", requestID });
+            }
           : undefined,
         sessionId: entry.session_id,
         startTurn,
@@ -327,6 +336,10 @@ export class Scheduler extends EventEmitter {
           onEvent: (event) => {
             entry.last_event = event.event;
             entry.last_event_at = Date.now();
+            if (event.event === "turn_completed") {
+              entry.waiting_approval = false;
+              entry.waiting_since = null;
+            }
             if (event.message) {
               entry.last_message = event.message;
             }

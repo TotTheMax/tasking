@@ -820,3 +820,65 @@ describe("ConsoleLogger file sink", () => {
     }
   });
 });
+
+describe("buildSnapshot waiting approval", () => {
+  function baseEntry() {
+    return {
+      task: {
+        id: "1",
+        identifier: "ABC-1",
+        title: "t",
+        description: null,
+        priority: 1,
+        state: "In Progress",
+        branch_name: null,
+        url: null,
+        labels: [],
+        blocked_by: [],
+        assignee: null,
+        created_at: null,
+        updated_at: null,
+        source: "jira" as const,
+      },
+      task_identifier: "ABC-1",
+      workspace_path: "/tmp/ABC-1",
+      session_id: "s1",
+      last_event: "turn_started",
+      last_message: null,
+      last_event_at: Date.now(),
+      started_at: Date.now() - 5000,
+      turn_count: 1,
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      last_reported_input_tokens: 0,
+      last_reported_output_tokens: 0,
+      last_reported_total_tokens: 0,
+      retry_attempt: null,
+      abort: null,
+      agent: "build",
+      model: null,
+      variant: null,
+    };
+  }
+
+  it("exposes waiting approval with remaining budget", () => {
+    const state = createInitialState(30000, 10);
+    state.running.set("1", {
+      ...baseEntry(),
+      waiting_approval: true,
+      waiting_since: Date.now() - 60_000,
+    });
+    const snap = buildSnapshot(state, { permissionTimeoutMs: 600_000 });
+    expect(snap.running[0]?.waiting_approval).toBe(true);
+    expect(snap.running[0]?.waiting_remaining_ms).toBeGreaterThan(500_000);
+    expect(snap.running[0]?.waiting_remaining_ms).toBeLessThanOrEqual(600_000);
+  });
+
+  it("omits waiting fields when not waiting", () => {
+    const state = createInitialState(30000, 10);
+    state.running.set("1", baseEntry());
+    const snap = buildSnapshot(state);
+    expect(snap.running[0]?.waiting_approval).toBeUndefined();
+  });
+});

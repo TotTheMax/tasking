@@ -76,6 +76,8 @@ export interface RunningEntry {
   agent: string | null;
   model: string | null;
   variant: string | null;
+  waiting_approval?: boolean;
+  waiting_since?: number | null;
 }
 
 export interface RetryEntry {
@@ -123,6 +125,8 @@ export interface RuntimeDirectSession {
   input_tokens: number;
   output_tokens: number;
   total_tokens: number;
+  waiting_approval?: boolean;
+  waiting_remaining_ms?: number | null;
 }
 
 export interface RuntimeSnapshot {
@@ -153,6 +157,8 @@ export interface RuntimeSnapshot {
     agent: string | null;
     model: string | null;
     variant: string | null;
+    waiting_approval?: boolean;
+    waiting_remaining_ms?: number | null;
   }>;
   retrying: Array<{
     task_id: string;

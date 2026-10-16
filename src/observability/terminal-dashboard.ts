@@ -1060,6 +1060,7 @@ export class TerminalDashboard {
       ["Started", `${age} ago`],
       ["Turn", String(entry.turn_count)],
       ["Last event", entry.last_event ?? "none"],
+      ...(entry.waiting_approval ? [["Approval", "waiting for approval"] as [string, string]] : []),
     ]);
     if (entry.last_message) {
       this.pushDetailFields(lines, [["Last message", entry.last_message]]);
@@ -1116,6 +1117,12 @@ export class TerminalDashboard {
     return this.compose(lines);
   }
 
+  private approvalLabel(remainingMs: number | null | undefined): string {
+    if (remainingMs == null) return "waiting for approval";
+    const mins = Math.max(0, Math.round(remainingMs / 60000));
+    return `waiting for approval (${mins}m left)`;
+  }
+
   private formatRunningDetailFromSnapshot(now: number): string {
     const snap = this.lastSnapshot;
     if (!snap) {
@@ -1144,6 +1151,9 @@ export class TerminalDashboard {
       ["Started", `${age} ago`],
       ["Turn", String(entry.turn_count)],
       ["Last event", entry.last_event ?? "none"],
+      ...(entry.waiting_approval
+        ? [["Approval", this.approvalLabel(entry.waiting_remaining_ms)] as [string, string]]
+        : []),
     ]);
     if (entry.last_message) {
       this.pushDetailFields(lines, [["Last message", entry.last_message]]);
@@ -1183,6 +1193,9 @@ export class TerminalDashboard {
       ["Turns", String(entry.turns)],
       ["Queued", String(entry.queued)],
       ["Updated", age],
+      ...(entry.waiting_approval
+        ? [["Approval", this.approvalLabel(entry.waiting_remaining_ms)] as [string, string]]
+        : []),
     ]);
     lines.push(`${GRAY}│${RESET}`);
     lines.push(
