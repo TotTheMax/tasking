@@ -32,6 +32,8 @@ spike 分支（`spike/opencode-v2-adaptation`，10 轮实验，v2.0.29 实测）
 - 落点：doctor 与 `runStart` 共用；启动探活 `server.info` + 认证探测（列模型）
 - 两常量集中定义一处；扩 VALIDATED 靠 sdk 契约测试验证后手改
 
+**真机实测补充（v2.0.29）**：`session.message.list` 返回**整个会话历史且最新在前**。因此逐轮 diff 必须用**跨轮持久的 seen 映射**（直连按会话、Jira 按 task 跨 attempt 持久），否则每轮会把历史消息当新消息重发（卡片累积、token 逐轮累加）；且处理前需**按时间升序排序**，否则"最后一条文本"会取到最旧的（完成文案错成第一轮开场白）。
+
 ### D3 三层权限模型与 auto_approve
 
 - ①工作区 `.opencode/opencode.json`：用户自有，tasking 只注入 `mcp.servers.jira`（`codemode:false`），永不写 permissions
