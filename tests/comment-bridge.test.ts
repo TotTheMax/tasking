@@ -2945,17 +2945,14 @@ describe("direct vs Jira root precedence", () => {
       store: bindings,
       config: () => config,
       logger,
-      spawn: async (cmd: string[]) => {
-        spawnCalls.push(cmd);
+      turnDriver: async (request) => {
+        spawnCalls.push(["opencode", "run", "--dir", request.directory, request.prompt]);
         return {
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-          timedOut: false,
-          sessionAndUsage: {
-            session_id: "ses_prec",
-            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-          },
+          status: "succeeded",
+          sessionId: "ses_prec",
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          error: null,
+          postureOpened: request.autoApprove,
         };
       },
     });

@@ -359,6 +359,7 @@ export interface ApprovalCardRequest {
   action: string;
   resources: string[];
   save?: string[];
+  kind?: "bridge" | "direct";
 }
 
 export type ApprovalCardResolution =
@@ -384,6 +385,7 @@ function approvalButton(
           root_id: req.rootId,
           turn: req.turn,
           request_id: req.requestID,
+          ...(req.kind ? { kind: req.kind } : {}),
         },
       },
     ],
@@ -429,6 +431,6 @@ export function buildApprovalCard(
       title: { tag: "plain_text", content: "权限审批" },
       template: "blue",
     },
-    elements,
+    body: { elements },
   };
 }

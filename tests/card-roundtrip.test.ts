@@ -6,7 +6,8 @@ import { FeishuSource } from "../src/adapters/feishu/source.js";
 import { JiraTracker } from "../src/adapters/jira/tracker.js";
 import { type Binding, BindingStore } from "../src/bridge/binding-store.js";
 import { CommentBridge } from "../src/bridge/comment-bridge.js";
-import { buildTurnCard } from "../src/direct/card.js";
+import { ApprovalCoordinator } from "../src/driver/approval.js";
+import { buildApprovalCard, buildTurnCard } from "../src/direct/card.js";
 import { DirectSessionManager } from "../src/direct/manager.js";
 import { ConsoleLogger } from "../src/observability/logger.js";
 import { buildInfoCard } from "../src/shared/info-card.js";
@@ -530,5 +531,138 @@ describe("direct round-trip guard", () => {
     expect(stopBtn).toBeDefined();
     const stopped = await dispatch("om_turn", stopBtn?.value ?? {});
     expect(stopped.toast.content).toBe("该轮已结束");
+  });
+});
+
+describe("approval card round-trip", () => {
+  let root: string;
+  let store: BindingStore;
+  let server: MockServer;
+  let bridge: CommentBridge;
+  let replies: Array<{ sessionId: string; requestID: string; decision: string }>;
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), "rt-approve-"));
+    store = new BindingStore(join(root, "b.db"));
+    server = await createMockJiraServer(() => ({
+      status: 200,
+      body: searchResponse([makeIssue("1", "ENG-1")]),
+    }));
+    store.upsertBinding({
+      issue_id: "1",
+      issue_key: "ENG-1",
+      chat_id: "oc_intake",
+      root_id: "om_root",
+    });
+    replies = [];
+    const coordinator = new ApprovalCoordinator({
+      replyPermission: async (sessionId, requestID, decision) => {
+        replies.push({ sessionId, requestID, decision });
+      },
+    });
+    const rec = createRoundTripRecorder();
+    const feishu = new FeishuSource(makeRoundTripConfig().feishu, logger, rec.fetchImpl);
+    bridge = new CommentBridge({
+      tracker: trackerFor(server),
+      feishu,
+      bindings: store,
+      config: () => makeRoundTripConfig(server),
+      logger,
+      approvals: { reply: (requestID, decision) => coordinator.reply(requestID, decision) },
+    });
+    startRoundTrip({ config: makeRoundTripConfig(server), bridge, logger });
+    coordinator.ingest("ses_1", [
+      {
+        id: "per_1",
+        sessionID: "ses_1",
+        action: "shell",
+        resources: ["echo x"],
+        save: ["echo *"],
+      },
+    ]);
+  });
+
+  afterEach(() => {
+    bridge.stop();
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function approvalCard() {
+    return buildApprovalCard({
+      rootId: "om_root",
+      turn: 0,
+      requestID: "per_1",
+      action: "shell",
+      resources: ["echo x"],
+      save: ["echo *"],
+      kind: "bridge",
+    });
+  }
+
+  it("dispatches an allow-once button through the real router and replies once", async () => {
+    const harness = startRoundTrip({
+      config: makeRoundTripConfig(server),
+      bridge,
+      logger,
+    });
+    const btn = extractButtons(approvalCard()).find((b) => b.action === "approve_once");
+    expect(btn).toBeDefined();
+    const result = (await harness?.dispatch(cardActionEvent("om_appr", btn?.value ?? {}))) as {
+      toast: { type: string; content: string };
+    };
+    expect(result?.toast.type).toBe("success");
+    expect(replies).toEqual([{ sessionId: "ses_1", requestID: "per_1", decision: "once" }]);
+  });
+
+  it("second click on the same rendered button is deduplicated", async () => {
+    const harness = startRoundTrip({
+      config: makeRoundTripConfig(server),
+      bridge,
+      logger,
+    });
+    const btn = extractButtons(approvalCard()).find((b) => b.action === "approve_always");
+    const first = (await harness?.dispatch(cardActionEvent("om_appr2", btn?.value ?? {}))) as {
+      toast: { type: string; content: string };
+    };
+    const second = (await harness?.dispatch(cardActionEvent("om_appr2", btn?.value ?? {}))) as {
+      toast: { type: string; content: string };
+    };
+    expect(first?.toast.type).toBe("success");
+    expect(second?.toast.content).toContain("已处理");
+    expect(replies).toHaveLength(1);
+  });
+
+  it("clicking a stale re-rendered button still answers by current state", async () => {
+    const harness = startRoundTrip({
+      config: makeRoundTripConfig(server),
+      bridge,
+      logger,
+    });
+    const first = extractButtons(approvalCard()).find((b) => b.action === "approve_once");
+    await harness?.dispatch(cardActionEvent("om_appr3", first?.value ?? {}));
+    const rerendered = extractButtons(approvalCard()).find((b) => b.action === "approve_reject");
+    const result = (await harness?.dispatch(
+      cardActionEvent("om_appr3", rerendered?.value ?? {}),
+    )) as { toast: { type: string; content: string } };
+    expect(result?.toast.content).toContain("已处理");
+    expect(replies).toHaveLength(1);
+  });
+
+  it("missing request_id payload is answered with an error and no reply", async () => {
+    const harness = startRoundTrip({
+      config: makeRoundTripConfig(server),
+      bridge,
+      logger,
+    });
+    const result = (await harness?.dispatch(
+      cardActionEvent("om_appr4", {
+        action: "approve_once",
+        root_id: "om_root",
+        kind: "bridge",
+      }),
+    )) as { toast: { type: string; content: string } };
+    expect(result?.toast.type).toBe("error");
+    expect(replies).toHaveLength(0);
   });
 });

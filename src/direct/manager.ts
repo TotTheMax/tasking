@@ -341,6 +341,7 @@ export class DirectSessionManager {
       action: request.action,
       resources: request.resources,
       save: request.save,
+      kind: "direct",
     });
     const replyCard = this.deps.feishu.replyCardInThread;
     if (!replyCard) {

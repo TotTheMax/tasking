@@ -21,8 +21,11 @@ import { CommentBridge } from "../bridge/comment-bridge.js";
 import { loadDotenvIfPresent } from "../config/dotenv.js";
 import { ConfigManager } from "../config/manager.js";
 import { validateStartupConfig } from "../config/validator.js";
+import { buildApprovalCard } from "../direct/card.js";
 import { DirectSessionManager } from "../direct/manager.js";
 import { defaultApiExec } from "../driver/api-client.js";
+import { ApprovalCoordinator } from "../driver/approval.js";
+import { replyPermission } from "../driver/session-ops.js";
 import { collectWorkspaceSessionIds, sweepActiveSessions } from "../driver/sweep.js";
 import { ActivityStore } from "../observability/activity-store.js";
 import { type ConfigRuntimeInfo, buildConfigView } from "../observability/config-view.js";
@@ -31,7 +34,7 @@ import { LogRingBuffer } from "../observability/log-buffer.js";
 import { ConsoleLogger, type Logger } from "../observability/logger.js";
 import { TerminalDashboard } from "../observability/terminal-dashboard.js";
 import { Scheduler } from "../scheduler/scheduler.js";
-import { TaskingError } from "../shared/errors.js";
+import { TaskingError, toTaskingError } from "../shared/errors.js";
 import { classifyOpencodeVersion, probeOpencodeVersion } from "../shared/opencode-version.js";
 import { createInitialState } from "../shared/types.js";
 import { setLocale, setTranslateWarnLogger, translate } from "../translate/locale.js";
@@ -261,6 +264,92 @@ async function runStart(args: string[]): Promise<number> {
   let tracker: JiraTracker | null = null;
   let scheduler: Scheduler | null = null;
   let activityStore: ActivityStore = new ActivityStore();
+  let feishuRef: FeishuSource | null = null;
+  let bindingsRef: BindingStore | null = null;
+  const sessionIssueIndex = new Map<string, string>();
+  const jiraApprovalCards = new Map<
+    string,
+    { messageId: string; rootId: string; request: import("../driver/approval.js").ApprovalRequest }
+  >();
+  const jiraApprovals = new ApprovalCoordinator({
+    replyPermission: async (sessionId, requestID, decision) => {
+      const cfg = configMgr.current;
+      await replyPermission(
+        defaultApiExec(),
+        { command: cfg.opencode.command, serverUrl: cfg.opencode.server_url },
+        sessionId,
+        requestID,
+        decision,
+      );
+    },
+    onCardRequested: (request) => {
+      void (async () => {
+        const issueKey = sessionIssueIndex.get(request.sessionId) ?? null;
+        const binding = issueKey && bindingsRef ? bindingsRef.getBinding(issueKey) : null;
+        const replyCard = feishuRef?.replyCardInThread.bind(feishuRef);
+        if (!binding || !replyCard) return;
+        try {
+          const card = buildApprovalCard({
+            rootId: binding.root_id,
+            turn: 0,
+            requestID: request.requestID,
+            action: request.action,
+            resources: request.resources,
+            save: request.save,
+            kind: "bridge",
+          });
+          const res = await replyCard(binding.root_id, card);
+          if (res.message_id) {
+            jiraApprovalCards.set(request.requestID, {
+              messageId: res.message_id,
+              rootId: binding.root_id,
+              request,
+            });
+          }
+        } catch (e) {
+          logger.warn("jira approval card send failed", {
+            request_id: request.requestID,
+            error: toTaskingError(e).message,
+          });
+        }
+      })();
+    },
+    onCardResolved: (requestID, state, decision) => {
+      void (async () => {
+        if (state === "pending") return;
+        const entry = jiraApprovalCards.get(requestID);
+        if (!entry) return;
+        const updateCard = feishuRef?.updateCard?.bind(feishuRef);
+        if (!updateCard) return;
+        const resolution =
+          state === "replied" &&
+          (decision === "once" || decision === "always" || decision === "reject")
+            ? { state: "replied" as const, decision }
+            : { state: state as "expired" | "cancelled" | "external" };
+        try {
+          await updateCard(
+            entry.messageId,
+            buildApprovalCard(
+              {
+                rootId: entry.rootId,
+                turn: 0,
+                requestID,
+                action: entry.request.action,
+                resources: entry.request.resources,
+                save: entry.request.save,
+              },
+              resolution,
+            ),
+          );
+        } catch (e) {
+          logger.warn("jira approval card stamp failed", {
+            request_id: requestID,
+            error: toTaskingError(e).message,
+          });
+        }
+      })();
+    },
+  });
   if (jiraEnabled) {
     tracker = new JiraTracker(configMgr.current.tracker);
     scheduler = new Scheduler({
@@ -268,9 +357,20 @@ async function runStart(args: string[]): Promise<number> {
       config: () => configMgr.current,
       logger,
       runAttemptFn: runAttempt,
+      approvalEvents: (taskIdentifier, event) => {
+        if (event.kind === "expired") {
+          jiraApprovals.markExpired(event.requestID);
+          return;
+        }
+        for (const p of event.pending) {
+          sessionIssueIndex.set(p.sessionID, taskIdentifier);
+          jiraApprovals.ingest(p.sessionID, [p]);
+        }
+      },
     });
     activityStore = scheduler.activityStore;
   }
+
   const trackerlessState = createInitialState(
     configMgr.current.polling.interval_ms,
     configMgr.current.agent.max_concurrent_agents,
@@ -353,11 +453,13 @@ async function runStart(args: string[]): Promise<number> {
       return 1;
     }
     const feishu = new FeishuSource(configMgr.current.feishu, logger);
+    feishuRef = feishu;
     logger.info("feishu api base", {
       edition: configMgr.current.feishu.edition,
       base: feishuApiBase(configMgr.current.feishu.edition),
     });
     bindings = new BindingStore(join(configMgr.current.workspace.root, "bindings.db"));
+    bindingsRef = bindings;
     if (configMgr.current.feishu.direct.enabled) {
       directManager = new DirectSessionManager({
         feishu,
@@ -383,6 +485,9 @@ async function runStart(args: string[]): Promise<number> {
       requestRefresh: requestRefreshFn,
       scheduler: scheduler ?? undefined,
       direct: directManager ?? undefined,
+      approvals: {
+        reply: (requestID, decision) => jiraApprovals.reply(requestID, decision),
+      },
     });
     if (values.fresh) {
       const reconciled = await bridge.freshStartReset();

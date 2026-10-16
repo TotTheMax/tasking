@@ -67,6 +67,13 @@ export interface RunAttemptOptions {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   interruptGraceMs?: number;
+  onPendingPermissions?: (
+    pending: import("../driver/session-ops.js").PendingPermission[],
+  ) => void | Promise<void>;
+  onPermissionReply?: (
+    requestID: string,
+    decision: import("../driver/session-ops.js").PermissionDecision,
+  ) => void;
   sessionId?: string | null;
   startTurn?: number;
   baseTokens?: { input_tokens: number; output_tokens: number; total_tokens: number };
@@ -521,6 +528,8 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
           sleep,
           now: opts.now,
           onEvent,
+          onPendingPermissions: opts.onPendingPermissions,
+          onPermissionReply: opts.onPermissionReply,
           signal: opts.signal,
         });
       } catch (e) {

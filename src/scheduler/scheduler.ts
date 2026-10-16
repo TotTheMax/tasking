@@ -28,6 +28,12 @@ export interface SchedulerDeps {
   runAttemptFn: typeof runAttempt;
   apiExec?: import("../driver/api-client.js").ApiExecFn;
   sleep?: (ms: number) => Promise<void>;
+  approvalEvents?: (
+    taskIdentifier: string,
+    event:
+      | { kind: "pending"; pending: import("../driver/session-ops.js").PendingPermission[] }
+      | { kind: "expired"; requestID: string },
+  ) => void;
 }
 
 const CONTINUATION_DELAY_MS = 1000;
@@ -301,6 +307,13 @@ export class Scheduler extends EventEmitter {
         trackerStateChecker,
         apiExec: this.deps.apiExec,
         sleep: this.deps.sleep,
+        onPendingPermissions: this.deps.approvalEvents
+          ? (pending) => this.deps.approvalEvents?.(task.identifier, { kind: "pending", pending })
+          : undefined,
+        onPermissionReply: this.deps.approvalEvents
+          ? (requestID) =>
+              this.deps.approvalEvents?.(task.identifier, { kind: "expired", requestID })
+          : undefined,
         sessionId: entry.session_id,
         startTurn,
         signal: entry.abort?.signal,
