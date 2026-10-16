@@ -8,7 +8,6 @@ import { BindingStore as BindingStoreImpl } from "../src/bridge/binding-store.js
 import type { EffectiveConfig } from "../src/config/config-types.js";
 import { DEFAULTS, type DirectConfig } from "../src/config/config-types.js";
 import { resolveConfig } from "../src/config/resolver.js";
-import { buildDirectCommand } from "../src/direct/command.js";
 import type { DirectTurnOutcome } from "../src/direct/driver.js";
 import { type DirectFeishuPort, DirectSessionManager } from "../src/direct/manager.js";
 import type { TurnDriverEvent } from "../src/driver/turn-driver.js";
@@ -218,111 +217,6 @@ function textEvent(text: string): TurnDriverEvent {
 function toolEvent(title: string, status: "completed" | "error" = "completed"): TurnDriverEvent {
   return { type: "tool_use", tool: "bash", title, status };
 }
-
-describe("buildDirectCommand", () => {
-  it("first turn: --format json, explicit --dir, no -s, no --auto, no --title", () => {
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/tasking",
-      message: "跑测试",
-      sessionId: null,
-      autoApprove: false,
-    });
-    expect(cmd).toContain("--format");
-    expect(cmd.indexOf("--dir")).toBeGreaterThanOrEqual(0);
-    expect(cmd[cmd.indexOf("--dir") + 1]).toBe("/repos/tasking");
-    expect(cmd).not.toContain("--title");
-    expect(cmd).not.toContain("-s");
-    expect(cmd).not.toContain("--auto");
-    expect(cmd[cmd.length - 1]).toBe("跑测试");
-  });
-
-  it("continuation: -s session, no --title", () => {
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/t",
-      message: "再看看",
-      sessionId: "ses_x",
-      autoApprove: false,
-    });
-    expect(cmd).toContain("-s");
-    expect(cmd[cmd.indexOf("-s") + 1]).toBe("ses_x");
-    expect(cmd).not.toContain("--title");
-  });
-
-  it("autoApprove passes --auto", () => {
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/t",
-      message: "hi",
-      sessionId: null,
-      autoApprove: true,
-    });
-    expect(cmd).toContain("--auto");
-  });
-
-  it("passes the configured agent/model/variant (Jira-path parity)", () => {
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/t",
-      message: "hi",
-      sessionId: null,
-      autoApprove: false,
-      agent: "build",
-      model: "deepseek/deepseek-v4-flash",
-      variant: "high",
-    });
-    expect(cmd[cmd.indexOf("--agent") + 1]).toBe("build");
-    expect(cmd[cmd.indexOf("--model") + 1]).toBe("deepseek/deepseek-v4-flash");
-    expect(cmd[cmd.indexOf("--variant") + 1]).toBe("high");
-    expect(cmd[cmd.length - 1]).toBe("hi");
-  });
-
-  it("omits agent/model/variant when unset or empty", () => {
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/t",
-      message: "hi",
-      sessionId: null,
-      autoApprove: false,
-      agent: "",
-      model: null,
-      variant: undefined,
-    });
-    expect(cmd).not.toContain("--agent");
-    expect(cmd).not.toContain("--model");
-    expect(cmd).not.toContain("--variant");
-  });
-
-  it("prompt invariant: the user's message is the sole prompt, verbatim — no template, no wrapper", () => {
-    const message = "帮我看下这个报错\n第二行";
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/t",
-      message,
-      sessionId: null,
-      autoApprove: false,
-      agent: "build",
-      model: "deepseek/deepseek-v4-flash",
-      variant: "high",
-    });
-    expect(cmd).toEqual([
-      "opencode",
-      "run",
-      "--format",
-      "json",
-      "--dir",
-      "/repos/t",
-      "--agent",
-      "build",
-      "--model",
-      "deepseek/deepseek-v4-flash",
-      "--variant",
-      "high",
-      message,
-    ]);
-  });
-});
 
 describe("DirectSessionManager", () => {
   it("creates a session from /chat <project>, ACKs, runs first turn, posts summary", async () => {

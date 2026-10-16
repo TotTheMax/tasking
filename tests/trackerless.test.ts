@@ -7,11 +7,12 @@ import { BindingStore } from "../src/bridge/binding-store.js";
 import { CommentBridge } from "../src/bridge/comment-bridge.js";
 import type { EffectiveConfig } from "../src/config/config-types.js";
 import { resolveConfig } from "../src/config/resolver.js";
+import type { DirectTurnOutcome } from "../src/direct/driver.js";
 import { type DirectFeishuPort, DirectSessionManager } from "../src/direct/manager.js";
+import type { TurnDriverEvent } from "../src/driver/turn-driver.js";
 import { ActivityStore } from "../src/observability/activity-store.js";
 import { ConsoleLogger } from "../src/observability/logger.js";
 import { createInitialState } from "../src/shared/types.js";
-import type { OpencodeEvent, SubprocessResult } from "../src/worker/runner.js";
 
 const logger = new ConsoleLogger({}, () => {});
 
@@ -96,35 +97,32 @@ class RecordingFeishu {
 }
 
 class FakeRunner {
-  calls: Array<{ cmd: string[]; cwd: string; onEvent?: (evt: OpencodeEvent) => void }> = [];
-  private resolvers: Array<(r: SubprocessResult) => void> = [];
+  calls: Array<{
+    cmd: string[];
+    cwd: string;
+    onEvent?: (evt: TurnDriverEvent) => void;
+  }> = [];
+  private resolvers: Array<(r: DirectTurnOutcome) => void> = [];
 
   spawn = (
-    cmd: string[],
-    cwd: string,
-    _timeout: number,
-    _inactivityTimeout: number,
-    _signal?: AbortSignal,
-    onOpencodeEvent?: (evt: OpencodeEvent) => void,
-  ): Promise<SubprocessResult> => {
-    this.calls.push({ cmd, cwd, onEvent: onOpencodeEvent });
-    return new Promise<SubprocessResult>((resolve) => {
+    request: import("../src/direct/driver.js").DirectTurnRequest,
+  ): Promise<DirectTurnOutcome> => {
+    const cmd = ["opencode", "run", "--dir", request.directory, request.prompt];
+    this.calls.push({ cmd, cwd: request.directory, onEvent: request.onEvent });
+    return new Promise<DirectTurnOutcome>((resolve) => {
       this.resolvers.push(resolve);
     });
   };
 
-  finish(index: number, events: OpencodeEvent[], exitCode = 0): void {
+  finish(index: number, events: TurnDriverEvent[], exitCode = 0): void {
     const call = this.calls[index];
     for (const evt of events) call?.onEvent?.(evt);
     this.resolvers[index]?.({
-      exitCode,
-      stdout: "",
-      stderr: "",
-      timedOut: false,
-      sessionAndUsage: {
-        session_id: events.find((e) => e.sessionId)?.sessionId ?? `ses_fake${this.calls.length}`,
-        usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
-      },
+      status: exitCode === 0 ? "succeeded" : "failed",
+      sessionId: `ses_fake${this.calls.length}`,
+      usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
+      error: exitCode === 0 ? null : `exit ${exitCode}`,
+      postureOpened: false,
     });
   }
 
@@ -157,7 +155,7 @@ function compose(config: EffectiveConfig): {
     store,
     config: () => config,
     logger,
-    spawn: runner.spawn,
+    turnDriver: runner.spawn,
     activity: (key, evt) => activityStore.record(key, evt),
     clearActivity: (key) => activityStore.clear(key),
     deleteSession: () => Promise.resolve(),

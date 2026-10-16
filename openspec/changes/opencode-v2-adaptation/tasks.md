@@ -28,13 +28,13 @@
 ## 4. S4 直连切换
 
 - [x] 4.1 直连执行切驱动器（写失败测试先：首 turn/续跑经驱动器、auto_approve 项目覆盖映射 ruleset、日志 `direct turn starting` 字段更新；再改 manager.ts 执行路径）
-- [ ] 4.2 卡片数据源切轮询 diff（写失败测试先：工具面板/文本/stats 由 diff 事件驱动、token 展示合计口径、等待审批标记；再改卡片刷新链路）
-- [ ] 4.3 `/stop`/`/done` 语义（写失败测试先：/stop 走中断梯子并作废挂起审批、/done 删会话；再实现）
-- [ ] 4.4 合并队列保持（写失败测试先：运行中追问排队合并续跑语义不变、daemon 中止丢队列行为不变；再回归验证既有用例）
+- [x] 4.2 卡片数据源切轮询 diff（写失败测试先：工具面板/文本/stats 由 diff 事件驱动、token 展示合计口径、等待审批标记；再改卡片刷新链路）
+- [x] 4.3 `/stop`/`/done` 语义（写失败测试先：/stop 走中断梯子并作废挂起审批、/done 删会话；再实现）
+- [x] 4.4 合并队列保持（写失败测试先：运行中追问排队合并续跑语义不变、daemon 中止丢队列行为不变；再回归验证既有用例）
 
 ## 5. S5 收尾
 
-- [ ] 5.1 删除旧 run 路径（buildOpencodeCommand/buildDirectCommand/runDefaultSubprocess 子进程语义、相关测试改写；typecheck/lint 全绿）
+- [x] 5.1 删除旧 run 路径（buildOpencodeCommand/buildDirectCommand/runDefaultSubprocess 子进程语义、相关测试改写；typecheck/lint 全绿）
 - [ ] 5.2 TUI 等待审批状态与倒计时（详情页/直连区块显示，写失败测试先再实现）
 - [ ] 5.3 契约测试（`@opencode/sdk` devDep pin 2.0.29：内存运行时断言 operation 名、decision 枚举、Model.Ref 字段、mcp.servers 行为——版本区间扩容工装）
 - [ ] 5.4 真机冒烟（INTEGRATION 体系新增 v2 用例：本机 wrapper 或 ljw 跑 create/prompt/pending/reply/interrupt 全链路；不可达时记录原因）

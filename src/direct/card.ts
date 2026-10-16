@@ -407,9 +407,7 @@ export function buildApprovalCard(
 ): Record<string, unknown> {
   const resources = req.resources.map((r) => `\`${r}\``).join(" · ");
   const saveNote =
-    req.save && req.save.length > 0
-      ? `\n始终允许将按模式保存：${req.save.map((s) => `\`${s}\``).join("、")}`
-      : "";
+    req.save && req.save.length > 0 ? "\n始终允许将按模式保存：" + req.save.join("、") : "";
   const elements: Array<Record<string, unknown>> = [
     {
       tag: "markdown",
