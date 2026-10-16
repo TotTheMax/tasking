@@ -53,6 +53,8 @@ spike 分支（`spike/opencode-v2-adaptation`，10 轮实验，v2.0.29 实测）
 
 daemon 启动时对 sidecar/durable 存储记录的 tasking 会话，经 `session.active` 过滤后逐个 `interrupt`，任务按失败进正常重试。sessionID 持久化沿用 sidecar（Jira）与 `direct_sessions` 表（直连）。
 
+**真机实测补充（v2.0.29）**：`session.active` 的 `data` 是**以 sessionID 为键的 map**（`{"ses_x":{"type":"running"}}`，空闲时为 `{}`），不是数组——解析器按此实现（数组/`sessionIDs` 形状作为兼容兜底）。
+
 ### D6 计费口径
 
 v2 tokens = `{input, output, reasoning, cache{read,write}}`，无 `total`。合计口径：**input+output+reasoning**（cache 读写不计入用量合计，单列展示）——与 v1 `total` 口径最接近且可从轮询数据直接求和。

@@ -39,6 +39,7 @@ function extractActiveIds(payload: unknown): string[] {
       const value = record[key];
       if (Array.isArray(value)) return extractActiveIds(value);
     }
+    return Object.keys(record).filter((key) => key.startsWith("ses_"));
   }
   return [];
 }

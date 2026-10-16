@@ -43,6 +43,32 @@ describe("sweepActiveSessions", () => {
     expect(calls).toContain("session.interrupt");
   });
 
+  it("parses the real map shape (session ids as keys)", async () => {
+    const { exec } = responder({
+      "session.active": '{"data":{"ses_1":{"type":"running"},"ses_other":{"type":"running"}}}',
+      "session.interrupt": '{"interrupted":true}',
+    });
+    const res = await sweepActiveSessions({
+      exec,
+      base: { command: "opencode" },
+      sessionIds: ["ses_1", "ses_2"],
+      logger,
+    });
+    expect(res.interrupted).toEqual(["ses_1"]);
+    expect(res.untouched).toEqual(["ses_2"]);
+  });
+
+  it("empty object map yields no active ids", async () => {
+    const { exec } = responder({ "session.active": '{"data":{}}' });
+    const res = await sweepActiveSessions({
+      exec,
+      base: { command: "opencode" },
+      sessionIds: ["ses_1"],
+      logger,
+    });
+    expect(res.untouched).toEqual(["ses_1"]);
+  });
+
   it("parses array-of-objects active shapes", async () => {
     const { exec } = responder({
       "session.active": '{"data":[{"id":"ses_a"},{"id":"ses_b"}]}',
