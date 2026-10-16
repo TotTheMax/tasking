@@ -12,6 +12,16 @@ import {
   replyPermission,
   setSessionPermissions,
 } from "../src/driver/session-ops.js";
+import {
+  assistantMessage,
+  interruptResponse,
+  messageListResponse,
+  permission,
+  permissionListResponse,
+  sessionCreateResponse,
+  sessionGetResponse,
+  userMessage,
+} from "./helpers/opencode-fixtures.js";
 
 interface Captured {
   args: string[][];
@@ -62,7 +72,7 @@ describe("createSession", () => {
   });
 
   it("omits model, ruleset and optional fields when unset", async () => {
-    const { exec, captured } = recorder(['{"data":{"id":"ses_2"}}']);
+    const { exec, captured } = recorder([sessionCreateResponse({ id: "ses_2" })]);
     await createSession(exec, { ...base, directory: "/w", autoApprove: false });
     const dataIdx = captured.args[0]?.indexOf("--data") ?? -1;
     const body = JSON.parse(captured.args[0]?.[dataIdx + 1] ?? "{}");
@@ -74,7 +84,7 @@ describe("createSession", () => {
   });
 
   it("supports server_url passthrough", async () => {
-    const { exec, captured } = recorder(['{"data":{"id":"ses_3"}}']);
+    const { exec, captured } = recorder([sessionCreateResponse({ id: "ses_3" })]);
     await createSession(exec, {
       ...base,
       serverUrl: "http://127.0.0.1:48123",
@@ -98,7 +108,11 @@ describe("session operations", () => {
 
   it("get returns outcome and tokens", async () => {
     const { exec } = recorder([
-      '{"data":{"id":"ses_1","outcome":"succeeded","tokens":{"input":10,"output":2,"reasoning":1,"cache":{"read":5,"write":0}}}}',
+      sessionGetResponse({
+        id: "ses_1",
+        outcome: "succeeded",
+        tokens: { input: 10, output: 2, reasoning: 1, cache: { read: 5, write: 0 } },
+      }),
     ]);
     const s = await getSession(exec, base, "ses_1");
     expect(s.outcome).toBe("succeeded");
@@ -107,7 +121,9 @@ describe("session operations", () => {
 
   it("pending permissions parse per_ ids and save suggestions", async () => {
     const { exec } = recorder([
-      '{"data":[{"id":"per_1","sessionID":"ses_1","action":"shell","resources":["echo x"],"save":["echo *"],"source":{"type":"tool","messageID":"msg_1","id":"call_1"}}]}',
+      permissionListResponse([
+        permission({ id: "per_1", sessionID: "ses_1", resources: ["echo x"], save: ["echo *"] }),
+      ]),
     ]);
     const pending = await listPendingPermissions(exec, base, "ses_1");
     expect(pending).toHaveLength(1);
@@ -126,7 +142,7 @@ describe("session operations", () => {
   });
 
   it("interrupt reports interrupted flag", async () => {
-    const { exec, captured } = recorder(['{"interrupted":true}']);
+    const { exec, captured } = recorder([interruptResponse()]);
     const res = await interruptSession(exec, base, "ses_1");
     expect(res.interrupted).toBe(true);
     expect(captured.args[0]?.[2]).toBe("session.interrupt");
@@ -161,7 +177,10 @@ describe("session operations", () => {
 
   it("listSessionMessages returns assistant messages with content arrays", async () => {
     const { exec, captured } = recorder([
-      '{"data":[{"id":"msg_1","type":"assistant","content":[{"type":"text","text":"hi"}]},{"id":"msg_0","type":"user"}]}',
+      messageListResponse([
+        assistantMessage({ id: "msg_1", content: [{ type: "text", text: "hi" }] }),
+        userMessage({ id: "msg_0" }),
+      ]),
     ]);
     const messages = await listSessionMessages(exec, base, "ses_1");
     expect(messages).toHaveLength(2);

@@ -6,6 +6,7 @@ import type { ApiExecFn, ApiExecResult } from "../src/driver/api-client.js";
 import { collectWorkspaceSessionIds, sweepActiveSessions } from "../src/driver/sweep.js";
 import { ConsoleLogger } from "../src/observability/logger.js";
 import { writeSessionSidecar } from "../src/workspace/manager.js";
+import { interruptResponse, sessionActiveResponse } from "./helpers/opencode-fixtures.js";
 
 const logger = new ConsoleLogger({}, () => {});
 
@@ -29,8 +30,8 @@ function responder(routes: Record<string, string | Error>): { exec: ApiExecFn; c
 describe("sweepActiveSessions", () => {
   it("interrupts known sessions that are still active", async () => {
     const { exec, calls } = responder({
-      "session.active": '{"data":{"sessionIDs":["ses_1","ses_2"]}}',
-      "session.interrupt": '{"interrupted":true}',
+      "session.active": sessionActiveResponse(["ses_1", "ses_2"]),
+      "session.interrupt": interruptResponse(),
     });
     const res = await sweepActiveSessions({
       exec,
@@ -45,8 +46,8 @@ describe("sweepActiveSessions", () => {
 
   it("parses the real map shape (session ids as keys)", async () => {
     const { exec } = responder({
-      "session.active": '{"data":{"ses_1":{"type":"running"},"ses_other":{"type":"running"}}}',
-      "session.interrupt": '{"interrupted":true}',
+      "session.active": sessionActiveResponse(["ses_1", "ses_other"]),
+      "session.interrupt": interruptResponse(),
     });
     const res = await sweepActiveSessions({
       exec,
@@ -72,7 +73,7 @@ describe("sweepActiveSessions", () => {
   it("parses array-of-objects active shapes", async () => {
     const { exec } = responder({
       "session.active": '{"data":[{"id":"ses_a"},{"id":"ses_b"}]}',
-      "session.interrupt": '{"interrupted":true}',
+      "session.interrupt": interruptResponse(),
     });
     const res = await sweepActiveSessions({
       exec,

@@ -77,7 +77,7 @@ export function mapContentEntry(entry: Record<string, unknown>): TurnDriverEvent
         if (typeof metadata.exit === "number") evt.exit = metadata.exit;
         if (typeof metadata.truncated === "boolean") evt.truncated = metadata.truncated;
       }
-      const time = state.time as Record<string, unknown> | undefined;
+      const time = (entry.time ?? state.time) as Record<string, unknown> | undefined;
       if (time && typeof time.created === "number" && typeof time.completed === "number") {
         evt.durationMs = Math.max(0, time.completed - time.created);
       }

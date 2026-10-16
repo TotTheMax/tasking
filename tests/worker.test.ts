@@ -14,6 +14,14 @@ import { ConsoleLogger } from "../src/observability/logger.js";
 import type { Task } from "../src/shared/types.js";
 import { type WorkerEvent, runAttempt } from "../src/worker/runner.js";
 import { readSessionSidecar, resolveWorkspacePath } from "../src/workspace/manager.js";
+import {
+  assistantMessage,
+  interruptResponse,
+  messageListResponse,
+  permissionListResponse,
+  sessionCreateResponse,
+  sessionGetResponse,
+} from "./helpers/opencode-fixtures.js";
 
 const logger = new ConsoleLogger({}, () => {});
 
@@ -130,7 +138,7 @@ function apiScript(opts: ApiScriptOptions = {}) {
     const dataIdx = args.indexOf("--data");
     if (op === "session.create") {
       state.createBodies.push(JSON.parse(args[dataIdx + 1] ?? "{}") as Record<string, unknown>);
-      return ok(`{"data":{"id":"${sessionId}"}}`);
+      return ok(sessionCreateResponse({ id: sessionId }));
     }
     if (op === "session.prompt") {
       const body = JSON.parse(args[dataIdx + 1] ?? "{}") as { text?: string };
@@ -143,12 +151,12 @@ function apiScript(opts: ApiScriptOptions = {}) {
     }
     if (op === "session.interrupt") {
       state.interrupts += 1;
-      return ok('{"interrupted":true}');
+      return ok(interruptResponse());
     }
     if (op === "session.get") {
-      return ok(`{"data":{"id":"${sessionId}","outcome":"${outcome}"}}`);
+      return ok(sessionGetResponse({ id: sessionId, outcome }));
     }
-    if (op === "session.permission.list") return ok('{"data":[]}');
+    if (op === "session.permission.list") return ok(permissionListResponse([]));
     if (op === "session.message.list") {
       const turnMessages =
         opts.messagesPerTurn && opts.messagesPerTurn.length > 0
@@ -156,23 +164,22 @@ function apiScript(opts: ApiScriptOptions = {}) {
               Math.min(state.prompts.length - 1, opts.messagesPerTurn.length - 1)
             ] ?? [])
           : messages;
-      const data = turnMessages.map((m, i) => ({
-        id: opts.messagesPerTurn ? `msg_${state.prompts.length}_${i + 1}` : `msg_${i + 1}`,
-        type: "assistant",
-        content: m.content ?? [],
-        ...(m.tokens
-          ? {
-              tokens: {
+      const data = turnMessages.map((m, i) =>
+        assistantMessage({
+          id: opts.messagesPerTurn ? `msg_${state.prompts.length}_${i + 1}` : `msg_${i + 1}`,
+          content: m.content ?? [],
+          tokens: m.tokens
+            ? {
                 input: m.tokens.input,
                 output: m.tokens.output,
                 reasoning: m.tokens.reasoning,
                 cache: { read: 0, write: 0 },
-              },
-            }
-          : {}),
-        time: { completed: i + 1 },
-      }));
-      return ok(JSON.stringify({ data }));
+              }
+            : undefined,
+          time: { created: i + 1, streamed: i + 1, completed: i + 1 },
+        }),
+      );
+      return ok(messageListResponse(data));
     }
     return ok("{}");
   }) as import("../src/driver/api-client.js").ApiExecFn;

@@ -7,107 +7,76 @@ import {
   mapContentEntry,
   runTurn,
 } from "../src/driver/turn-driver.js";
+import {
+  assistantMessage,
+  interruptResponse,
+  messageListResponse,
+  permissionListResponse,
+  sessionCreateResponse,
+  sessionGetResponse,
+  toolEntry,
+} from "./helpers/opencode-fixtures.js";
 
 describe("mapContentEntry", () => {
   it("maps text entries", () => {
-    const evts = mapContentEntry({ type: "text", text: "hello" }, "msg_1");
+    const evts = mapContentEntry({ type: "text", text: "hello" });
     expect(evts).toEqual([{ type: "text", text: "hello" }]);
   });
 
-  it("maps tool entries with full execution detail", () => {
+  it("maps a captured v2 tool entry (name + state.content) with full detail", () => {
     const evts = mapContentEntry(
-      {
-        type: "tool",
-        tool: "shell",
-        state: {
-          status: "completed",
-          input: { command: "echo x" },
-          output: "x\n",
-          metadata: { status: "completed", truncated: false, exit: 0 },
-          time: { created: 1000, ran: 1100, completed: 1500 },
-        },
-      },
-      "msg_1",
+      toolEntry({
+        name: "shell",
+        command: "echo x",
+        output: "x\n",
+        exit: 0,
+        created: 1000,
+        completed: 1500,
+      }),
     );
     expect(evts).toHaveLength(1);
     const evt = evts[0] as Record<string, unknown>;
     expect(evt.type).toBe("tool_use");
     expect(evt.tool).toBe("shell");
     expect(evt.input).toEqual({ command: "echo x" });
-    expect(evt.exit).toBe(0);
-    expect(evt.durationMs).toBe(500);
-  });
-
-  it("reads the tool name from the v2 `name` field (not v1 `tool`)", () => {
-    const evts = mapContentEntry({
-      type: "tool",
-      id: "call_1",
-      name: "shell",
-      executed: false,
-      state: { status: "completed", input: { command: "echo x" }, metadata: { exit: 0 } },
-    });
-    expect(evts).toHaveLength(1);
-    expect((evts[0] as Record<string, unknown>).tool).toBe("shell");
-  });
-
-  it("still accepts the legacy `tool` field", () => {
-    const evts = mapContentEntry({ type: "tool", tool: "read" });
-    expect((evts[0] as Record<string, unknown>).tool).toBe("read");
-  });
-
-  it("reads tool output from state.content text entries (v2 shape)", () => {
-    const evts = mapContentEntry({
-      type: "tool",
-      id: "call_1",
-      name: "shell",
-      state: {
-        status: "completed",
-        input: { command: "echo x" },
-        content: [{ type: "text", text: "x\n" }],
-        metadata: { status: "completed", truncated: false, exit: 0 },
-        time: { created: 1000, ran: 1100, completed: 1500 },
-      },
-    });
-    const evt = evts[0] as Record<string, unknown>;
-    expect(evt.tool).toBe("shell");
     expect(evt.output).toBe("x\n");
     expect(evt.exit).toBe(0);
     expect(evt.durationMs).toBe(500);
   });
 
-  it("prefers a plain state.output string when present", () => {
+  it("still accepts the legacy v1 tool/state.output shape", () => {
     const evts = mapContentEntry({
       type: "tool",
-      name: "read",
-      state: { status: "completed", output: "legacy", content: [{ type: "text", text: "v2" }] },
+      tool: "read",
+      state: { status: "completed", output: "legacy" },
     });
+    expect((evts[0] as Record<string, unknown>).tool).toBe("read");
     expect((evts[0] as Record<string, unknown>).output).toBe("legacy");
   });
 
   it("degrades gracefully when state fields are missing", () => {
-    const evts = mapContentEntry({ type: "tool", tool: "shell" }, "msg_1");
+    const evts = mapContentEntry({ type: "tool", name: "shell" });
     expect(evts).toHaveLength(1);
     expect((evts[0] as Record<string, unknown>).tool).toBe("shell");
     expect((evts[0] as Record<string, unknown>).exit).toBeUndefined();
   });
 
   it("skips unknown entry types without crashing", () => {
-    expect(mapContentEntry({ type: "mystery" }, "msg_1")).toEqual([]);
+    expect(mapContentEntry({ type: "mystery" })).toEqual([]);
   });
 });
 
 describe("diffMessagesToEvents", () => {
   const settled: SessionMessage[] = [
-    {
+    assistantMessage({
       id: "msg_1",
-      type: "assistant",
       content: [
         { type: "text", text: "done" },
-        { type: "tool", tool: "shell", state: { metadata: { exit: 0 } } },
+        toolEntry({ name: "shell", command: "echo x", output: "x\n", exit: 0 }),
       ],
       tokens: { input: 100, output: 10, reasoning: 5, cache: { read: 0, write: 0 } },
-      time: { completed: 123 },
-    },
+      time: { created: 1, streamed: 2, completed: 123 },
+    }) as unknown as SessionMessage,
   ];
 
   it("emits events for unseen settled messages", () => {
@@ -129,7 +98,11 @@ describe("diffMessagesToEvents", () => {
 
   it("ignores unsettled messages", () => {
     const unsettled: SessionMessage[] = [
-      { id: "msg_2", type: "assistant", content: [{ type: "text", text: "..." }] },
+      assistantMessage({
+        id: "msg_2",
+        content: [{ type: "text", text: "..." }],
+        time: { created: 1, streamed: 1 },
+      }) as unknown as SessionMessage,
     ];
     const seen = new Map<string, string>();
     const { events } = diffMessagesToEvents(unsettled, seen);
@@ -177,18 +150,27 @@ const idleSleep = () => Promise.resolve();
 
 describe("runTurn", () => {
   it("creates session, prompts, polls to success with usage and events", async () => {
-    const msg1 =
-      '{"data":[{"id":"msg_1","type":"assistant","content":[{"type":"text","text":"OK"}],"tokens":{"input":100,"output":10,"reasoning":5,"cache":{"read":0,"write":0}},"time":{"completed":1}}]}';
+    const msg1 = messageListResponse([
+      assistantMessage({
+        id: "msg_1",
+        content: [{ type: "text", text: "OK" }],
+        tokens: { input: 100, output: 10, reasoning: 5, cache: { read: 0, write: 0 } },
+        time: { created: 1, streamed: 1, completed: 1 },
+      }),
+    ]);
     const { exec, calls } = scriptExec([
-      { operation: "session.create", respond: '{"data":{"id":"ses_new"}}' },
+      { operation: "session.create", respond: sessionCreateResponse({ id: "ses_new" }) },
       { operation: "session.prompt", respond: '{"data":{"id":"msg_0"}}' },
-      { operation: "session.get", respond: '{"data":{"id":"ses_new","outcome":null}}' },
+      { operation: "session.get", respond: sessionGetResponse({ id: "ses_new", outcome: null }) },
       {
         operation: "session.get",
-        respond:
-          '{"data":{"id":"ses_new","outcome":"succeeded","tokens":{"input":100,"output":10,"reasoning":5,"cache":{"read":0,"write":0}}}}',
+        respond: sessionGetResponse({
+          id: "ses_new",
+          outcome: "succeeded",
+          tokens: { input: 100, output: 10, reasoning: 5, cache: { read: 0, write: 0 } },
+        }),
       },
-      { operation: "session.permission.list", respond: '{"data":[]}' },
+      { operation: "session.permission.list", respond: permissionListResponse([]) },
       { operation: "session.message.list", respond: msg1 },
     ]);
     const events: TurnDriverEvent[] = [];
@@ -215,9 +197,9 @@ describe("runTurn", () => {
   it("reuses an existing session without create", async () => {
     const { exec, calls } = scriptExec([
       { operation: "session.prompt", respond: '{"data":{"id":"m"}}' },
-      { operation: "session.get", respond: '{"data":{"id":"ses_x","outcome":"failed"}}' },
-      { operation: "session.permission.list", respond: '{"data":[]}' },
-      { operation: "session.message.list", respond: '{"data":[]}' },
+      { operation: "session.get", respond: sessionGetResponse({ id: "ses_x", outcome: "failed" }) },
+      { operation: "session.permission.list", respond: permissionListResponse([]) },
+      { operation: "session.message.list", respond: messageListResponse([]) },
     ]);
     const result = await runTurn({
       exec,
@@ -239,9 +221,12 @@ describe("runTurn", () => {
     const { exec } = scriptExec([
       { operation: "session.prompt", respond: '{"data":{"id":"m"}}' },
       { operation: "session.get", respond: "", failOnce: true },
-      { operation: "session.get", respond: '{"data":{"id":"ses_x","outcome":"succeeded"}}' },
-      { operation: "session.permission.list", respond: '{"data":[]}' },
-      { operation: "session.message.list", respond: '{"data":[]}' },
+      {
+        operation: "session.get",
+        respond: sessionGetResponse({ id: "ses_x", outcome: "succeeded" }),
+      },
+      { operation: "session.permission.list", respond: permissionListResponse([]) },
+      { operation: "session.message.list", respond: messageListResponse([]) },
     ]);
     const result = await runTurn({
       exec,
@@ -346,10 +331,10 @@ describe("runTurn timers and interrupt ladder", () => {
   it("wall-clock timeout triggers interrupt and settles timed_out", async () => {
     const { exec, calls } = realNowScript([
       { operation: "session.prompt", respond: '{"data":{"id":"m"}}' },
-      { operation: "session.get", respond: '{"data":{"id":"ses_x","outcome":null}}' },
-      { operation: "session.permission.list", respond: '{"data":[]}' },
-      { operation: "session.message.list", respond: '{"data":[]}' },
-      { operation: "session.interrupt", respond: '{"interrupted":true}' },
+      { operation: "session.get", respond: sessionGetResponse({ id: "ses_x", outcome: null }) },
+      { operation: "session.permission.list", respond: permissionListResponse([]) },
+      { operation: "session.message.list", respond: messageListResponse([]) },
+      { operation: "session.interrupt", respond: interruptResponse() },
     ]);
     let clock = 0;
     const result = await runTurn({
@@ -377,10 +362,10 @@ describe("runTurn timers and interrupt ladder", () => {
   it("inactivity timeout settles timed_out with inactivity_timeout reason", async () => {
     const { exec } = realNowScript([
       { operation: "session.prompt", respond: '{"data":{"id":"m"}}' },
-      { operation: "session.get", respond: '{"data":{"id":"ses_x","outcome":null}}' },
-      { operation: "session.permission.list", respond: '{"data":[]}' },
-      { operation: "session.message.list", respond: '{"data":[]}' },
-      { operation: "session.interrupt", respond: '{"interrupted":true}' },
+      { operation: "session.get", respond: sessionGetResponse({ id: "ses_x", outcome: null }) },
+      { operation: "session.permission.list", respond: permissionListResponse([]) },
+      { operation: "session.message.list", respond: messageListResponse([]) },
+      { operation: "session.interrupt", respond: interruptResponse() },
     ]);
     let clock = 0;
     const result = await runTurn({
