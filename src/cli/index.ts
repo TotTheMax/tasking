@@ -303,8 +303,8 @@ async function runStart(args: string[]): Promise<number> {
     },
     onCardRequested: (request) => {
       void (async () => {
-        const issueKey = sessionIssueIndex.get(request.sessionId) ?? null;
-        const binding = issueKey && bindingsRef ? bindingsRef.getBinding(issueKey) : null;
+        const issueId = sessionIssueIndex.get(request.sessionId) ?? null;
+        const binding = issueId && bindingsRef ? bindingsRef.getBinding(issueId) : null;
         const replyCard = feishuRef?.replyCardInThread.bind(feishuRef);
         if (!binding || !replyCard) return;
         try {
@@ -376,14 +376,14 @@ async function runStart(args: string[]): Promise<number> {
       config: () => configMgr.current,
       logger,
       runAttemptFn: runAttempt,
-      approvalEvents: (taskIdentifier, event) => {
+      approvalEvents: (task, event) => {
         if (event.kind === "expired") {
           jiraApprovals.markExpired(event.requestID);
           return;
         }
         const bySession = new Map<string, typeof event.pending>();
         for (const p of event.pending) {
-          sessionIssueIndex.set(p.sessionID, taskIdentifier);
+          sessionIssueIndex.set(p.sessionID, task.id);
           const list = bySession.get(p.sessionID) ?? [];
           list.push(p);
           bySession.set(p.sessionID, list);

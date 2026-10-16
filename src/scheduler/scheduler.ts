@@ -29,7 +29,7 @@ export interface SchedulerDeps {
   apiExec?: import("../driver/api-client.js").ApiExecFn;
   sleep?: (ms: number) => Promise<void>;
   approvalEvents?: (
-    taskIdentifier: string,
+    task: { id: string; identifier: string },
     event:
       | { kind: "pending"; pending: import("../driver/session-ops.js").PendingPermission[] }
       | { kind: "expired"; requestID: string },
@@ -313,14 +313,20 @@ export class Scheduler extends EventEmitter {
                 entry.waiting_approval = true;
                 entry.waiting_since = Date.now();
               }
-              this.deps.approvalEvents?.(task.identifier, { kind: "pending", pending });
+              this.deps.approvalEvents?.(
+                { id: task.id, identifier: task.identifier },
+                { kind: "pending", pending },
+              );
             }
           : undefined,
         onPermissionReply: this.deps.approvalEvents
           ? (requestID) => {
               entry.waiting_approval = false;
               entry.waiting_since = null;
-              this.deps.approvalEvents?.(task.identifier, { kind: "expired", requestID });
+              this.deps.approvalEvents?.(
+                { id: task.id, identifier: task.identifier },
+                { kind: "expired", requestID },
+              );
             }
           : undefined,
         sessionId: entry.session_id,

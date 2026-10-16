@@ -664,6 +664,49 @@ describe("session ID propagation", () => {
     }
   });
 
+  it("approvalEvents carry the task id (binding lookups need issue_id)", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 1;
+      config.opencode.permission_timeout_ms = 600000;
+      const task = makeTask({ id: "10101", state: "In Progress" });
+      const tracker = mockTracker([task]);
+      const seen: Array<{ id: string; identifier: string }> = [];
+      const runFn = (async (opts: {
+        onPendingPermissions?: (p: unknown[]) => void;
+      }) => {
+        opts.onPendingPermissions?.([
+          { id: "per_x", sessionID: "ses_x", action: "shell", resources: ["echo x"] },
+        ]);
+        return {
+          status: "succeeded",
+          error: null,
+          usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+          session_id: "ses_x",
+          started_at: Date.now(),
+          ended_at: Date.now(),
+        };
+      }) as never;
+      const sched = new Scheduler({
+        tracker,
+        config: () => config,
+        logger,
+        runAttemptFn: runFn,
+        approvalEvents: (t, _event) => {
+          seen.push(t);
+        },
+      });
+      await sched.tick();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(seen[0]?.id).toBe("10101");
+      expect(seen[0]?.identifier).toBe("ENG-1");
+      sched.stop();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not terminate a run waiting for approval (stall skips it)", async () => {
     const root = tempRoot();
     try {
