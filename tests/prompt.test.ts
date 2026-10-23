@@ -4,7 +4,11 @@ import { describe, expect, it } from "vitest";
 import { parseWorkflowContent } from "../src/config/loader.js";
 import { TaskingError } from "../src/shared/errors.js";
 import type { Task } from "../src/shared/types.js";
-import { buildContinuationGuidance, renderPrompt } from "../src/worker/prompt.js";
+import {
+  buildContinuationGuidance,
+  capTaskDescription,
+  renderPrompt,
+} from "../src/worker/prompt.js";
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -69,6 +73,32 @@ function readExampleFrontmatter(): string {
   const parts = content.split("---");
   return parts.length >= 2 ? (parts[1] ?? "") : "";
 }
+
+describe("capTaskDescription", () => {
+  it("trims oversized descriptions with a marker", () => {
+    const task = {
+      id: "1",
+      identifier: "ENG-1",
+      title: "t",
+      description: "y".repeat(50_000),
+      priority: 1,
+      state: "To Do",
+      source: "jira",
+      url: null,
+      branch_name: null,
+      assignee: null,
+    } as never;
+    const capped = capTaskDescription(task);
+    expect((capped.description as string).length).toBeLessThan(41_200);
+    expect(capped.description).toContain("truncated by tasking");
+    expect(task.description.length).toBe(50_000);
+  });
+
+  it("keeps normal descriptions untouched", () => {
+    const task = { description: "short" } as never;
+    expect(capTaskDescription(task).description).toBe("short");
+  });
+});
 
 describe("renderPrompt", () => {
   it("renders task and attempt on first attempt", () => {

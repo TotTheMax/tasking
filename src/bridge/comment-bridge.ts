@@ -90,6 +90,7 @@ export interface CommentBridgeDeps {
       requestID: string,
       decision: import("../driver/session-ops.js").PermissionDecision,
     ): Promise<import("../driver/approval.js").ReplyOutcome>;
+    stampedCard?: (requestID: string) => unknown;
   };
   retryDelaysMs?: number[];
 }
@@ -158,7 +159,11 @@ export class CommentBridge {
             : outcome === "unknown"
               ? { type: "warning" as const, content: "审批单不存在或已过期" }
               : { type: "error" as const, content: "审批提交失败，请重试" };
-      return { toast };
+      const card =
+        outcome === "replied" || outcome === "already"
+          ? this.deps.approvals.stampedCard?.(requestID)
+          : undefined;
+      return { toast, ...(card !== undefined ? { card } : {}) };
     }
     if (BRIDGE_JIRA_CARD_ACTIONS.has(name) && this.jiraTracker === null) {
       return { toast: { type: "warning", content: "该操作需要 Jira 任务源" } };

@@ -23,6 +23,7 @@ const TEMPLATES = {
   sessionGet: load<Record<string, unknown>>("session-get-terminal"),
   messageList: load<Record<string, unknown>>("message-list-settled"),
   messageListTools: load<Record<string, unknown>>("message-list-tools"),
+  messageListFailed: load<Record<string, unknown>>("message-list-failed"),
   permissionList: load<Record<string, unknown>>("permission-list-pending"),
   sessionActive: load<Record<string, unknown>>("session-active"),
   interrupt: load<Record<string, unknown>>("interrupt"),
@@ -134,8 +135,34 @@ export function userMessage(overrides: Record<string, unknown> = {}): Record<str
   return { ...clone(user), ...overrides };
 }
 
+/** A real turn-completion `idle` message envelope (v2 appends one per finished turn). */
+export function idleMessage(
+  overrides: { id?: string; outcome?: string } = {},
+): Record<string, unknown> {
+  const messages = clone(TEMPLATES.messageList).data as Array<Record<string, unknown>>;
+  const idle = messages.find((m) => m.type === "idle") ?? {
+    id: "msg_idle",
+    time: { created: 1 },
+    type: "idle",
+    outcome: "succeeded",
+  };
+  return {
+    ...clone(idle),
+    ...(overrides.id === undefined ? {} : { id: overrides.id }),
+    outcome: overrides.outcome ?? "succeeded",
+  };
+}
+
 export function messageListResponse(messages: Array<Record<string, unknown>>): string {
   return JSON.stringify({ data: messages });
+}
+
+export function failedTurnMessages(): Array<Record<string, unknown>> {
+  return clone(TEMPLATES.messageListFailed.data as Array<Record<string, unknown>>);
+}
+
+export function messageListFailedResponse(): string {
+  return JSON.stringify({ data: failedTurnMessages() });
 }
 
 export function permission(overrides: {

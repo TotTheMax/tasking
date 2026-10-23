@@ -25,7 +25,7 @@ import { buildApprovalCard } from "../direct/card.js";
 import { DirectSessionManager } from "../direct/manager.js";
 import { defaultApiExec } from "../driver/api-client.js";
 import { ApprovalCoordinator } from "../driver/approval.js";
-import { replyPermission } from "../driver/session-ops.js";
+import { interruptSession as interruptSessionOp, replyPermission } from "../driver/session-ops.js";
 import { collectWorkspaceSessionIds, sweepActiveSessions } from "../driver/sweep.js";
 import { ActivityStore } from "../observability/activity-store.js";
 import { type ConfigRuntimeInfo, buildConfigView } from "../observability/config-view.js";
@@ -290,6 +290,51 @@ async function runStart(args: string[]): Promise<number> {
     string,
     { messageId: string; rootId: string; request: import("../driver/approval.js").ApprovalRequest }
   >();
+  const jiraApprovalResolution = (
+    state: "replied" | "expired" | "cancelled" | "external" | "pending",
+    decision?: import("../driver/session-ops.js").PermissionDecision,
+  ):
+    | { state: "replied"; decision: "once" | "always" | "reject" }
+    | { state: "expired" | "cancelled" | "external" } =>
+    state === "replied" && (decision === "once" || decision === "always" || decision === "reject")
+      ? { state: "replied", decision }
+      : { state: state as "expired" | "cancelled" | "external" };
+  const jiraApprovalRootFor = (sessionId: string): string | null => {
+    const issueId = sessionIssueIndex.get(sessionId) ?? null;
+    const binding = issueId && bindingsRef ? bindingsRef.getBinding(issueId) : null;
+    return binding?.root_id ?? null;
+  };
+  const stampJiraApprovalCard = (requestID: string): void => {
+    void (async () => {
+      const entry = jiraApprovalCards.get(requestID);
+      const updateCard = feishuRef?.updateCard?.bind(feishuRef);
+      if (!entry || !updateCard) return;
+      const resolution = jiraApprovals.resolutionOf(requestID);
+      if (!resolution || resolution.state === "pending") return;
+      try {
+        await updateCard(
+          entry.messageId,
+          buildApprovalCard(
+            {
+              rootId: entry.rootId,
+              turn: 0,
+              requestID,
+              action: entry.request.action,
+              resources: entry.request.resources,
+              save: entry.request.save,
+            },
+            jiraApprovalResolution(resolution.state, resolution.decision),
+          ),
+        );
+        jiraApprovalCards.delete(requestID);
+      } catch (e) {
+        logger.warn("jira approval card stamp failed", {
+          request_id: requestID,
+          error: toTaskingError(e).message,
+        });
+      }
+    })();
+  };
   const jiraApprovals = new ApprovalCoordinator({
     replyPermission: async (sessionId, requestID, decision) => {
       const cfg = configMgr.current;
@@ -303,13 +348,19 @@ async function runStart(args: string[]): Promise<number> {
     },
     onCardRequested: (request) => {
       void (async () => {
-        const issueId = sessionIssueIndex.get(request.sessionId) ?? null;
-        const binding = issueId && bindingsRef ? bindingsRef.getBinding(issueId) : null;
+        const rootId = jiraApprovalRootFor(request.sessionId);
         const replyCard = feishuRef?.replyCardInThread.bind(feishuRef);
-        if (!binding || !replyCard) return;
+        if (!rootId || !replyCard) {
+          logger.warn("jira approval has no bound topic; it will auto-reject on timeout", {
+            session_id: request.sessionId,
+            request_id: request.requestID,
+            action: request.action,
+          });
+          return;
+        }
         try {
           const card = buildApprovalCard({
-            rootId: binding.root_id,
+            rootId,
             turn: 0,
             requestID: request.requestID,
             action: request.action,
@@ -317,13 +368,14 @@ async function runStart(args: string[]): Promise<number> {
             save: request.save,
             kind: "bridge",
           });
-          const res = await replyCard(binding.root_id, card);
+          const res = await replyCard(rootId, card);
           if (res.message_id) {
             jiraApprovalCards.set(request.requestID, {
               messageId: res.message_id,
-              rootId: binding.root_id,
+              rootId,
               request,
             });
+            stampJiraApprovalCard(request.requestID);
           }
         } catch (e) {
           logger.warn("jira approval card send failed", {
@@ -333,42 +385,31 @@ async function runStart(args: string[]): Promise<number> {
         }
       })();
     },
-    onCardResolved: (requestID, state, decision) => {
-      void (async () => {
-        if (state === "pending") return;
-        const entry = jiraApprovalCards.get(requestID);
-        if (!entry) return;
-        const updateCard = feishuRef?.updateCard?.bind(feishuRef);
-        if (!updateCard) return;
-        const resolution =
-          state === "replied" &&
-          (decision === "once" || decision === "always" || decision === "reject")
-            ? { state: "replied" as const, decision }
-            : { state: state as "expired" | "cancelled" | "external" };
-        try {
-          await updateCard(
-            entry.messageId,
-            buildApprovalCard(
-              {
-                rootId: entry.rootId,
-                turn: 0,
-                requestID,
-                action: entry.request.action,
-                resources: entry.request.resources,
-                save: entry.request.save,
-              },
-              resolution,
-            ),
-          );
-        } catch (e) {
-          logger.warn("jira approval card stamp failed", {
-            request_id: requestID,
-            error: toTaskingError(e).message,
-          });
-        }
-      })();
+    onCardResolved: (requestID, state) => {
+      if (state === "pending") return;
+      stampJiraApprovalCard(requestID);
     },
   });
+  const jiraStampedApprovalCard = (requestID: string): unknown => {
+    const request = jiraApprovals.requestOf(requestID);
+    if (!request) return undefined;
+    const resolution = jiraApprovals.resolutionOf(requestID);
+    if (!resolution || resolution.state === "pending") return undefined;
+    const rootId =
+      jiraApprovalRootFor(request.sessionId) ?? jiraApprovalCards.get(requestID)?.rootId ?? "";
+    return buildApprovalCard(
+      {
+        rootId,
+        turn: 0,
+        requestID,
+        action: request.action,
+        resources: request.resources,
+        save: request.save,
+        kind: "bridge",
+      },
+      jiraApprovalResolution(resolution.state, resolution.decision),
+    );
+  };
   if (jiraEnabled) {
     tracker = new JiraTracker(configMgr.current.tracker);
     scheduler = new Scheduler({
@@ -493,7 +534,21 @@ async function runStart(args: string[]): Promise<number> {
         logger,
         activity: (key, evt) => activityStore.record(key, evt),
         clearActivity: (key) => activityStore.clear(key),
-        deleteSession: (sid) => deleteSession(sid, logger),
+        deleteSession: (sid) =>
+          deleteSession(sid, logger, {
+            command: configMgr.current.opencode.command,
+            serverUrl: configMgr.current.opencode.server_url,
+          }),
+        interruptSession: async (sid) => {
+          await interruptSessionOp(
+            defaultApiExec(),
+            {
+              command: configMgr.current.opencode.command,
+              serverUrl: configMgr.current.opencode.server_url,
+            },
+            sid,
+          );
+        },
       });
       await directManager.recover();
       directManager.start();
@@ -512,6 +567,7 @@ async function runStart(args: string[]): Promise<number> {
       direct: directManager ?? undefined,
       approvals: {
         reply: (requestID, decision) => jiraApprovals.reply(requestID, decision),
+        stampedCard: (requestID) => jiraStampedApprovalCard(requestID),
       },
     });
     if (values.fresh) {
@@ -573,6 +629,9 @@ async function runStart(args: string[]): Promise<number> {
           output_tokens: 0,
           total_tokens: 0,
         },
+      permissionTimeoutMs: () => configMgr.current.opencode.permission_timeout_ms,
+      deleteDirectSession: (rootId) =>
+        directManager ? directManager.deleteSessionByRoot(rootId, "TUI") : Promise.resolve(false),
     });
     actualPort = await dashboard.start();
     const host = configMgr.current.server.host;
@@ -609,13 +668,25 @@ async function runStart(args: string[]): Promise<number> {
           output_tokens: 0,
           total_tokens: 0,
         },
+      permissionTimeoutMs: () => configMgr.current.opencode.permission_timeout_ms,
+      deleteDirectSession: (rootId) =>
+        directManager ? directManager.deleteSessionByRoot(rootId, "TUI") : Promise.resolve(false),
     });
     tui.start(1000);
   }
 
   const shutdown = async (sig: string) => {
     logger.info("received signal, shutting down", { signal: sig });
-    if (scheduler !== null) scheduler.stop();
+    if (scheduler !== null) {
+      scheduler.stop();
+      await Promise.race([
+        scheduler.drain(15000),
+        new Promise((resolve) => {
+          const t = setTimeout(resolve, 16000);
+          t.unref?.();
+        }),
+      ]);
+    }
     if (bridge) bridge.stop();
     if (directManager) {
       directManager.stop();
@@ -1004,6 +1075,15 @@ async function runTui(args: string[]): Promise<number> {
     logger,
     dashboardUrl,
     logBuffer,
+    deleteDirectSession: async (rootId: string) => {
+      const res = await fetch(
+        `http://${displayHost}:${port}/api/v1/direct/${encodeURIComponent(rootId)}/delete`,
+        { method: "POST" },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { ok?: boolean };
+      return json.ok === true;
+    },
   });
 
   tui.start(1000);

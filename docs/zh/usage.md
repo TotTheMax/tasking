@@ -251,7 +251,7 @@ TUI 显示:
 
 1. **WORKFLOW.md 解析** — front matter 能否解析、tracker 是什么;
 2. **飞书**(仅 `feishu.enabled: true`)— 凭据换 token → 三个 scope 探针(列群/读群消息/传文件)→ intake 群可达(机器人所在群列表含 `intake_chat_id`);
-3. **Jira**(仅 `tracker.kind: jira`)— 连接测试(同 init 的 Connection Test 逻辑,只取 serverInfo);
+3. **Jira**(仅 `tracker.kind: jira`)— 连接测试(同 init 的 Connection Test 逻辑,只取 serverInfo)+ **Jira MCP 脚本**存在性(缺失报 ✗ 并提示 `npm run build`,否则任务 agent 拿不到 Jira 工具);
 4. **opencode** — 是否在 `PATH`。
 
 ```bash
@@ -319,7 +319,7 @@ feishu:
 **命令**（在 intake 群或已绑话题内发）：
 
 - `/issue <title>` + 可选第 2 行起 `<description>`：建 Jira issue（title→summary、desc→description 字段；描述可省略——仅标题的 `/issue` 也会建 issue，description 为空；project/assignee/labels 锁定复用 tracker 配置保证被拾起；type 默认 `create_issue_type`，可 `--type <name|N>` 覆盖；可 `--agent <name>` 在创建时打 `agent:<name>` 标签指定该任务使用的 agent）。`/issue` 无参列出项目可用 issueType + 默认。该命令消息即话题根。多行描述按 API 版本正确落库（v2 字符串 / v3 ADF 段落），不额外写首条 comment（ADR 0009）。
-- `/chat <project> <msg>` / `/chat /绝对路径 <msg>`：在固定目录创建 opencode 直连会话（仅 intake 群；需配置 `feishu.direct`，见下）。命令消息即话题根，首条消息为首 turn prompt；此后**直接回复该话题即续聊**（运行中追问自动排队并合并续跑），话题内 `/stop` 中断当前任务、`/done` 结束会话（并删除底层 opencode 会话，与空闲 TTL 过期一致）。每 turn 回一条完成文本；过程展示量级可配 `feishu.direct.verbosity`：`quiet`（仅正文）/ `summary`（正文+统计行）/ `detailed`（默认，为每个 turn 发一张**过程卡片**：工具调用的折叠面板、失败默认展开、头部件显示会话名/状态/累计 token，面板组件需飞书/Lark 客户端 >= V7.9，更低版本显示「请升级」占位符、可显式改回 `summary`；turn 结束时该卡被封存为纯记录，下一轮另发一张，并另发一张 **markdown 结果卡片**承载完整回答——`summary`/`quiet` 下结果仍是纯文本）。一个话题严格对应一个 opencode session，daemon 重启后从 `direct_sessions` 表恢复。`tasking stop`/Ctrl-C 会立即中止在飞的直连轮次（SIGKILL 子进程树，话题内卡片盖「已中断」章、排队中的消息丢弃）；进程被强杀（`kill -9`）来不及中止时，重启后由恢复逻辑兜底（会话标 idle 并在话题里提示重发）。活跃直连会话在 TUI 中以独立的 **Direct sessions** 区块展示，含会话名称（首条 prompt）、状态、空闲时长、token 与排队数，标题含活跃会话数 `(N)`（有 turn 在跑时 `(N · R running)`）（`←/→`/Tab 切换焦点；`Enter` 进入直连详情，`a` 复用 activity 视图；直连 token 计入首页 `Tokens:` 总额），不影响 Jira 的 running/retry 列表。直连与 Jira 路径互不影响。
+- `/chat <project> <msg>` / `/chat /绝对路径 <msg>`：在固定目录创建 opencode 直连会话（仅 intake 群；需配置 `feishu.direct`，见下）。命令消息即话题根，首条消息为首 turn prompt；此后**直接回复该话题即续聊**（运行中追问自动排队并合并续跑），话题内 `/stop` 中断当前任务、`/done` 结束会话（并删除底层 opencode 会话，与空闲 TTL 过期一致）。每 turn 回一条完成文本；过程展示量级可配 `feishu.direct.verbosity`：`quiet`（仅正文）/ `summary`（正文+统计行）/ `detailed`（默认，为每个 turn 发一张**过程卡片**：工具调用的折叠面板、失败默认展开、头部件显示会话名/状态/累计 token，面板组件需飞书/Lark 客户端 >= V7.9，更低版本显示「请升级」占位符、可显式改回 `summary`；turn 结束时该卡被封存为纯记录，下一轮另发一张，并另发一张 **markdown 结果卡片**承载完整回答——`summary`/`quiet` 下结果仍是纯文本）。一个话题严格对应一个 opencode session，daemon 重启后从 `direct_sessions` 表恢复。`tasking stop`/Ctrl-C 会立即中止在飞的直连轮次（SIGKILL 子进程树，话题内卡片盖「已中断」章、排队中的消息丢弃）；进程被强杀（`kill -9`）来不及中止时，重启后由恢复逻辑兜底（会话标 idle 并在话题里提示重发）。活跃直连会话在 TUI 中以独立的 **Direct sessions** 区块展示，含会话名称（首条 prompt）、状态、空闲时长、token 与排队数，标题含活跃会话数 `(N)`（有 turn 在跑时 `(N · R running)`）（`←/→`/Tab 切换焦点；`Enter` 进入直连详情，`a` 复用 activity 视图；直连 token 计入首页 `Tokens:` 总额），不影响 Jira 的 running/retry 列表。直连列表或直连详情页按 `d` 可**删除会话**(两段确认:再按一次 `d` 执行,任意其他键取消;确认文案显示会话标题)——完整走 `/done` 收尾:标记 done、中断在飞轮次、封存卡片、话题内发结束通知、删除底层 opencode 会话并清运行时,话题已找不到时通知静默跳过。直连与 Jira 路径互不影响。
   - **轮次完成消息的构成**：它不是提示词约束、也不是二次 LLM 摘要 —— tasking 从轮询到的会话消息机械组装：正文 = 本 turn 最后一条 assistant 文本消息（模型对你消息的自然回复，你的消息即 prompt，无额外模板）；末行统计（`⏱ 耗时 · 🔧 工具调用数 · ≈tokens`）来自工具条目计数、消息 token 与计时（合计口径 = input+output+reasoning，见 ADR 0037）；超 3500 字截断。失败/超时的提示文案由 tasking 生成。
 - `/chat`：列出已配置项目 + path 模式用法。
 - **直连富输入**：话题内直接发**图片/文件**（含"文字+截图"的 post 富文本）→ 下载到工作区 inbox 目录（`<workspace.root>/direct-inbox/`，单附件 ≤20MB，超限/失败会提示）并把绝对路径交给 agent——日志/CSV/代码立即有用，截图取决于模型是否具备视觉。**合并转发**消息按既有解析处理；"转发+留言"会拆成两条消息（各成一轮），需要一轮处理时先用 `/collect` 攒齐再 `/send`。

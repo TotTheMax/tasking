@@ -10,6 +10,8 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
 import type { HooksConfig, WorkspaceConfig } from "../config/config-types.js";
+import { defaultApiExec } from "../driver/api-client.js";
+import { deleteSession as removeOpencodeSession } from "../driver/session-ops.js";
 import type { Logger } from "../observability/logger.js";
 import { TaskingError } from "../shared/errors.js";
 import type { Workspace } from "../shared/types.js";
@@ -138,17 +140,29 @@ export async function createWorkspace(opts: CreateWorkspaceOptions): Promise<Wor
   return { path: workspacePath, workspace_key, created_now };
 }
 
-export function deleteSession(sessionId: string, logger: Logger): Promise<void> {
-  return new Promise((resolve) => {
-    execFile("opencode", ["session", "delete", sessionId], { timeout: 15000 }, (e) => {
-      if (e) {
-        logger.warn("session delete failed", { session_id: sessionId, error: e.message });
-      } else {
-        logger.debug("session deleted", { session_id: sessionId });
-      }
-      resolve();
+export interface OpencodeCli {
+  command?: string;
+  serverUrl?: string | null;
+}
+
+export async function deleteSession(
+  sessionId: string,
+  logger: Logger,
+  opencode?: OpencodeCli,
+): Promise<void> {
+  try {
+    await removeOpencodeSession(
+      defaultApiExec(),
+      { command: opencode?.command ?? "opencode", serverUrl: opencode?.serverUrl ?? null },
+      sessionId,
+    );
+    logger.debug("session deleted", { session_id: sessionId });
+  } catch (e) {
+    logger.warn("session delete failed", {
+      session_id: sessionId,
+      error: e instanceof Error ? e.message : String(e),
     });
-  });
+  }
 }
 
 const SIDECAR_FILENAME = ".tasking-session.json";
@@ -214,12 +228,13 @@ export async function removeWorkspace(
   hooks: HooksConfig,
   logger: Logger,
   sessionId?: string | null,
+  opencode?: OpencodeCli,
 ): Promise<void> {
   if (!existsSync(workspacePath)) return;
   await runHook(hooks.before_remove, workspacePath, hooks, logger, "before_remove");
   const sid = sessionId ?? readSessionSidecar(workspacePath)?.sessionId ?? null;
   if (sid) {
-    await deleteSession(sid, logger);
+    await deleteSession(sid, logger, opencode);
   }
   rmSync(workspacePath, { recursive: true, force: true });
   logger.info("workspace removed", { workspacePath });

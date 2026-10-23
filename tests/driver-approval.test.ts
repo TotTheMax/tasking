@@ -108,4 +108,59 @@ describe("ApprovalCoordinator", () => {
     const res = await c.reply("per_1", "once");
     expect(res).toBe("already");
   });
+
+  it("revives a cancelled approval that is still pending server-side on the next turn", async () => {
+    const { c, onCardRequested, replyPermission } = coordinator();
+    c.ingest("ses_1", [pending("per_1")]);
+    c.cancelAll("ses_1");
+    expect(c.state("per_1")).toBe("cancelled");
+    c.ingest("ses_1", [pending("per_1")]);
+    expect(c.state("per_1")).toBe("pending");
+    expect(onCardRequested).toHaveBeenCalledTimes(2);
+    const res = await c.reply("per_1", "once");
+    expect(res).toBe("replied");
+    expect(replyPermission).toHaveBeenCalled();
+  });
+
+  it("revives an externally-resolved approval when the same id is pending again", async () => {
+    const { c, onCardRequested } = coordinator();
+    c.ingest("ses_1", [pending("per_1")]);
+    c.ingest("ses_1", []);
+    expect(c.state("per_1")).toBe("external");
+    c.ingest("ses_1", [pending("per_1")]);
+    expect(c.state("per_1")).toBe("pending");
+    expect(onCardRequested).toHaveBeenCalledTimes(2);
+    const res = await c.reply("per_1", "once");
+    expect(res).toBe("replied");
+  });
+
+  it("exposes the request and resolution for card re-rendering", async () => {
+    const { c } = coordinator();
+    c.ingest("ses_1", [pending("per_1")]);
+    expect(c.requestOf("per_1")).toEqual({
+      requestID: "per_1",
+      sessionId: "ses_1",
+      action: "shell",
+      resources: ["echo per_1"],
+      save: ["echo *"],
+    });
+    expect(c.resolutionOf("per_1")).toEqual({ state: "pending" });
+    await c.reply("per_1", "always");
+    expect(c.resolutionOf("per_1")).toEqual({ state: "replied", decision: "always" });
+    expect(c.requestOf("per_ghost")).toBeUndefined();
+    expect(c.resolutionOf("per_ghost")).toBeUndefined();
+  });
+
+  it("prunes resolved entries once it exceeds the cap, keeping pending ones", async () => {
+    const { c } = coordinator();
+    for (let i = 0; i < 5; i++) {
+      c.ingest("ses_1", [pending(`old_${i}`)]);
+      await c.reply(`old_${i}`, "once");
+    }
+    for (let i = 0; i < 500; i++) {
+      c.ingest("ses_1", [pending(`new_${i}`)]);
+    }
+    expect(c.state("old_0")).toBeUndefined();
+    expect(c.state("new_499")).toBe("pending");
+  });
 });

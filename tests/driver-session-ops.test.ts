@@ -11,6 +11,8 @@ import {
   promptSession,
   replyPermission,
   setSessionPermissions,
+  switchSessionAgent,
+  switchSessionModel,
 } from "../src/driver/session-ops.js";
 import {
   assistantMessage,
@@ -173,6 +175,34 @@ describe("session operations", () => {
     await setSessionPermissions(exec, base, "ses_1", null);
     const args = captured.args[0] ?? [];
     expect(args[args.indexOf("--data") + 1]).toBe('{"permissions":[]}');
+  });
+
+  it("switchSessionAgent posts the agent to the session agent path", async () => {
+    const { exec, captured } = recorder([""]);
+    await switchSessionAgent(exec, base, "ses_1", "review");
+    const args = captured.args[0] ?? [];
+    expect(args[2]).toBe("session.switchAgent");
+    expect(args).toContain("sessionID=ses_1");
+    expect(args[args.indexOf("--data") + 1]).toBe('{"agent":"review"}');
+  });
+
+  it("switchSessionModel posts a full Model.Ref and reports success", async () => {
+    const { exec, captured } = recorder([""]);
+    const ok = await switchSessionModel(exec, base, "ses_1", "zhipuai/glm-5", "high");
+    expect(ok).toBe(true);
+    const args = captured.args[0] ?? [];
+    expect(args[2]).toBe("session.switchModel");
+    expect(args).toContain("sessionID=ses_1");
+    expect(args[args.indexOf("--data") + 1]).toBe(
+      '{"model":{"id":"glm-5","providerID":"zhipuai","variant":"high"}}',
+    );
+  });
+
+  it("switchSessionModel is a no-op without a provider segment", async () => {
+    const { exec, captured } = recorder([""]);
+    const ok = await switchSessionModel(exec, base, "ses_1", "glm-5", null);
+    expect(ok).toBe(false);
+    expect(captured.args).toHaveLength(0);
   });
 
   it("listSessionMessages returns assistant messages with content arrays", async () => {

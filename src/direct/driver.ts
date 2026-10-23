@@ -5,6 +5,8 @@ import {
   type PendingPermission,
   createSession,
   setSessionPermissions,
+  switchSessionAgent,
+  switchSessionModel,
 } from "../driver/session-ops.js";
 import { type TurnDriverEvent, type TurnResult, runTurn } from "../driver/turn-driver.js";
 
@@ -19,6 +21,8 @@ export interface DirectTurnRequest {
   agent: string | null;
   model: string | null;
   variant: string | null;
+  switchAgent?: boolean;
+  switchModel?: boolean;
   pollIntervalMs: number;
   permissionTimeoutMs: number;
   turnTimeoutMs: number;
@@ -34,6 +38,8 @@ export interface DirectTurnRequest {
 
 export interface DirectTurnOutcome extends TurnResult {
   postureOpened: boolean;
+  agentSwitched?: boolean;
+  modelSwitched?: boolean;
 }
 
 export type DirectTurnDriver = (request: DirectTurnRequest) => Promise<DirectTurnOutcome>;
@@ -42,6 +48,8 @@ export function createDefaultTurnDriver(exec: ApiExecFn): DirectTurnDriver {
   return async (request) => {
     let sessionId = request.sessionId;
     let postureOpen = request.postureOpen;
+    let agentSwitched = false;
+    let modelSwitched = false;
     const base = { command: request.command, serverUrl: request.serverUrl };
     if (sessionId === null) {
       const session = await createSession(exec, {
@@ -54,12 +62,36 @@ export function createDefaultTurnDriver(exec: ApiExecFn): DirectTurnDriver {
       });
       sessionId = session.id;
       postureOpen = request.autoApprove;
-    } else if (request.autoApprove && !postureOpen) {
-      await setSessionPermissions(exec, base, sessionId, ALLOW_ALL_RULES);
-      postureOpen = true;
-    } else if (!request.autoApprove && postureOpen) {
-      await setSessionPermissions(exec, base, sessionId, null);
-      postureOpen = false;
+      agentSwitched = true;
+    } else {
+      if (request.switchAgent && request.agent) {
+        try {
+          await switchSessionAgent(exec, base, sessionId, request.agent);
+          agentSwitched = true;
+        } catch {
+          void 0;
+        }
+      }
+      if (request.switchModel && request.model) {
+        try {
+          modelSwitched = await switchSessionModel(
+            exec,
+            base,
+            sessionId,
+            request.model,
+            request.variant,
+          );
+        } catch {
+          void 0;
+        }
+      }
+      if (request.autoApprove && !postureOpen) {
+        await setSessionPermissions(exec, base, sessionId, ALLOW_ALL_RULES);
+        postureOpen = true;
+      } else if (!request.autoApprove && postureOpen) {
+        await setSessionPermissions(exec, base, sessionId, null);
+        postureOpen = false;
+      }
     }
     const result = await runTurn({
       exec,
@@ -85,6 +117,6 @@ export function createDefaultTurnDriver(exec: ApiExecFn): DirectTurnDriver {
       onWaitingForApproval: request.onWaitingForApproval,
       signal: request.signal,
     });
-    return { ...result, postureOpened: postureOpen };
+    return { ...result, postureOpened: postureOpen, agentSwitched, modelSwitched };
   };
 }

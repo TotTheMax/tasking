@@ -28,6 +28,8 @@ interface ApprovalEntry {
   decision?: PermissionDecision;
 }
 
+const MAX_ENTRIES = 500;
+
 export class ApprovalCoordinator {
   private readonly entries = new Map<string, ApprovalEntry>();
   private readonly deps: ApprovalCoordinatorDeps;
@@ -40,7 +42,19 @@ export class ApprovalCoordinator {
     const seen = new Set<string>();
     for (const p of pending) {
       seen.add(p.id);
-      if (this.entries.has(p.id)) continue;
+      const existing = this.entries.get(p.id);
+      if (existing !== undefined) {
+        if (
+          existing.state === "cancelled" ||
+          existing.state === "expired" ||
+          existing.state === "external"
+        ) {
+          existing.state = "pending";
+          delete existing.decision;
+          this.deps.onCardRequested?.(existing.request);
+        }
+        continue;
+      }
       const entry: ApprovalEntry = {
         request: {
           requestID: p.id,
@@ -62,10 +76,32 @@ export class ApprovalCoordinator {
         this.deps.onCardResolved?.(id, "external", undefined);
       }
     }
+    this.prune();
+  }
+
+  private prune(): void {
+    if (this.entries.size <= MAX_ENTRIES) return;
+    for (const [id, entry] of this.entries) {
+      if (this.entries.size <= MAX_ENTRIES) break;
+      if (entry.state === "pending") continue;
+      this.entries.delete(id);
+    }
   }
 
   state(requestID: string): ApprovalState | undefined {
     return this.entries.get(requestID)?.state;
+  }
+
+  requestOf(requestID: string): ApprovalRequest | undefined {
+    return this.entries.get(requestID)?.request;
+  }
+
+  resolutionOf(
+    requestID: string,
+  ): { state: ApprovalState; decision?: PermissionDecision } | undefined {
+    const entry = this.entries.get(requestID);
+    if (entry === undefined) return undefined;
+    return { state: entry.state, ...(entry.decision ? { decision: entry.decision } : {}) };
   }
 
   async reply(requestID: string, decision: PermissionDecision): Promise<ReplyOutcome> {

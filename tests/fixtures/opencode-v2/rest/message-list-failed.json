@@ -1,0 +1,53 @@
+{
+  "provenance": "captured",
+  "capturedAt": "2026-10-19",
+  "capturedWith": "opencode api session.create (no model) + session.prompt on the machine shared service; server default model alibaba-token-plan-cn/deepseek-v4.1-flash-1017 returned 403 AccessDenied.Unpurchased",
+  "data": [
+    {
+      "id": "msg_152ed2ef3001qigiSZo5jDgNZ3",
+      "time": { "created": 1792392638195 },
+      "type": "idle",
+      "outcome": "failed",
+      "error": {
+        "type": "provider.auth",
+        "message": "Access to model denied. Please make sure you are eligible for using the model.",
+        "status": 403,
+        "response": {
+          "body": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"70abad82-9f90-462e-95c2-488e776bf607\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}"
+        }
+      }
+    },
+    {
+      "id": "msg_152ed2eaf0011C4tSHnRGED41l",
+      "time": { "created": 1792392638134, "completed": 1792392638192 },
+      "type": "assistant",
+      "agent": "build",
+      "model": { "id": "deepseek-v4.1-flash-1017", "providerID": "alibaba-token-plan-cn" },
+      "content": [],
+      "snapshot": {
+        "start": "9d252fc56bcadec93b4829fc6bc00e4fc600d3f7",
+        "end": "9d252fc56bcadec93b4829fc6bc00e4fc600d3f7",
+        "files": []
+      },
+      "finish": "error",
+      "error": {
+        "type": "provider.auth",
+        "message": "Access to model denied. Please make sure you are eligible for using the model.",
+        "status": 403,
+        "response": {
+          "body": "{\"error\":{\"message\":\"Access to model denied. Please make sure you are eligible for using the model.\",\"id\":\"70abad82-9f90-462e-95c2-488e776bf607\",\"type\":\"AccessDenied.Unpurchased\",\"code\":\"AccessDenied.Unpurchased\"}}"
+        }
+      }
+    },
+    {
+      "id": "msg_152ed2e97001BSFWlvqb0J81mE",
+      "time": { "created": 1792392638116 },
+      "text": "reply with the single word: pong",
+      "type": "user"
+    }
+  ],
+  "cursor": {
+    "previous": "eyJpZCI6Im1zZTBlMmVkMmVmMzAwMXFpZ2lTWm81akRnTlozIiwib3JkZXIiOiJkZXNjIiwiZGlyZWN0aW9uIjoicHJldmlvdXMifQ",
+    "next": "eyJpZCI6Im1zZTAzYzJlMmU5NzAwMUJTRldsdnFxMEIwODFtRSIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6Im5leHQifQ"
+  }
+}

@@ -13,6 +13,7 @@ import { JiraTracker } from "../adapters/jira/tracker.js";
 import type { FeishuConfig, TrackerConfig } from "../config/config-types.js";
 import { loadDotenvIfPresent } from "../config/dotenv.js";
 import { ConfigManager } from "../config/manager.js";
+import { getMcpServerScriptPath } from "../mcp/inject.js";
 import {
   type OpencodeAuthProbe,
   type OpencodeServiceProbe,
@@ -38,6 +39,7 @@ export interface DoctorDeps {
   opencodeVersion?: () => string | null;
   opencodeService?: () => OpencodeServiceProbe;
   opencodeAuth?: () => OpencodeAuthProbe;
+  mcpScriptPath?: () => string;
 }
 
 const ICONS: Record<DoctorStatus, string> = {
@@ -175,6 +177,16 @@ export async function runDoctor(
     }
 
     if (tracker) {
+      const mcpScript = deps.mcpScriptPath?.() ?? getMcpServerScriptPath();
+      if (existsSync(mcpScript)) {
+        items.push({ name: "Jira MCP 脚本", status: "pass", detail: mcpScript });
+      } else {
+        items.push({
+          name: "Jira MCP 脚本",
+          status: "fail",
+          detail: `未找到（${mcpScript}）——agent 无法使用 Jira MCP 工具；先 npm run build`,
+        });
+      }
       try {
         const jira = new JiraTracker(tracker, deps.fetchImpl);
         const info = await jira.fetchServerInfo({ timeoutMs: 5000 });

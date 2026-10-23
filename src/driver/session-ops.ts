@@ -1,3 +1,4 @@
+import { TaskingError } from "../shared/errors.js";
 import { type ApiExecFn, execApi } from "./api-client.js";
 
 export interface SessionOpBase {
@@ -33,6 +34,7 @@ export interface SessionInfo {
   id: string;
   outcome: string | null;
   tokens?: SessionTokens;
+  updatedAt?: number | null;
 }
 
 export interface PendingPermission {
@@ -94,13 +96,22 @@ export async function createSession(
   };
 }
 
+const PROMPT_MAX_CHARS = 120_000;
+
 export async function promptSession(
   exec: ApiExecFn,
   base: SessionOpBase,
   sessionID: string,
   text: string,
-): Promise<void> {
-  await execApi(
+): Promise<string | null> {
+  if (text.length > PROMPT_MAX_CHARS) {
+    throw new TaskingError(
+      "prompt_too_large",
+      `prompt is ${text.length} chars (max ${PROMPT_MAX_CHARS}); refusing to pass oversized --data on argv`,
+      { length: text.length },
+    );
+  }
+  const res = await execApi(
     {
       command: base.command,
       serverUrl: base.serverUrl,
@@ -110,6 +121,9 @@ export async function promptSession(
     },
     exec,
   );
+  const payload = asRecord(res?.data);
+  const id = payload.id;
+  return typeof id === "string" && id !== "" ? id : null;
 }
 
 export async function getSession(
@@ -128,10 +142,13 @@ export async function getSession(
   );
   const payload = asRecord(res?.data);
   const tokens = payload.tokens as SessionTokens | undefined;
+  const time = payload.time as Record<string, unknown> | undefined;
+  const updatedAt = typeof time?.updated === "number" ? time.updated : null;
   return {
     id: String(payload.id ?? sessionID),
     outcome: (payload.outcome as string | null) ?? null,
     ...(tokens ? { tokens } : {}),
+    updatedAt,
   };
 }
 
@@ -265,4 +282,26 @@ export async function switchSessionAgent(
     },
     exec,
   );
+}
+
+export async function switchSessionModel(
+  exec: ApiExecFn,
+  base: SessionOpBase,
+  sessionID: string,
+  model: string | null | undefined,
+  variant?: string | null,
+): Promise<boolean> {
+  const ref = parseModelRef(model, variant);
+  if (!ref || !ref.providerID) return false;
+  await execApi(
+    {
+      command: base.command,
+      serverUrl: base.serverUrl,
+      operation: "session.switchModel",
+      params: { sessionID },
+      data: { model: ref },
+    },
+    exec,
+  );
+  return true;
 }

@@ -155,13 +155,41 @@ describe("tasking doctor", () => {
         '  terminal_states: ["Done"]',
       ].join("\n"),
     );
+    writeFileSync(join(dir, "jira-server.js"), "// mcp", "utf8");
     const { stream, content } = mockOutput();
     const code = await runDoctor(dir, stream, {
       fetchImpl: feishuFetch(),
       opencodeVersion: ocOk,
+      mcpScriptPath: () => join(dir, "jira-server.js"),
     });
     expect(code).toBe(0);
     expect(content()).toContain("9.0");
+    expect(content()).toContain("Jira MCP");
+    expect(content()).toContain("jira-server.js");
+  });
+
+  it("fails the Jira MCP item when the script is missing", async () => {
+    const dir = tempDir();
+    writeWorkflow(
+      dir,
+      [
+        "tracker:",
+        "  kind: jira",
+        "  endpoint: http://jira.example.com/rest/api/2",
+        "  api_key: tok",
+        "  project_key: HEIH",
+        '  active_states: ["In Progress"]',
+        '  terminal_states: ["Done"]',
+      ].join("\n"),
+    );
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      fetchImpl: feishuFetch(),
+      opencodeVersion: ocOk,
+      mcpScriptPath: () => join(dir, "nope", "jira-server.js"),
+    });
+    expect(code).toBe(1);
+    expect(content()).toContain("npm run build");
   });
 
   it("fails when the intake chat is not among the bot's chats", async () => {

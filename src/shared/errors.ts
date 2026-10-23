@@ -27,6 +27,7 @@ export type ErrorCategory =
   | "opencode_api_error"
   | "opencode_api_timeout"
   | "opencode_api_parse"
+  | "prompt_too_large"
   | "opencode_unsupported_version"
   | "route_agent_timeout"
   | "route_agent_failed"

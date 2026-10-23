@@ -182,7 +182,7 @@ export const EXACT: Record<string, string> = {
   "🔐 权限姿态": "🔐 Permission posture",
   "🔒 恢复默认": "🔒 Restore default",
   "🔒 默认": "🔒 Default",
-  "🔒 默认（不传 --auto）": "🔒 Default (no --auto)",
+  "🔒 默认（跟随项目配置）": "🔒 Default (follows project config)",
   "🔓 本会话放开": "🔓 Unlock this session",
   "🔓 收回": "🔓 Re-lock",
   "🔓 已放开本会话权限（下一轮生效）。目标仓库自身的 deny 规则仍然生效；/auto reset 可恢复。":
@@ -367,6 +367,7 @@ export const EXACT: Record<string, string> = {
   "intake 群可达": "intake group reachable",
   "intake_chat_id 未配置": "intake_chat_id is not configured",
   "Jira 连接": "Jira connection",
+  "Jira MCP 脚本": "Jira MCP script",
   "Language of the generated WORKFLOW.md comments and guidance. Press enter for 中文.":
     "Language of the generated WORKFLOW.md comments and guidance. Press enter for 中文.",
   "🆕 已开启新会话：上下文已清空（话题、目录与名称不变），旧 opencode 会话已删除。":
@@ -404,7 +405,17 @@ export const EXACT: Record<string, string> = {
   "❌ 已拒绝": "❌ Rejected",
   "⏰ 超时已拒绝": "⏰ Timed out and rejected",
   "⛔ 已随任务中断": "⛔ Cancelled with the turn",
-  "🕓 已在其他端处理": "🕓 Handled elsewhere",
+  "☑️ 已自动处理": "☑️ Auto-resolved",
+  "删除仅作用于直连会话（聚焦 Direct sessions 列表或进入其详情）":
+    "Delete only applies to direct sessions (focus the Direct sessions list or open its detail)",
+  "当前 TUI 未接入删除通道": "This TUI has no delete channel wired",
+  "正在删除…": "Deleting…",
+  "已删除会话（话题内也已结束）": "Session deleted (also ended in the topic)",
+  "删除失败（详见 daemon 日志）": "Delete failed (see daemon logs)",
+  "再按一次 d 确认删除会话：": "Press d again to confirm deleting session: ",
+  "本轮上下文已达 ≈": "This turn's context reached about",
+  "tokens；后续回复会明显变慢，建议发 /new 开新会话（目录不变、上下文清空）":
+    "tokens; later replies will get much slower; send /new for a fresh session (same directory, context cleared)",
   已处理: "Handled",
   "✅ 允许一次": "✅ Allow once",
   "♾️ 始终允许": "♾️ Always allow",
@@ -634,6 +645,12 @@ export const PATTERNS: PatternRule[] = [
   {
     re: new RegExp(`^${normalizeTemplate("未找到（${wfPath}）——先运行 tasking init")}$`),
     en: "not found ($1) — run tasking init first",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("未找到（${mcpScript}）——agent 无法使用 Jira MCP 工具；先 npm run build")}$`,
+    ),
+    en: "not found ($1) — agent cannot use Jira MCP tools; run npm run build first",
   },
   {
     re: new RegExp(
@@ -1168,24 +1185,6 @@ export const PATTERNS: PatternRule[] = [
     en: "$1 $2\n",
   },
   {
-    re: new RegExp(`^${normalizeTemplate('${style.bold("任务来源")}')}$`),
-    en: "$1",
-  },
-  {
-    re: new RegExp(`^${normalizeTemplate('${style.bold("选择 intake 群")}')}$`),
-    en: "$1",
-  },
-  {
-    re: new RegExp(`^${normalizeTemplate('${style.bold("选择 Jira workflow 变体")}')}$`),
-    en: "$1",
-  },
-  {
-    re: new RegExp(
-      `^${normalizeTemplate('${style.bold(zh ? "写入状态配置" : "Write state config")}')}$`,
-    ),
-    en: "$1",
-  },
-  {
     re: new RegExp(
       `^${normalizeTemplate('服务已注册但不可达（${service.url ?? ""}）——尝试 opencode service restart')}$`,
     ),
@@ -1227,7 +1226,7 @@ export const PATTERNS: PatternRule[] = [
   },
   {
     re: new RegExp(`^${normalizeTemplate(" · ⏳ 等待审批（剩 ${mins}m）")}$`),
-    en: " · ⏳ waiting for approval (${mins}m left)",
+    en: " · ⏳ waiting for approval ($1m left)",
   },
   {
     re: new RegExp(
@@ -1240,5 +1239,23 @@ export const PATTERNS: PatternRule[] = [
       `^${normalizeTemplate('🔐 等待审批：${request.action} ${request.resources.join("、")}（当前客户端不支持卡片，30 分钟未处理将自动拒绝）')}$`,
     ),
     en: "🔐 Waiting for approval: $1 $2 (this client does not support cards; auto-reject in 30 minutes)",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate('${style.bold("任务来源")}')}$`),
+    en: "$1",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate('${style.bold("选择 intake 群")}')}$`),
+    en: "$1",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate('${style.bold("选择 Jira workflow 变体")}')}$`),
+    en: "$1",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate('${style.bold(zh ? "写入状态配置" : "Write state config")}')}$`,
+    ),
+    en: "$1",
   },
 ];

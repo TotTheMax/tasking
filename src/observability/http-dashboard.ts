@@ -17,6 +17,8 @@ export interface HttpDashboardOptions {
   activityStore?: ActivityStore;
   directSessions?: () => RuntimeDirectSession[];
   directTotals?: () => { input_tokens: number; output_tokens: number; total_tokens: number };
+  permissionTimeoutMs?: () => number | undefined;
+  deleteDirectSession?: (rootId: string) => Promise<boolean>;
 }
 
 function isoNow(): string {
@@ -31,8 +33,9 @@ function buildSnapshotResponse(
   state: OrchestratorRuntimeState,
   direct: RuntimeDirectSession[],
   directTotals: { input_tokens: number; output_tokens: number; total_tokens: number },
+  permissionTimeoutMs?: number,
 ): Record<string, unknown> {
-  const snap = buildSnapshot(state, { direct, directTotals });
+  const snap = buildSnapshot(state, { direct, directTotals, permissionTimeoutMs });
   return {
     generated_at: isoNow(),
     max_concurrent_agents: snap.max_concurrent_agents,
@@ -123,129 +126,165 @@ export class HttpDashboard {
   ): void {
     const path = this.getPath(req.url ?? "/");
     const method = req.method ?? "GET";
-    try {
-      if ((path === "/" || path === "/index.html") && method === "GET") {
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(this.renderHtml());
-        return;
-      }
-      if (path === "/" || path === "/index.html") {
-        this.sendError(res, 405, "method_not_allowed", "Method not allowed");
-        return;
-      }
-      if (path === "/api/v1/state" && method === "GET") {
-        this.sendJson(
-          res,
-          200,
-          buildSnapshotResponse(
-            this.opts.state(),
-            this.opts.directSessions?.() ?? [],
-            this.opts.directTotals?.() ?? {
-              input_tokens: 0,
-              output_tokens: 0,
-              total_tokens: 0,
-            },
-          ),
-        );
-        return;
-      }
-      if (path === "/api/v1/state") {
-        this.sendError(res, 405, "method_not_allowed", "Method not allowed");
-        return;
-      }
-      if (path === "/api/v1/config" && method === "GET") {
-        const configView = this.opts.configView;
-        if (!configView) {
-          this.sendError(res, 404, "config_not_available", "Config view not available");
+    void (async () => {
+      try {
+        if ((path === "/" || path === "/index.html") && method === "GET") {
+          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(this.renderHtml());
           return;
         }
-        this.sendJson(res, 200, buildConfigResponse(configView));
-        return;
-      }
-      if (path === "/api/v1/config") {
-        this.sendError(res, 405, "method_not_allowed", "Method not allowed");
-        return;
-      }
-      if (path === "/api/v1/logs" && method === "GET") {
-        const buf = this.opts.logBuffer;
-        if (!buf) {
-          this.sendError(res, 404, "logs_not_available", "Log buffer not available");
+        if (path === "/" || path === "/index.html") {
+          this.sendError(res, 405, "method_not_allowed", "Method not allowed");
           return;
         }
-        let n = 200;
-        try {
-          const u = new URL(req.url ?? "/", "http://localhost");
-          const parsed = Number.parseInt(u.searchParams.get("lines") ?? "", 10);
-          if (Number.isFinite(parsed) && parsed > 0) {
-            n = Math.min(parsed, 500);
+        if (path === "/api/v1/state" && method === "GET") {
+          this.sendJson(
+            res,
+            200,
+            buildSnapshotResponse(
+              this.opts.state(),
+              this.opts.directSessions?.() ?? [],
+              this.opts.directTotals?.() ?? {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+              },
+              this.opts.permissionTimeoutMs?.(),
+            ),
+          );
+          return;
+        }
+        if (path === "/api/v1/state") {
+          this.sendError(res, 405, "method_not_allowed", "Method not allowed");
+          return;
+        }
+        if (path === "/api/v1/config" && method === "GET") {
+          const configView = this.opts.configView;
+          if (!configView) {
+            this.sendError(res, 404, "config_not_available", "Config view not available");
+            return;
           }
-        } catch {
-          // fall back to default n
+          this.sendJson(res, 200, buildConfigResponse(configView));
+          return;
         }
-        this.sendJson(res, 200, { logs: buf.recent(n) });
-        return;
-      }
-      if (path === "/api/v1/logs") {
-        this.sendError(res, 405, "method_not_allowed", "Method not allowed");
-        return;
-      }
-      if (path === "/api/v1/refresh" && method === "POST") {
-        const coalesced = this.opts.requestRefresh ? !this.opts.requestRefresh() : false;
-        this.sendJson(res, 202, {
-          queued: true,
-          coalesced,
-          requested_at: isoNow(),
-          operations: ["poll", "reconcile"],
-        });
-        return;
-      }
-      if (path === "/api/v1/refresh") {
-        this.sendError(res, 405, "method_not_allowed", "Method not allowed");
-        return;
-      }
-      if (path.startsWith("/api/v1/") && method === "GET") {
-        const suffix = "/activity";
-        if (path.endsWith(suffix)) {
-          const identifier = decodeURIComponent(path.slice("/api/v1/".length, -suffix.length));
-          let limit = 200;
+        if (path === "/api/v1/config") {
+          this.sendError(res, 405, "method_not_allowed", "Method not allowed");
+          return;
+        }
+        if (path === "/api/v1/logs" && method === "GET") {
+          const buf = this.opts.logBuffer;
+          if (!buf) {
+            this.sendError(res, 404, "logs_not_available", "Log buffer not available");
+            return;
+          }
+          let n = 200;
           try {
             const u = new URL(req.url ?? "/", "http://localhost");
-            const parsed = Number.parseInt(u.searchParams.get("limit") ?? "", 10);
+            const parsed = Number.parseInt(u.searchParams.get("lines") ?? "", 10);
             if (Number.isFinite(parsed) && parsed > 0) {
-              limit = Math.min(parsed, 500);
+              n = Math.min(parsed, 500);
             }
           } catch {
-            // fall back to default limit
+            // fall back to default n
           }
-          const activity = this.lookupActivity(identifier, limit);
-          if (activity === null) {
-            this.sendError(res, 404, "activity_not_available", "Activity store not available");
-            return;
-          }
-          if (activity.issueNotFound) {
-            this.sendError(res, 404, "issue_not_found", `Issue not found: ${identifier}`);
-            return;
-          }
-          this.sendJson(res, 200, { activity: activity.events });
+          this.sendJson(res, 200, { logs: buf.recent(n) });
           return;
         }
-        const identifier = decodeURIComponent(path.slice("/api/v1/".length));
-        const issueDetail = this.lookupIssue(identifier);
-        if (issueDetail) {
-          this.sendJson(res, 200, issueDetail);
-        } else {
-          this.sendError(res, 404, "issue_not_found", `Issue not found: ${identifier}`);
+        if (path === "/api/v1/logs") {
+          this.sendError(res, 405, "method_not_allowed", "Method not allowed");
+          return;
         }
-        return;
+        if (path === "/api/v1/refresh" && method === "POST") {
+          const coalesced = this.opts.requestRefresh ? !this.opts.requestRefresh() : false;
+          this.sendJson(res, 202, {
+            queued: true,
+            coalesced,
+            requested_at: isoNow(),
+            operations: ["poll", "reconcile"],
+          });
+          return;
+        }
+        if (path === "/api/v1/refresh") {
+          this.sendError(res, 405, "method_not_allowed", "Method not allowed");
+          return;
+        }
+        const directDelete = "/api/v1/direct/";
+        const deleteSuffix = "/delete";
+        if (path.startsWith(directDelete) && path.endsWith(deleteSuffix)) {
+          const rootId = decodeURIComponent(
+            path.slice(directDelete.length, path.length - deleteSuffix.length),
+          );
+          if (method === "POST") {
+            if (!this.opts.deleteDirectSession) {
+              this.sendError(
+                res,
+                404,
+                "direct_delete_unavailable",
+                "Direct session delete not wired",
+              );
+              return;
+            }
+            try {
+              const ok = await this.opts.deleteDirectSession(rootId);
+              if (ok) this.sendJson(res, 200, { ok: true, root_id: rootId });
+              else this.sendError(res, 404, "direct_session_not_found", "Unknown direct session");
+            } catch (e) {
+              this.sendError(
+                res,
+                500,
+                "direct_delete_failed",
+                e instanceof Error ? e.message : "error",
+              );
+            }
+            return;
+          }
+          this.sendError(res, 405, "method_not_allowed", "Method not allowed");
+          return;
+        }
+        if (path.startsWith("/api/v1/") && method === "GET") {
+          const suffix = "/activity";
+          if (path.endsWith(suffix)) {
+            const identifier = decodeURIComponent(path.slice("/api/v1/".length, -suffix.length));
+            let limit = 200;
+            try {
+              const u = new URL(req.url ?? "/", "http://localhost");
+              const parsed = Number.parseInt(u.searchParams.get("limit") ?? "", 10);
+              if (Number.isFinite(parsed) && parsed > 0) {
+                limit = Math.min(parsed, 500);
+              }
+            } catch {
+              // fall back to default limit
+            }
+            const activity = this.lookupActivity(identifier, limit);
+            if (activity === null) {
+              this.sendError(res, 404, "activity_not_available", "Activity store not available");
+              return;
+            }
+            if (activity.issueNotFound) {
+              this.sendError(res, 404, "issue_not_found", `Issue not found: ${identifier}`);
+              return;
+            }
+            this.sendJson(res, 200, { activity: activity.events });
+            return;
+          }
+          const identifier = decodeURIComponent(path.slice("/api/v1/".length));
+          const issueDetail = this.lookupIssue(identifier);
+          if (issueDetail) {
+            this.sendJson(res, 200, issueDetail);
+          } else {
+            this.sendError(res, 404, "issue_not_found", `Issue not found: ${identifier}`);
+          }
+          return;
+        }
+        if (path.startsWith("/api/v1/")) {
+          this.sendError(res, 405, "method_not_allowed", "Method not allowed");
+          return;
+        }
+        this.sendError(res, 404, "not_found", `Route not found: ${path}`);
+      } catch (e) {
+        this.sendError(res, 500, "internal", String(e));
       }
-      if (path.startsWith("/api/v1/")) {
-        this.sendError(res, 405, "method_not_allowed", "Method not allowed");
-        return;
-      }
-      this.sendError(res, 404, "not_found", `Route not found: ${path}`);
-    } catch (e) {
-      this.sendError(res, 500, "internal", String(e));
-    }
+    })();
   }
 
   private lookupIssue(identifier: string): Record<string, unknown> | null {

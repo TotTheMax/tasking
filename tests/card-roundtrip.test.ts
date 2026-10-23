@@ -574,6 +574,47 @@ describe("turn card waiting marker", () => {
     }) as { header?: { title?: { content?: string } } };
     expect(card.header?.title?.content ?? "").not.toContain("等待审批");
   });
+
+  it("shows the live context size in the header when known", () => {
+    const card = buildTurnCard({
+      rootId: "om_r",
+      sessionName: "s",
+      sessionStatus: "running",
+      turns: 3,
+      totalTokens: 259_500,
+      contextTokens: 668_885,
+      queued: 0,
+      turn: 3,
+      phase: "running",
+      toolCalls: 0,
+      durationSec: 0,
+      turnTokens: 0,
+      texts: [],
+      tools: [],
+    }) as { header?: { title?: { content?: string } } };
+    const header = card.header?.title?.content ?? "";
+    expect(header).toContain("≈259.5k");
+    expect(header).toContain("ctx ≈668.9k");
+  });
+
+  it("omits the context marker when unknown", () => {
+    const card = buildTurnCard({
+      rootId: "om_r",
+      sessionName: "s",
+      sessionStatus: "running",
+      turns: 1,
+      totalTokens: 100,
+      queued: 0,
+      turn: 1,
+      phase: "running",
+      toolCalls: 0,
+      durationSec: 0,
+      turnTokens: 0,
+      texts: [],
+      tools: [],
+    }) as { header?: { title?: { content?: string } } };
+    expect(card.header?.title?.content ?? "").not.toContain("ctx");
+  });
 });
 
 describe("approval card round-trip", () => {
@@ -610,7 +651,31 @@ describe("approval card round-trip", () => {
       bindings: store,
       config: () => makeRoundTripConfig(server),
       logger,
-      approvals: { reply: (requestID, decision) => coordinator.reply(requestID, decision) },
+      approvals: {
+        reply: (requestID, decision) => coordinator.reply(requestID, decision),
+        stampedCard: (requestID) => {
+          const request = coordinator.requestOf(requestID);
+          const resolution = coordinator.resolutionOf(requestID);
+          if (!request || !resolution || resolution.state === "pending") return undefined;
+          return buildApprovalCard(
+            {
+              rootId: "om_root",
+              turn: 0,
+              requestID,
+              action: request.action,
+              resources: request.resources,
+              save: request.save,
+              kind: "bridge",
+            },
+            resolution.state === "replied" &&
+              (resolution.decision === "once" ||
+                resolution.decision === "always" ||
+                resolution.decision === "reject")
+              ? { state: "replied", decision: resolution.decision }
+              : { state: resolution.state as "expired" | "cancelled" | "external" },
+          );
+        },
+      },
     });
     startRoundTrip({ config: makeRoundTripConfig(server), bridge, logger });
     coordinator.ingest("ses_1", [
@@ -642,6 +707,23 @@ describe("approval card round-trip", () => {
     });
   }
 
+  it("never renders raw credentials in the approval card", () => {
+    const token = "redact-test-token-0123456789abcdef0123456789";
+    const card = buildApprovalCard({
+      rootId: "om_root",
+      turn: 0,
+      requestID: "per_1",
+      action: "shell",
+      resources: [`curl -s -H "Authorization: Bearer ${token}" http://jira/rest/api/2`],
+      save: ["curl *"],
+      kind: "bridge",
+    });
+    const rendered = JSON.stringify(card);
+    expect(rendered).not.toContain(token);
+    expect(rendered).toContain("Bearer ***");
+    expect(rendered).toContain("curl *");
+  });
+
   it("is card JSON 2.0 (schema 2.0, else Feishu drops body.elements)", () => {
     const card = approvalCard() as { schema?: string; body?: unknown };
     expect(card.schema).toBe("2.0");
@@ -658,9 +740,13 @@ describe("approval card round-trip", () => {
     expect(btn).toBeDefined();
     const result = (await harness?.dispatch(cardActionEvent("om_appr", btn?.value ?? {}))) as {
       toast: { type: string; content: string };
+      card?: { data?: unknown };
     };
     expect(result?.toast.type).toBe("success");
     expect(replies).toEqual([{ sessionId: "ses_1", requestID: "per_1", decision: "once" }]);
+    const stamped = JSON.stringify(result?.card?.data);
+    expect(stamped).toContain("已允许");
+    expect(stamped).not.toContain("approve_once");
   });
 
   it("second click on the same rendered button is deduplicated", async () => {

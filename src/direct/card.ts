@@ -1,3 +1,4 @@
+import { redactSecrets } from "../shared/redact.js";
 import { translate } from "../translate/locale.js";
 
 export type TurnCardPhase =
@@ -29,6 +30,7 @@ export interface TurnCardState {
   sessionStatus: TurnCardSessionStatus;
   turns: number;
   totalTokens: number;
+  contextTokens?: number;
   queued: number;
   turn: number;
   phase: TurnCardPhase;
@@ -270,6 +272,11 @@ function renderWaitingMarker(state: TurnCardState): string {
   return translate(` · ⏳ 等待审批（剩 ${mins}m）`);
 }
 
+function renderContextMarker(state: TurnCardState): string {
+  if (state.contextTokens === undefined || state.contextTokens <= 0) return "";
+  return ` · ctx ≈${formatTokens(state.contextTokens)}`;
+}
+
 function renderPostureMarker(state: TurnCardState): string {
   const agent = state.agentOverride ? ` · 🧠 ${state.agentOverride}` : "";
   const posture =
@@ -338,7 +345,7 @@ function renderCard(state: TurnCardState, levels: number[]): Record<string, unkn
       template: "blue",
       title: {
         tag: "plain_text",
-        content: `📁 ${state.sessionName} · ${translate(SESSION_STATUS_LABEL[state.sessionStatus])} · ${state.turns} turn${state.turns === 1 ? "" : "s"} · ≈${formatTokens(state.totalTokens)}${queuePart}${renderWaitingMarker(state)}${renderPostureMarker(state)}`,
+        content: `📁 ${state.sessionName} · ${translate(SESSION_STATUS_LABEL[state.sessionStatus])} · ${state.turns} turn${state.turns === 1 ? "" : "s"} · ≈${formatTokens(state.totalTokens)}${renderContextMarker(state)}${queuePart}${renderWaitingMarker(state)}${renderPostureMarker(state)}`,
       },
     },
     body: { elements },
@@ -409,16 +416,18 @@ const APPROVAL_STAMP: Record<string, string> = {
   "replied:reject": "❌ 已拒绝",
   expired: "⏰ 超时已拒绝",
   cancelled: "⛔ 已随任务中断",
-  external: "🕓 已在其他端处理",
+  external: "☑️ 已自动处理",
 };
 
 export function buildApprovalCard(
   req: ApprovalCardRequest,
   resolution?: ApprovalCardResolution,
 ): Record<string, unknown> {
-  const resources = req.resources.map((r) => `\`${r}\``).join(" · ");
+  const resources = req.resources.map((r) => `\`${redactSecrets(r)}\``).join(" · ");
   const saveNote =
-    req.save && req.save.length > 0 ? "\n始终允许将按模式保存：" + req.save.join("、") : "";
+    req.save && req.save.length > 0
+      ? `${translate("\n始终允许将按模式保存：")}${req.save.map((p) => redactSecrets(p)).join("、")}`
+      : "";
   const elements: Array<Record<string, unknown>> = [
     {
       tag: "markdown",

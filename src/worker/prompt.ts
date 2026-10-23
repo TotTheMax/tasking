@@ -182,6 +182,17 @@ function evaluateCondition(expr: string, ctx: RenderContext): boolean {
   return negated ? !truthy : truthy;
 }
 
+export const DESCRIPTION_MAX_CHARS = 40_000;
+
+export function capTaskDescription(task: Task): Task {
+  const desc = task.description;
+  if (typeof desc !== "string" || desc.length <= DESCRIPTION_MAX_CHARS) return task;
+  return {
+    ...task,
+    description: `${desc.slice(0, DESCRIPTION_MAX_CHARS)}\n\n[…truncated by tasking: description was ${desc.length} chars, exceeded ${DESCRIPTION_MAX_CHARS}]`,
+  };
+}
+
 export function buildContinuationGuidance(task: Task, attempt: number, turn: number): string {
   return `Continue working on ${task.identifier} (attempt ${attempt}, turn ${turn}). Check \`git log\` and \`git status\` to see what was done. Check the current Jira state — if in an initial active state, do incremental fixes on the same branch, push, ensure CI green, then transition back to review; if in a rework active state, do a full reset (close old MR, new branch from origin/main). Resume from where you left off. If stuck, check \`tasking.log\` for execution failures. If you have an open merge request and need to merge, read the \`land\` skill.`;
 }

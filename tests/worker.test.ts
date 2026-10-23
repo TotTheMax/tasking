@@ -16,6 +16,7 @@ import { type WorkerEvent, runAttempt } from "../src/worker/runner.js";
 import { readSessionSidecar, resolveWorkspacePath } from "../src/workspace/manager.js";
 import {
   assistantMessage,
+  idleMessage,
   interruptResponse,
   messageListResponse,
   permissionListResponse,
@@ -131,6 +132,10 @@ function apiScript(opts: ApiScriptOptions = {}) {
     switchAgents: [] as Array<Record<string, unknown>>,
     interrupts: 0,
   };
+  let inFlight = false;
+  let pollsInFlight = 0;
+  let lastOutcome: string | null = null;
+  const history: Array<Record<string, unknown>> = [];
   const ok = (stdout: string): Promise<import("../src/driver/api-client.js").ApiExecResult> =>
     Promise.resolve({ exitCode: 0, stdout, stderr: "", timedOut: false });
   const exec = (async (args: string[]) => {
@@ -143,7 +148,9 @@ function apiScript(opts: ApiScriptOptions = {}) {
     if (op === "session.prompt") {
       const body = JSON.parse(args[dataIdx + 1] ?? "{}") as { text?: string };
       state.prompts.push(body.text ?? "");
-      return ok('{"data":{"id":"msg_0"}}');
+      inFlight = true;
+      pollsInFlight = 0;
+      return ok(JSON.stringify({ data: { id: `msg_user_${state.prompts.length}` } }));
     }
     if (op === "session.switchAgent") {
       state.switchAgents.push(JSON.parse(args[dataIdx + 1] ?? "{}") as Record<string, unknown>);
@@ -154,32 +161,73 @@ function apiScript(opts: ApiScriptOptions = {}) {
       return ok(interruptResponse());
     }
     if (op === "session.get") {
-      return ok(sessionGetResponse({ id: sessionId, outcome }));
+      const stage = !inFlight ? 0 : Math.min(pollsInFlight + 1, 2);
+      const stamp = 1000 * stage + history.length;
+      if (!inFlight) {
+        return ok(
+          sessionGetResponse({
+            id: sessionId,
+            outcome: lastOutcome,
+            time: { created: 1, updated: stamp },
+          }),
+        );
+      }
+      pollsInFlight += 1;
+      if (pollsInFlight === 1) {
+        return ok(
+          sessionGetResponse({
+            id: sessionId,
+            outcome: null,
+            time: { created: 1, updated: stamp + 5000 },
+          }),
+        );
+      }
+      lastOutcome = outcome;
+      return ok(
+        sessionGetResponse({
+          id: sessionId,
+          outcome,
+          time: { created: 1, updated: stamp + 9000 },
+        }),
+      );
     }
     if (op === "session.permission.list") return ok(permissionListResponse([]));
     if (op === "session.message.list") {
-      const turnMessages =
-        opts.messagesPerTurn && opts.messagesPerTurn.length > 0
-          ? (opts.messagesPerTurn[
-              Math.min(state.prompts.length - 1, opts.messagesPerTurn.length - 1)
-            ] ?? [])
-          : messages;
-      const data = turnMessages.map((m, i) =>
-        assistantMessage({
-          id: opts.messagesPerTurn ? `msg_${state.prompts.length}_${i + 1}` : `msg_${i + 1}`,
-          content: m.content ?? [],
-          tokens: m.tokens
-            ? {
-                input: m.tokens.input,
-                output: m.tokens.output,
-                reasoning: m.tokens.reasoning,
-                cache: { read: 0, write: 0 },
-              }
-            : undefined,
-          time: { created: i + 1, streamed: i + 1, completed: i + 1 },
-        }),
-      );
-      return ok(messageListResponse(data));
+      const turnNo = state.prompts.length;
+      const currentUser =
+        turnNo > 0
+          ? { id: `msg_user_${turnNo}`, type: "user", time: { created: turnNo }, text: "p" }
+          : null;
+      if (inFlight && pollsInFlight >= 2 && outcome !== null) {
+        const turnMessages =
+          opts.messagesPerTurn && opts.messagesPerTurn.length > 0
+            ? (opts.messagesPerTurn[Math.min(turnNo - 1, opts.messagesPerTurn.length - 1)] ?? [])
+            : messages;
+        const data = turnMessages.map((m, i) =>
+          assistantMessage({
+            id: opts.messagesPerTurn ? `msg_${turnNo}_${i + 1}` : `msg_${i + 1}`,
+            content: m.content ?? [],
+            tokens: m.tokens
+              ? {
+                  input: m.tokens.input,
+                  output: m.tokens.output,
+                  reasoning: m.tokens.reasoning,
+                  cache: { read: 0, write: 0 },
+                }
+              : undefined,
+            time: { created: i + 1, streamed: i + 1, completed: i + 1 },
+          }),
+        );
+        history.unshift(
+          idleMessage({ id: `idle_${turnNo}`, outcome }),
+          ...data,
+          ...(currentUser === null ? [] : [currentUser]),
+        );
+        inFlight = false;
+      }
+      const listed = [...history];
+      if (inFlight && currentUser !== null) listed.unshift(currentUser);
+      return ok(messageListResponse(listed));
     }
     return ok("{}");
   }) as import("../src/driver/api-client.js").ApiExecFn;
@@ -212,6 +260,33 @@ describe("runAttempt", () => {
       expect(result.status).toBe("succeeded");
       expect(result.usage.total_tokens).toBe(15);
       expect(result.session_id).toBe("ses_test123");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("logs the concrete opencode api command when launching a turn", async () => {
+    const root = tempRoot();
+    try {
+      const { exec } = apiScript();
+      const infos: Array<[string, Record<string, unknown>]> = [];
+      const capLogger = Object.create(logger) as typeof logger;
+      capLogger.info = (msg: string, fields?: Record<string, unknown>) => {
+        infos.push([msg, fields ?? {}]);
+      };
+      await runAttempt({
+        task: makeTask(),
+        attempt: null,
+        config: makeConfig(root),
+        promptTemplate: "do {{ task.identifier }}",
+        logger: capLogger,
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
+      });
+      const launch = infos.find(([msg]) => msg === "launching opencode v2 turn");
+      expect(launch).toBeDefined();
+      expect(String(launch?.[1].command)).toBe("opencode api session.prompt");
+      expect("model" in (launch?.[1] ?? {})).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -785,7 +860,7 @@ describe("runAttempt activity capture", () => {
       expect(tool?.output).toBe("");
       expect(tool?.exit).toBe(1);
       expect(tool?.status).toBe("completed");
-      expect(tool?.durationMs).toBe(300);
+      expect(tool?.durationMs).toBe(250);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

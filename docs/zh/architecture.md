@@ -18,7 +18,7 @@ Jira 路径采用 Symphony 式的确定性调度,**热循环中不使用任何 L
 
 调度循环(每个 tick):
 
-1. **对账(reconcile)**:先对账运行中任务——检测停滞(超过 `stall_timeout_ms` 无活动)、刷新 tracker 状态(terminal 则停止并清理工作区,active 则更新快照,其他则停止不清理)。
+1. **对账(reconcile)**:先对账运行中任务——检测停滞(超过 `stall_timeout_ms` 无活动)、刷新 tracker 状态(terminal 则停止并清理工作区,active 则更新快照,其他则停止不清理)。此外每 10 个 tick(仅空闲时)运行一次**终态清扫**:拉取 terminal 状态任务并清理其工作区,覆盖「任务离场(如 review 停留)后才转终态」的窗口,不必等 daemon 重启。
 2. **预校验**:校验配置(`tracker.kind`、凭据、`opencode.command`),失败则跳过本 tick 派发但保留对账。
 3. **拉取候选**:用 JQL 拉取活跃状态下的 Jira issue。
 4. **排序**:按 `priority` 升序、`created_at` 最旧优先、`identifier` 字典序排序。
@@ -93,12 +93,15 @@ opencode api session.interrupt --param sessionID=<ses_...>                  # �
 - **进度与终态靠轮询**（ADR 0037）：`session.get` 的 `outcome`（succeeded/failed/interrupted）为终态；`session.message.list` 的 settled assistant 消息 diff 提供工具条目（`state.input`/`state.metadata.exit`/`state.time`）与文本；`session.permission.list` 提供待审批单。
 - **权限姿态**（ADR 0036）：`auto_approve: true` 建会话携带全放 ruleset；`false` 时听工作区 `.opencode` 规则，`ask` 会挂起并投放审批卡（见 usage）。姿态变更经 `session.update` 即时生效。
 - **有界 session 续轮循环**:worker 内 turn 1 用完整 prompt 创建 opencode session;turn 2+ 对同一 session 继续 `session.prompt`(agent 跨 turn 保持完整对话上下文)。worker 退出后,continuation retry 创建**全新 session**。每次成功后重新检查 tracker 状态,若仍活跃且未达 `max_turns`,启动续轮调用；agent 每 turn 重解析并在 turn 边界经会话切换生效。
-- **session 生命周期管理**:turn 1 创建 session 并写入 workspace sidecar 文件(`.tasking-session.json`);turn 2+ 复用同一 session;任务进入 terminal 状态触发工作区清理时,从 sidecar 读取 last session ID 删除会话。
+- **session 生命周期管理**:session 一经创建即写入 workspace sidecar 文件(`.tasking-session.json`,首轮中途重启也能被清扫发现);turn 2+ 复用同一 session;任务进入 terminal 状态触发工作区清理时,从 sidecar 读取 last session ID 删除会话。**失败重试不续用旧会话**——attempt 以 `failed`/`timed_out` 收场时,该 attempt 的会话立即 `session.remove`(孤儿清理,日志 `orphan session deleted`),下一次重试从全新会话开始。
 - **attempt 生命周期**:经历 `preparing_workspace` → `building_prompt` → `launching_agent` → `finishing`,终态为 `succeeded`/`failed`/`timed_out`/`stalled`/`canceled_by_reconciliation`。
 - **失败分类**:墙钟超时(`turn_timeout_ms`)→ `timed_out`(`turn_timeout`);不活跃超时(`inactivity_timeout_ms`)→ `timed_out`(`inactivity_timeout`);会话 failed 终态 → `failed`;停滞(scheduler 检测)→ `stalled`。
 - **计时器矩阵**:不活跃超时(10min,轮询周期无新消息)→ 墙钟超时(1h,执行预算)→ 停滞超时(2h,scheduler 层)。**等待审批期间不活跃与墙钟暂停**,由审批预算(30min)接管并自动拒绝。超时/中止走中断梯子(`session.interrupt` → 短宽限 → 清理残留 api 进程),不再有进程组击杀。
 - **token 提取**:轮询到的消息与会话 tokens 累加(合计 = input+output+reasoning,cache 单列);不可用时回退到计时。
 - **daemon 重启清扫**:启动时对持久记录的会话经 `session.active` 过滤，仍在执行的补发 `interrupt`，任务按失败进正常重试。
+- **优雅停机 drain**:SIGINT/SIGTERM 时 `scheduler.stop()` 后有界等待(≤15s)在飞 attempt 结算——中断梯子先向服务端发 `interrupt` 杀掉服务端 turn,孤儿会话清理随之执行;超时才放弃退出。避免「daemon 死了、服务端 turn 还在烧 token」的僵尸窗口。
+- **Jira MCP 注入**:每次派发向工作区 `.opencode/opencode.json` merge 写入 `mcp.servers.jira`(不碰其他 server 与 skills)。注入脚本路径按「同目录产物优先、源码运行时回退 `dist/mcp/jira-server.js`」解析;`codemode: true` 使 `jira_rest`/`jira_upload_attachment` 进入会话的 Code Mode 工具目录(agent 直接可调,无需 shell 兜底);脚本缺失时 worker 记 error、doctor 报 ✗。
+- **prompt 体积守卫**:任务描述超过 40k 字符时在构建 prompt 前截断并附标记;`session.prompt` 文本硬上限 120k 字符(超限抛 `prompt_too_large`)——prompt 经 argv `--data` 传递,守卫避免触碰 Linux 单参数 ~128KB 上限导致 E2BIG。
 - **工作区保留**:成功 attempt 后不删除工作区,供后续续轮复用。
 
 启动 worker 前,强制三条安全不变式(见下文)。
@@ -146,7 +149,7 @@ CommentBridge(scheduler 的 sibling 组件)把 issue 话题与 Jira 评论双向
 - **hook 脚本完全受信**:`WORKFLOW.md` 的 hook 以 `bash -lc` 在工作区目录执行任意 shell,受 `hooks.timeout_ms` 约束(默认 60s)。hook 超时产生 `hook_timeout` 错误类别。仅版本控制来自可信来源的 hook。
 - **symlink 安全**:`isWithinRoot` 使用 `realpathSync` 解析符号链接后做前缀匹配,拒绝 symlink 逃逸。workspace == root 被拒绝。
 - **编排器不写 tracker**:工单变更(状态转换、评论)由 coding agent 通过其工具完成,编排器只读不写。
-- **API token 不入日志**:`$VAR` 间接引用保持密钥不写入 `WORKFLOW.md`;日志不记录 token 值。
+- **API token 不入日志**:`$VAR` 间接引用保持密钥不写入 `WORKFLOW.md`;日志不记录 token 值。审批卡片与降级文本中的命令同样脱敏——`Bearer`/`Basic`/`token`/`api_key` 等凭据值及 ≥32 字符的裸 token 串显示为 `***`(命令仍可辨认,凭据不可见)。
 
 ## 可观测性
 
@@ -163,6 +166,7 @@ JSON 行格式输出到 stderr 和可选文件 sink(10MB×5 轮转)。必填上�
 - `GET /api/v1/<identifier>` — 单 issue 详情(含 `agent`/`model`/`variant`)
 - `GET /api/v1/<identifier>/activity?limit=N` — 该运行中任务的 opencode 活动事件流(助手文本/工具调用/step tokens,近实时,1Hz 轮询;`tool_use` 事件携带执行详情字段)
 - `POST /api/v1/refresh` — 触发立即 poll + reconcile(返回 `{queued, coalesced, operations}`)
+- `POST /api/v1/direct/:rootId/delete` — 结束并清理指定直连会话(TUI `d` 键的后端;标记 done、中断在飞轮次、封存卡片、话题内通知、删除底层 opencode 会话并清运行时;未接线/不存在返回 404)
 
 不支持的方法返回 `405 Method Not Allowed`。绑定地址通过 `server.host` 配置(默认 `0.0.0.0`)。
 

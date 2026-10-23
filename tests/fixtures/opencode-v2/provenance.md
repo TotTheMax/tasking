@@ -26,10 +26,11 @@
 | `message-list-pending.json` | 待审批期间的消息列表：工具条目 `state.status:"running"` |
 | `message-list-tools.json` | 多工具真实条目（edit/write/read/glob/grep）：**v2 用 `path`**（read/write/edit），glob/grep 用 `pattern`（v1 的 read 用 `filePath`）——驱动 `toolSummary` 的面板摘要修复 |
 | `message-list-settled.json` | 完成后的消息列表：assistant 消息（`content[]` 含 `type:"tool"`，`name`、`state.{status,input,content[],metadata.{status,truncated,exit}}`、**条目级 `time.{created,ran,completed}`**）、`tokens`、`time.{created,streamed,completed}`；类型含 `idle/assistant/system/user` |
+| `message-list-failed.json` | **provider 失败的真实载荷**：`idle` 消息 `outcome:"failed"` 且 `error{type:"provider.auth",message,status,response.body}`；assistant 消息 `content:[]`、`finish:"error"`、同样的 `error`——驱动 `turn failed` 真因提取的依据 |
 | `permission-list-pending.json` | `session.permission.list`：`data[{id:"per_…",sessionID,action,resources,save,source{type,messageID,id}}]` |
 | `session-active.json` | `session.active`：`data` 为 **sessionID 为键的 map**（`{ "<ses>": {type:"running"} }`） |
 | `interrupt.json` | `session.interrupt`：`{interrupted:true}` |
-| `session-update.json` | `session.update` 空响应（204 类） |
-| `session-remove.json` | `session.remove` 空响应 |
+| `session-update.json` | `session.update` 空响应（204 类），落盘为 `null` |
+| `session-remove.json` | `session.remove` 空响应，落盘为 `null` |
 
 抓取方式：临时工作区（含 `ask` 规则）建会话 → 提交 shell 任务 → 逐项 `opencode api …` 落盘（含待审批、完成、中断、更新、删除）；脚本见 `openspec/changes/opencode-v2-adaptation/capture-live-v2.sh` 的同类做法。

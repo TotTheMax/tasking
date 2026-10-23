@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type {
   AgentConfig,
   HooksConfig,
@@ -5,10 +6,10 @@ import type {
   TrackerConfig,
 } from "../config/config-types.js";
 import type { WorkspaceConfig } from "../config/config-types.js";
-import { type ApiExecFn, defaultApiExec } from "../driver/api-client.js";
+import { type ApiExecFn, defaultApiExec, describeApiCommand } from "../driver/api-client.js";
 import { switchSessionAgent } from "../driver/session-ops.js";
 import { type TurnDriverEvent, runTurn } from "../driver/turn-driver.js";
-import { injectMcpConfig } from "../mcp/inject.js";
+import { getMcpServerScriptPath, injectMcpConfig } from "../mcp/inject.js";
 import type { ActivityEvent } from "../observability/activity-store.js";
 import type { Logger } from "../observability/logger.js";
 import { resolveAgent } from "../shared/agent-resolver.js";
@@ -20,7 +21,7 @@ import {
   runHook,
   writeSessionSidecar,
 } from "../workspace/manager.js";
-import { buildContinuationGuidance, renderPrompt } from "./prompt.js";
+import { buildContinuationGuidance, capTaskDescription, renderPrompt } from "./prompt.js";
 
 export interface WorkerEvents {
   onEvent?: (event: WorkerEvent) => void;
@@ -107,6 +108,13 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
     };
   }
 
+  const mcpScript = getMcpServerScriptPath();
+  if (!existsSync(mcpScript)) {
+    logger.error("jira mcp server script missing; agent gets no Jira MCP tools", {
+      path: mcpScript,
+      hint: "run npm run build, or start the daemon from a proper install",
+    });
+  }
   injectMcpConfig(workspace.path, config.tracker);
 
   const beforeResult = await runHook(
@@ -146,7 +154,7 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
       const prompt =
         turn === 1
           ? renderPrompt(promptTemplate, {
-              task: currentTask,
+              task: capTaskDescription(currentTask),
               attempt,
               terminal_states: config.tracker.terminal_states.join(", "),
               active_states: config.tracker.active_states.join(", "),
@@ -193,7 +201,13 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
         task_identifier: task.identifier,
         turn,
         agent: resolved.agent,
+        model: config.opencode.model ?? null,
         session_id: sessionId ?? undefined,
+        command: describeApiCommand({
+          command: config.opencode.command,
+          operation: "session.prompt",
+          serverUrl: config.opencode.server_url,
+        }),
       });
 
       const onEvent =
@@ -256,6 +270,12 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
           interruptGraceMs: opts.interruptGraceMs,
           sleep,
           now: opts.now,
+          onSessionCreated: (sid) => {
+            if (sessionId === null) {
+              sessionId = sid;
+              writeSessionSidecar(workspace.path, sid, 0);
+            }
+          },
           seenMessages,
           onEvent,
           onPendingPermissions: opts.onPendingPermissions,

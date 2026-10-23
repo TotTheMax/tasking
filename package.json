@@ -1,6 +1,6 @@
 {
   "name": "@tothemax/tasking",
-  "version": "0.6.19",
+  "version": "0.7.0",
   "description": "A TypeScript CLI daemon that orchestrates opencode coding-agent work from Jira (structured) and Feishu (unstructured) task sources.",
   "type": "module",
   "license": "MIT",
@@ -28,11 +28,7 @@
   "bin": {
     "tasking": "dist/cli/index.js"
   },
-  "files": [
-    "dist",
-    "assets",
-    "README.md"
-  ],
+  "files": ["dist", "assets", "README.md"],
   "publishConfig": {
     "access": "public"
   },

@@ -255,10 +255,10 @@ describe("removeWorkspace", () => {
       }) as unknown as typeof childProcess.execFile);
       await removeWorkspace(ws.path, baseHooks, logger, "ses_passed");
       const sessionCall = spy.mock.calls.find(
-        (c) => c[0] === "opencode" && c[1]?.[0] === "session" && c[1]?.[1] === "delete",
+        (c) => c[0] === "opencode" && (c[1] as string[])?.includes("session.remove"),
       );
-      expect(sessionCall?.[1]?.[2]).toBe("ses_passed");
-      expect(sessionCall?.[1]?.[2]).not.toBe("ses_sidecar");
+      expect(sessionCall?.[1]).toContain("sessionID=ses_passed");
+      expect(sessionCall?.[1]).not.toContain("sessionID=ses_sidecar");
       expect(() => statSync(ws.path)).toThrow();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -286,10 +286,10 @@ describe("removeWorkspace", () => {
       }) as unknown as typeof childProcess.execFile);
       await removeWorkspace(ws.path, baseHooks, logger);
       const sessionCall = spy.mock.calls.find(
-        (c) => c[0] === "opencode" && c[1]?.[0] === "session" && c[1]?.[1] === "delete",
+        (c) => c[0] === "opencode" && (c[1] as string[])?.includes("session.remove"),
       );
       expect(sessionCall).toBeDefined();
-      expect(sessionCall?.[1]?.[2]).toBe("ses_sidecar_fallback");
+      expect(sessionCall?.[1]).toContain("sessionID=ses_sidecar_fallback");
       expect(() => statSync(ws.path)).toThrow();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -298,8 +298,20 @@ describe("removeWorkspace", () => {
 });
 
 describe("deleteSession", () => {
-  it("catches errors without throwing", async () => {
-    await expect(deleteSession("ses_nonexistent_xyz", logger)).resolves.not.toThrow();
+  it("calls the v2 api session.remove and catches errors without throwing", async () => {
+    const spy = vi.spyOn(childProcess, "execFile").mockImplementation(((
+      _file: unknown,
+      _args: unknown,
+      _opts: unknown,
+      cb: unknown,
+    ) => {
+      if (typeof cb === "function") cb(new Error("boom"), "", "");
+      return undefined as never;
+    }) as unknown as typeof childProcess.execFile);
+    await expect(deleteSession("ses_gone", logger)).resolves.not.toThrow();
+    const call = spy.mock.calls.find((c) => (c[1] as string[])?.includes("session.remove"));
+    expect(call?.[1]).toContain("sessionID=ses_gone");
+    expect(call?.[1]).toContain("api");
   });
 });
 

@@ -3170,6 +3170,257 @@ describe("DirectSessionManager cross-turn dedup", () => {
   });
 });
 
+describe("DirectSessionManager agent/model override takes effect on the next turn", () => {
+  it("flags switch_agent only after the override changes", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "summary" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_ag1", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("答一")]);
+    await mgr.whenIdle();
+
+    // Unchanged continuation: the default agent was already applied at create.
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_ag2", root_id: "om_ag1", text: "继续", create_time: "1700000100" }),
+    );
+    await runner.waitForCall(2);
+    expect(runner.calls[1]?.request.switchAgent).toBe(false);
+    runner.finish(1, [textEvent("答二")]);
+    await mgr.whenIdle();
+
+    // Override the agent, then continue: the next turn must ask to switch.
+    await mgr.handleThreadMessage(
+      msg({
+        message_id: "om_ag3",
+        root_id: "om_ag1",
+        text: "/agent review",
+        create_time: "1700000200",
+      }),
+    );
+    await mgr.whenIdle();
+    await mgr.handleThreadMessage(
+      msg({
+        message_id: "om_ag4",
+        root_id: "om_ag1",
+        text: "再继续",
+        create_time: "1700000300",
+      }),
+    );
+    await runner.waitForCall(3);
+    expect(runner.calls[2]?.request.agent).toBe("review");
+    expect(runner.calls[2]?.request.switchAgent).toBe(true);
+    runner.finish(2, [textEvent("答三")]);
+    await mgr.whenIdle();
+  });
+
+  it("recover() interrupts the server-side turn of a running session", async () => {
+    const interrupted: string[] = [];
+    const feishu = new FakeFeishu();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "summary" }),
+      logger: fakeLogger(),
+      turnDriver: () => new Promise(() => {}),
+      interruptSession: async (sid) => {
+        interrupted.push(sid);
+      },
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_rec1", text: "/chat tasking 干活" }));
+    await new Promise((r) => setTimeout(r, 30));
+    store.updateDirectSession("om_rec1", { session_id: "ses_rec1" });
+    store.markDirectSessionStatus("om_rec1", "running");
+    await mgr.recover();
+    expect(interrupted).toEqual(["ses_rec1"]);
+    expect(store.getDirectSession("om_rec1")?.status).toBe("idle");
+  });
+
+  it("deleteSessionByRoot marks done and cleans up the opencode session", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const deleted: string[] = [];
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "summary" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      deleteSession: async (sid) => {
+        deleted.push(sid);
+      },
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_del1", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("答")]);
+    await mgr.whenIdle();
+    const sessionId = store.getDirectSession("om_del1")?.session_id ?? "";
+
+    expect(await mgr.deleteSessionByRoot("om_del1", "TUI")).toBe(true);
+    expect(store.getDirectSession("om_del1")?.status).toBe("done");
+    expect(deleted).toEqual([sessionId]);
+    expect(await mgr.deleteSessionByRoot("om_nonexistent")).toBe(false);
+    expect(await mgr.deleteSessionByRoot("om_del1")).toBe(true);
+  });
+
+  it("carries the live context size onto the turn card header", async () => {
+    const feishu = new FakeFeishu();
+    let turn = 0;
+    const driver = async () => {
+      turn += 1;
+      return {
+        status: "succeeded" as const,
+        sessionId: `ses_ctx_${turn}`,
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        error: null,
+        postureOpened: false,
+        contextTokens: turn === 1 ? 120_000 : 660_000,
+      };
+    };
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: driver as never,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_ctx1", text: "/chat tasking 干活" }));
+    await mgr.whenIdle();
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_ctx2", root_id: "om_ctx1", text: "继续", create_time: "1700000100" }),
+    );
+    await mgr.whenIdle();
+    const last = feishu.updates.at(-1) ?? feishu.cards.at(-1);
+    const header = last ? JSON.stringify(last.card) : "";
+    expect(header).toContain("ctx ≈660.0k");
+  });
+});
+
+describe("DirectSessionManager concurrent pending approvals", () => {
+  it("keeps an earlier pending approval actionable when a second one arrives", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const apiCalls: string[][] = [];
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      apiExec: async (args) => {
+        apiCalls.push(args);
+        return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+      },
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_two", text: "/chat tasking 跑两个命令" }));
+    await runner.waitForCall(1);
+    const call = runner.calls[0];
+    const per = (id: string) => ({
+      id,
+      sessionID: "ses_two",
+      action: "shell",
+      resources: [`echo ${id}`],
+      save: ["echo *"],
+    });
+    call?.request.onPendingPermissions?.([per("per_a")]);
+    call?.request.onPendingPermissions?.([per("per_a"), per("per_b")]);
+
+    const reply = await mgr.handleCardAction({
+      messageId: "om_two",
+      chatId: "oc_chat",
+      operatorOpenId: "ou_op",
+      operatorName: "张三",
+      value: {
+        action: "approve_once",
+        root_id: "om_two",
+        turn: 1,
+        request_id: "per_a",
+        kind: "direct",
+      },
+    });
+    expect(reply?.toast?.content).toContain("已允许");
+    expect(
+      apiCalls.some((a) => a.includes("session.permission.reply") && a.includes("requestID=per_a")),
+    ).toBe(true);
+    runner.finish(0, [textEvent("ok")]);
+    await mgr.whenIdle();
+  });
+
+  it("returns the stamped card in the callback response so the click is visible immediately", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      apiExec: async () => ({ exitCode: 0, stdout: "{}", stderr: "", timedOut: false }),
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_stamp", text: "/chat tasking 跑个命令" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.request.onPendingPermissions?.([
+      {
+        id: "per_stamp",
+        sessionID: "ses_stamp",
+        action: "shell",
+        resources: ["echo hi"],
+        save: ["echo *"],
+      },
+    ]);
+    const reply = await mgr.handleCardAction({
+      messageId: "om_stamp",
+      chatId: "oc_chat",
+      operatorOpenId: "ou_op",
+      operatorName: "张三",
+      value: {
+        action: "approve_once",
+        root_id: "om_stamp",
+        turn: 1,
+        request_id: "per_stamp",
+        kind: "direct",
+      },
+    });
+    const cardJson = JSON.stringify(reply?.card);
+    expect(cardJson).toContain("已允许");
+    expect(cardJson).not.toContain("approve_once");
+    expect(cardJson).not.toContain("approve_reject");
+    runner.finish(0, [textEvent("done")]);
+    await mgr.whenIdle();
+  });
+
+  it("clears the waiting-approval marker when the turn ends while still pending", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_wait", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.request.onPendingPermissions?.([
+      { id: "per_w", sessionID: "ses_w", action: "shell", resources: ["echo w"] },
+    ]);
+    runner.calls[0]?.request.onWaitingForApproval?.(true);
+    expect(mgr.listActive()[0]?.waiting_approval).toBe(true);
+    runner.finish(0, [textEvent("done")]);
+    await mgr.whenIdle();
+    expect(mgr.listActive()[0]?.waiting_approval).toBeUndefined();
+    const sealed = feishu.updates.find((u) => JSON.stringify(u.card).includes("✅ 完成"));
+    expect(sealed).toBeDefined();
+    expect(JSON.stringify(sealed?.card)).not.toContain("等待审批");
+  });
+});
+
 describe("DirectSessionManager first-turn approval", () => {
   it("posts an approval card to the thread when the first turn pends (session_id not yet persisted)", async () => {
     const feishu = new FakeFeishu();

@@ -93,7 +93,7 @@ hooks:
 # agent: 并发与重试策略
 # ============================================================================
 agent:
-  # 全局并发上限。同时运行的 opencode run 子进程数不超过此值。
+  # 全局并发上限。同时运行的 opencode 会话数不超过此值。
   max_concurrent_agents: 10
 
   # 同一 worker 内的 turn 上限。达到后 worker 退出，调度续轮 retry。
@@ -107,11 +107,11 @@ agent:
   max_concurrent_agents_by_state: {}
 
 # ============================================================================
-# opencode: worker 子进程配置
+# opencode: 驱动器配置
 # ============================================================================
 opencode:
-  # opencode 启动命令。默认 "opencode run"。
-  command: opencode run
+  # opencode 启动命令。默认 "opencode"（经 opencode api 驱动）。
+  command: opencode
 
   # opencode agent profile 名称。
   agent: build
@@ -120,10 +120,10 @@ opencode:
   # 空目录（默认）＝不校验，任何 `agent:<name>` 直通；非空＝咨询性校验，未知名警告并回退默认。不作硬白名单。
   agents: []
 
-  # 可选。opencode 模型 (provider/model 格式)，映射 `--model`。默认 null（不配置，走 opencode 默认模型）。
+  # 可选。opencode 模型 (provider/model 格式)，映射 `Model.Ref.id`。默认 null（不配置，走 opencode 默认模型）。
   model: null
 
-  # 可选。模型变体 (provider 特定推理档位，如 high/max/minimal)，映射 `--variant`。默认 null（不配置）。与 model 彼此独立。
+  # 可选。模型变体 (provider 特定推理档位，如 high/max/minimal)，映射 `Model.Ref.variant`。默认 null（不配置）。与 model 彼此独立。
   variant: null
 
   # 单 turn 超时 (毫秒)。默认 3600000 = 1 小时。必须 > 0。
@@ -207,7 +207,7 @@ feishu:
     # ad-hoc path 模式（`/chat /绝对路径 <消息>`）的目录前缀白名单；空 = 不限制。
     path_roots: []
 
-    # true = 给 opencode run 传 --auto（自动放行未被显式拒绝的权限）。
+    # true = 会话级全放 permissions ruleset（覆盖工作区 ask；工作区自身的 deny 仍生效）。
     # 默认 false：权限姿态由目标目录自己的 .opencode 权限配置决定。
     auto_approve: false
 

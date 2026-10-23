@@ -41,6 +41,19 @@ export function buildApiArgs(spec: {
   return args;
 }
 
+export function describeApiCommand(spec: {
+  command: string;
+  operation: string;
+  serverUrl?: string | null;
+}): string {
+  return [
+    ...spec.command.split(/\s+/).filter(Boolean),
+    "api",
+    ...(spec.serverUrl ? ["--server", spec.serverUrl] : []),
+    spec.operation,
+  ].join(" ");
+}
+
 export class ApiError extends TaskingError {}
 
 export async function execApi(

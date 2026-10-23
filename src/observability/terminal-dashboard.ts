@@ -87,8 +87,10 @@ export interface TerminalDashboardOptions {
   fetchConfig?: () => Promise<ConfigView>;
   activityStore?: ActivityStore;
   fetchActivity?: (taskId: string) => Promise<ActivityEvent[]>;
+  deleteDirectSession?: (rootId: string) => Promise<boolean>;
   directSessions?: () => RuntimeDirectSession[];
   directTotals?: () => { input_tokens: number; output_tokens: number; total_tokens: number };
+  permissionTimeoutMs?: () => number | undefined;
   terminalWidth?: () => number;
 }
 
@@ -123,6 +125,8 @@ export class TerminalDashboard {
   private selectedIndex = 0;
   private selectedId: string | null = null;
   private detailId: string | null = null;
+  private pendingDeleteId: string | null = null;
+  private actionStatus: string | null = null;
   private descExpanded = false;
   private escBuffer = "";
   private escTimer: NodeJS.Timeout | null = null;
@@ -149,6 +153,7 @@ export class TerminalDashboard {
   private static readonly MIN_RERENDER_MS = 200;
   private static readonly ESC_TIMEOUT_MS = 50;
   private static readonly LOG_VIEWPORT = 30;
+  private static readonly LOG_WRAP_MAX_LINES = 8;
   private static readonly CONFIG_VIEWPORT = 30;
   private static readonly ACTIVITY_VIEWPORT = 30;
   private static readonly ACTIVITY_EVENT_WIDTH_PAD = 13;
@@ -218,6 +223,12 @@ export class TerminalDashboard {
       this.handleSearchInput(key);
       return;
     }
+    if (this.actionStatus !== null && key !== "d" && key !== "x") {
+      this.actionStatus = null;
+    }
+    if (this.pendingDeleteId !== null && key !== "d" && key !== "x") {
+      this.pendingDeleteId = null;
+    }
     switch (key) {
       case "\x03":
         process.kill(process.pid, "SIGINT");
@@ -256,6 +267,10 @@ export class TerminalDashboard {
         break;
       case "a":
         if (this.mode === "detail-running" || this.mode === "detail-direct") this.enterActivity();
+        break;
+      case "d":
+      case "x":
+        this.handleDeleteKey();
         break;
       case "e":
         if (this.mode === "detail-running") {
@@ -365,6 +380,69 @@ export class TerminalDashboard {
 
   private directItems(): RuntimeDirectSession[] {
     return this.lastSnapshot?.direct ?? [];
+  }
+
+  private directLabel(rootId: string): string {
+    const entry = this.directItems().find((d) => d.root_id === rootId);
+    const label = entry?.name ?? entry?.project ?? entry?.path ?? rootId;
+    return label.length > 30 ? `${label.slice(0, 30)}…` : label;
+  }
+
+  private currentDirectId(): string | null {
+    if (this.mode === "detail-direct") {
+      return this.detailId?.startsWith("direct:") ? this.detailId.slice("direct:".length) : null;
+    }
+    if (this.mode === "overview" && this.focus === "direct") {
+      const items = this.directItems();
+      const idx = this.indexOfSelected(items as unknown as { id: string }[]);
+      const item = items[idx];
+      return item ? item.root_id : null;
+    }
+    return null;
+  }
+
+  private handleDeleteKey(): void {
+    const rootId = this.currentDirectId();
+    if (rootId === null) {
+      this.actionStatus = translate(
+        "删除仅作用于直连会话（聚焦 Direct sessions 列表或进入其详情）",
+      );
+      this.lastRenderedContent = null;
+      this.doRender();
+      return;
+    }
+    if (!this.opts.deleteDirectSession) {
+      this.actionStatus = translate("当前 TUI 未接入删除通道");
+      this.lastRenderedContent = null;
+      this.doRender();
+      return;
+    }
+    const logicalId = `direct:${rootId}`;
+    if (this.pendingDeleteId !== logicalId) {
+      this.pendingDeleteId = logicalId;
+      this.actionStatus = `${translate("再按一次 d 确认删除会话：")}${this.directLabel(rootId)}`;
+      this.lastRenderedContent = null;
+      this.doRender();
+      return;
+    }
+    this.pendingDeleteId = null;
+    const provider = this.opts.deleteDirectSession;
+    this.actionStatus = translate("正在删除…");
+    this.lastRenderedContent = null;
+    this.doRender();
+    void provider(rootId)
+      .then((ok) => {
+        this.actionStatus = ok
+          ? translate("已删除会话（话题内也已结束）")
+          : translate("会话不存在或已清理");
+      })
+      .catch(() => {
+        this.actionStatus = translate("删除失败（详见 daemon 日志）");
+      })
+      .finally(() => {
+        this.lastRenderedContent = null;
+        this.doRender();
+      });
   }
 
   private availableFocuses(): Focus[] {
@@ -709,6 +787,7 @@ export class TerminalDashboard {
     return {
       direct: this.opts.directSessions?.() ?? [],
       directTotals: this.opts.directTotals?.(),
+      permissionTimeoutMs: this.opts.permissionTimeoutMs?.(),
     };
   }
 
@@ -962,8 +1041,19 @@ export class TerminalDashboard {
     lines.push(`${GRAY}│${RESET}`);
     const logHint = this.opts.logBuffer ? " · L logs" : "";
     const configHint = this.hasConfigSource() ? " · C config" : "";
+    const deleteHint =
+      this.opts.deleteDirectSession && (this.focus === "direct" || this.mode === "detail-direct")
+        ? " · D delete"
+        : "";
+    if (this.actionStatus !== null || this.pendingDeleteId !== null) {
+      const status = this.actionStatus ?? "";
+      if (status !== "") {
+        lines.push(`${GRAY}│  ${YELLOW}${status}${RESET}`);
+        lines.push(`${GRAY}│${RESET}`);
+      }
+    }
     lines.push(
-      `${GRAY}│  ${DIM}↑↓ navigate · ←/→ or Tab switch · Enter details${logHint}${configHint} · Esc/q back · Ctrl-C exit${RESET}`,
+      `${GRAY}│  ${DIM}↑↓ navigate · ←/→ or Tab switch · Enter details${logHint}${configHint}${deleteHint} · Esc/q back · Ctrl-C exit${RESET}`,
     );
     lines.push(`${CYAN}╰──────────────────────────────────────────────────${RESET}`);
     return this.compose(lines);
@@ -1339,13 +1429,24 @@ export class TerminalDashboard {
                 ? GRAY
                 : "";
         const reset = color ? RESET : "";
-        let msg = this.logLineText(entry, Math.max(60, this.terminalWidthFn() - 20));
-        if (query && msg.toLowerCase().includes(query)) {
-          msg = `${BOLD}${msg}${RESET}`;
+        const width = Math.max(40, this.terminalWidthFn() - 20);
+        const full = this.logLineText(entry, 4000);
+        let segs = wrapToWidth(full, width);
+        if (segs.length === 0) segs = [""];
+        const hidden = segs.length - TerminalDashboard.LOG_WRAP_MAX_LINES;
+        if (hidden > 0) segs = segs.slice(0, TerminalDashboard.LOG_WRAP_MAX_LINES);
+        const match = query ? full.toLowerCase().includes(query) : false;
+        const headPrefix = `${GRAY}│${RESET} ${GRAY}${time}${RESET} ${color}${entry.level.toUpperCase().padEnd(5)}${reset} `;
+        const contPrefix = `${GRAY}│${RESET}${" ".repeat(16)}`;
+        for (let i = 0; i < segs.length; i++) {
+          let seg = segs[i] ?? "";
+          if (i === segs.length - 1 && hidden > 0) {
+            seg = `${truncateToWidth(seg, Math.max(10, width - 14))} …(+${hidden} lines)`;
+          }
+          lines.push(
+            `${i === 0 ? headPrefix : contPrefix}${match ? `${BOLD}${seg}${RESET}` : seg}`,
+          );
         }
-        lines.push(
-          `${GRAY}│${RESET} ${GRAY}${time}${RESET} ${color}${entry.level.toUpperCase().padEnd(5)}${reset} ${msg}`,
-        );
       }
     }
 

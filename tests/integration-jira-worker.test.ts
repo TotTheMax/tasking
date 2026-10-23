@@ -147,7 +147,7 @@ describe.skipIf(!enabled)("Jira path real E2E (scheduler -> worker -> opencode)"
         if (toTerminal) {
           await tracker.transitionIssue(issueKey, toTerminal.id);
           reachedTerminal = true;
-          logger.info(">>> transitioned to terminal via " + toTerminal.name);
+          logger.info(`>>> transitioned to terminal via ${toTerminal.name}`);
           break;
         }
         const current = (await tracker.fetchIssueStatesByIds([issueId]))[0]?.state ?? "";
@@ -159,7 +159,7 @@ describe.skipIf(!enabled)("Jira path real E2E (scheduler -> worker -> opencode)"
         const hopTransition = transitions.find((t) => t.toName === next);
         if (!hopTransition) break;
         await tracker.transitionIssue(issueKey, hopTransition.id);
-        logger.info(">>> workflow hop " + current + " -> " + next);
+        logger.info(`>>> workflow hop ${current} -> ${next}`);
       }
       expect(reachedTerminal, "could not reach a terminal state").toBe(true);
       logger.info(">>> transitioned to terminal; waiting for cleanup");
