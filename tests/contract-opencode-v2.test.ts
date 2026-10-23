@@ -1,8 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OpenCode } from "@opencode/client";
-import { OpenCode as Sdk } from "@opencode/sdk";
 /**
  * Contract harness for the opencode v2 API shapes tasking hardcodes.
  *
@@ -17,6 +15,10 @@ import { OpenCode as Sdk } from "@opencode/sdk";
  */
 import { describe, expect, it } from "vitest";
 
+const loadSdk = () =>
+  import("@opencode/sdk").then((m) => m.OpenCode);
+const loadClient = () => import("@opencode/client").then((m) => m.OpenCode);
+
 const NODE_MAJOR = Number(process.versions.node.split(".")[0] ?? 0);
 
 // @opencode/sdk 2.0.29 ships explicit resource management (`using`), which
@@ -25,7 +27,7 @@ const NODE_MAJOR = Number(process.versions.node.split(".")[0] ?? 0);
 describe.skipIf(NODE_MAJOR < 24)("opencode v2 API contract (pinned sdk+client 2.0.29)", () => {
   it("session.create accepts location, Model.Ref and a permissions ruleset", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tasking-contract-"));
-    const host = await Sdk.create({ database: { path: join(dir, "c.db") } });
+    const host = await (await loadSdk()).create({ database: { path: join(dir, "c.db") } });
     try {
       const session = await host.sessions.create({
         location: { directory: dir },
@@ -46,7 +48,7 @@ describe.skipIf(NODE_MAJOR < 24)("opencode v2 API contract (pinned sdk+client 2.
 
   it("session.update accepts a ruleset and an empty ruleset (posture open/recall)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tasking-contract-"));
-    const host = await Sdk.create({ database: { path: join(dir, "c.db") } });
+    const host = await (await loadSdk()).create({ database: { path: join(dir, "c.db") } });
     try {
       const session = await host.sessions.create({ location: { directory: dir } });
       await host.sessions.update({
@@ -63,7 +65,7 @@ describe.skipIf(NODE_MAJOR < 24)("opencode v2 API contract (pinned sdk+client 2.
 
   it("session.permission.list is empty for a fresh session", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tasking-contract-"));
-    const host = await Sdk.create({ database: { path: join(dir, "c.db") } });
+    const host = await (await loadSdk()).create({ database: { path: join(dir, "c.db") } });
     try {
       const session = await host.sessions.create({ location: { directory: dir } });
       const pending = await host.permission.list({ sessionID: session.id });
@@ -78,7 +80,7 @@ describe.skipIf(NODE_MAJOR < 24)("opencode v2 API contract (pinned sdk+client 2.
 
   it("session.interrupt and session.active exist with stable shapes", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tasking-contract-"));
-    const host = await Sdk.create({ database: { path: join(dir, "c.db") } });
+    const host = await (await loadSdk()).create({ database: { path: join(dir, "c.db") } });
     try {
       const session = await host.sessions.create({ location: { directory: dir } });
       const active = await host.sessions.active();
@@ -93,9 +95,9 @@ describe.skipIf(NODE_MAJOR < 24)("opencode v2 API contract (pinned sdk+client 2.
   });
 
   it("the pinned client package exposes the operation groups tasking relies on", async () => {
-    expect(typeof OpenCode.make).toBe("function");
+    expect(typeof (await loadClient()).make).toBe("function");
     const dir = mkdtempSync(join(tmpdir(), "tasking-contract-"));
-    const host = await Sdk.create({ database: { path: join(dir, "c.db") } });
+    const host = await (await loadSdk()).create({ database: { path: join(dir, "c.db") } });
     try {
       const session = await host.sessions.create({ location: { directory: dir } });
       expect(typeof session.id).toBe("string");
