@@ -110,6 +110,8 @@ describe("tasking doctor", () => {
     const code = await runDoctor(dir, stream, {
       fetchImpl: feishuFetch(),
       opencodeVersion: ocOk,
+      opencodeService: svcRunning,
+      opencodeAuth: authOk,
     });
     expect(code).toBe(0);
     const out = content();
@@ -160,6 +162,8 @@ describe("tasking doctor", () => {
     const code = await runDoctor(dir, stream, {
       fetchImpl: feishuFetch(),
       opencodeVersion: ocOk,
+      opencodeService: svcRunning,
+      opencodeAuth: authOk,
       mcpScriptPath: () => join(dir, "jira-server.js"),
     });
     expect(code).toBe(0);
@@ -384,7 +388,12 @@ describe("tasking doctor workflow path", () => {
     const code = await runDoctor(
       dir,
       stream,
-      { fetchImpl: feishuFetch(), opencodeVersion: ocOk },
+      {
+        fetchImpl: feishuFetch(),
+        opencodeVersion: ocOk,
+        opencodeService: svcRunning,
+        opencodeAuth: authOk,
+      },
       "configs/my-flow.md",
     );
     expect(code).toBe(0);
