@@ -17,7 +17,12 @@ import { OpenCode as Sdk } from "@opencode/sdk";
  */
 import { describe, expect, it } from "vitest";
 
-describe("opencode v2 API contract (pinned sdk+client 2.0.29)", () => {
+const NODE_MAJOR = Number(process.versions.node.split(".")[0] ?? 0);
+
+// @opencode/sdk 2.0.29 ships explicit resource management (`using`), which
+// Node 22 cannot parse. CI runs this suite on Node 24; the 22 job covers the
+// runtime suite.
+describe.skipIf(NODE_MAJOR < 24)("opencode v2 API contract (pinned sdk+client 2.0.29)", () => {
   it("session.create accepts location, Model.Ref and a permissions ruleset", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tasking-contract-"));
     const host = await Sdk.create({ database: { path: join(dir, "c.db") } });

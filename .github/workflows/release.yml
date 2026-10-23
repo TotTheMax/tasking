@@ -16,7 +16,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # 24: the contract suite imports @opencode/sdk, whose dist uses
+          # explicit resource management (`using`) — Node 22 cannot parse it.
+          node-version: 24
       - name: Use npm with trusted-publishing support
         run: npm install -g npm@latest
       - run: npm ci
