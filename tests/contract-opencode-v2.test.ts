@@ -15,8 +15,7 @@ import { join } from "node:path";
  */
 import { describe, expect, it } from "vitest";
 
-const loadSdk = () =>
-  import("@opencode/sdk").then((m) => m.OpenCode);
+const loadSdk = () => import("@opencode/sdk").then((m) => m.OpenCode);
 const loadClient = () => import("@opencode/client").then((m) => m.OpenCode);
 
 const NODE_MAJOR = Number(process.versions.node.split(".")[0] ?? 0);
