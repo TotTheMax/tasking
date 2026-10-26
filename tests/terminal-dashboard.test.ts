@@ -185,6 +185,26 @@ describe("TerminalDashboard", () => {
     expect(output()).toContain("Workspace:");
   });
 
+  it("renders v2 step_usage token lines and reasoning text in the activity view", () => {
+    const state = createInitialState(30000, 10);
+    state.running.set("1", makeRunningEntry("1"));
+    const store = new ActivityStore();
+    store.record("1", {
+      ts: 1,
+      turn: 1,
+      type: "step_usage",
+      tokens: { input: 10, output: 5, total: 15 },
+    });
+    store.record("1", { ts: 2, turn: 1, type: "reasoning", text: "thinking hard" });
+    const { tui, output } = makeTui(state, store);
+    tui.forceRender();
+    tui.handleKey("\r");
+    tui.handleKey("a");
+    tui.forceRender();
+    expect(output()).toContain("tokens +");
+    expect(output()).toContain("thinking hard");
+  });
+
   it("j/k scroll in activity view without crashing", () => {
     const state = createInitialState(30000, 10);
     state.running.set("1", makeRunningEntry("1"));
@@ -1177,6 +1197,24 @@ describe("TerminalDashboard", () => {
     expect(output()).not.toContain("scr 59");
   });
 
+  it("wraps long log lines instead of truncating them", () => {
+    const long = `prefix ${"x".repeat(140)} suffix`;
+    const { tui, output } = makeLogsTui([long]);
+    tui.forceRender();
+    tui.handleKey("L");
+    expect(output()).toContain("prefix");
+    expect(output()).toContain("suffix");
+    expect(output()).not.toContain("suffix…");
+  });
+
+  it("caps wrapped log lines for extremely long entries", () => {
+    const huge = "y".repeat(600);
+    const { tui, output } = makeLogsTui([huge]);
+    tui.forceRender();
+    tui.handleKey("L");
+    expect(output()).toContain("(+2 lines)");
+  });
+
   it("pressing f pauses the logs view and new arrivals do not scroll it", () => {
     const { tui, output, logBuffer } = makeLogsTui(lines(0, 40, "line"));
     tui.forceRender();
@@ -1620,6 +1658,61 @@ describe("TerminalDashboard direct sessions", () => {
     expect(plain(withDirect.output())).toContain("Direct sessions");
     expect(plain(withDirect.output())).toContain("介绍一下 zhipu");
     expect(plain(withDirect.output())).toContain("running");
+  });
+
+  it("D deletes the focused direct session after a confirmation press", async () => {
+    const deleted: string[] = [];
+    let output = "";
+    const tui = new TerminalDashboard({
+      state: () => createInitialState(30000, 10),
+      logger,
+      renderFn: (c) => {
+        output = c;
+      },
+      directSessions: direct,
+      deleteDirectSession: async (rootId) => {
+        deleted.push(rootId);
+        return true;
+      },
+    });
+    tui.forceRender();
+    tui.handleKey("\t"); // backoff
+    tui.handleKey("\t"); // direct focused
+    tui.handleKey("d");
+    expect(deleted).toEqual([]);
+    expect(plain(output)).toContain("再按一次");
+    expect(plain(output)).toContain("介绍一下 zhipu");
+    tui.handleKey("d");
+    for (let i = 0; i < 100 && !plain(output).includes("已删除会话"); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(deleted).toEqual(["om_x"]);
+    expect(plain(output)).toContain("已删除会话");
+  });
+
+  it("delete confirmation is cancelled by any other key", async () => {
+    const deleted: string[] = [];
+    let output = "";
+    const tui = new TerminalDashboard({
+      state: () => createInitialState(30000, 10),
+      logger,
+      renderFn: (c) => {
+        output = c;
+      },
+      directSessions: direct,
+      deleteDirectSession: async (rootId) => {
+        deleted.push(rootId);
+        return true;
+      },
+    });
+    tui.forceRender();
+    tui.handleKey("\t");
+    tui.handleKey("\t");
+    tui.handleKey("d");
+    tui.handleKey("j"); // cancels the pending confirmation
+    tui.handleKey("d"); // starts a fresh confirmation instead of deleting
+    expect(deleted).toEqual([]);
+    expect(plain(output)).toContain("再按一次");
   });
 
   it("Tab cycles running -> backoff -> direct and highlights the focused block", () => {

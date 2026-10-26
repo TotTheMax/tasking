@@ -1,5 +1,7 @@
 # Token Accounting Rules
 
+> **Updated in 0.7**: token data now comes from polling v2 session messages (`session.message.list` / `session.get`) instead of the `opencode run --format json` event stream. v2 tokens are `{input, output, reasoning, cache}` (**no `total`**); the total is `input + output + reasoning` with cache reported separately (ADR 0037). The event-stream model below describes 0.6.x.
+
 > Adapts tasking's `opencode run --format json` event model.
 
 ## Basic Principles

@@ -8,7 +8,7 @@ This document explains the overall architecture of `tasking`: the dual-source du
 
 ```
 Jira (结构化) ──► 确定性调度器 ──┐
-                                 ├──► 共享 Task 模型 ──► 工作区 ──► opencode run worker
+                                 ├──► 共享 Task 模型 ──► 工作区 ──► opencode v2 worker
 飞书 (直连会话) ──► direct worker ─┘
 ```
 
@@ -18,7 +18,7 @@ The Jira path uses Symphony-style deterministic scheduling, **with no LLM in the
 
 Scheduling loop (each tick):
 
-1. **Reconcile**: first reconciles running tasks — detects stalls (no activity for over `stall_timeout_ms`), refreshes tracker state (terminal: stop and clean workspace; active: update snapshot; other: stop without cleaning).
+1. **Reconcile**: first reconciles running tasks — detects stalls (no activity for over `stall_timeout_ms`), refreshes tracker state (terminal: stop and clean workspace; active: update snapshot; other: stop without cleaning). Additionally, every 10 ticks (idle only) a **terminal sweep** runs: terminal-state tasks are fetched and their workspaces cleaned, covering the window where a task transitions to terminal after leaving the loop (e.g. from a review state) — no daemon restart needed.
 2. **Pre-validation**: validates config (`tracker.kind`, credentials, `opencode.command`); on failure skips this tick's dispatch but keeps reconciliation.
 3. **Fetch candidates**: uses JQL to fetch Jira issues in active states.
 4. **Ordering**: sorts by `priority` ascending, `created_at` oldest first, then `identifier` lexicographically.
@@ -35,7 +35,7 @@ The Feishu path uses an LLM **only for triage**: turns chat messages into a norm
 Flow:
 
 1. **Ingestion**: Feishu IM text messages, after @mentioning the bot, are idempotently ingested into a persistent inbox (SQLite).
-2. **Triage**: a route agent (an `opencode run` subprocess using the triage agent profile) runs in a bounded manner per tick, reading, deciding, and replying via the `inbox.pop_untriaged` / `inbox.mark_decision` / `feishu.reply` tools.
+2. **Triage**: a route agent (driven through the opencode api with the triage agent profile; **unimplemented**) runs in a bounded manner per tick, reading, deciding, and replying via the `inbox.pop_untriaged` / `inbox.mark_decision` / `feishu.reply` tools.
 3. **Dispatch**: entries decided as "dispatchable" are normalized into `Task` and dispatched via the shared worker path (subject to the same concurrency budget); inbox entries are marked `dispatched`.
 
 At most one route agent runs at a time (unless configured otherwise), and it **does not block** the structured scheduler.
@@ -46,9 +46,9 @@ The two paths converge at three points:
 
 - **Shared Task model**: Jira normalization produces the `Task` type (route agent output is planned, not implemented).
 - **Shared workspace manager**: per-task workspace creation/reuse/hooks/safety invariants.
-- **Shared worker**: `opencode run` subprocess, OS-level process isolation.
+- **Shared worker**: drives opencode v2 sessions through `opencode api` (shared background service).
 
-Global concurrency (`agent.max_concurrent_agents`) caps concurrent Jira worker `opencode run` subprocesses. Feishu direct sessions run on a **separate** budget (`feishu.direct.max_concurrent`, default 5) so an interactive `/chat` turn is not queued behind a Jira backlog; the machine-wide subprocess total can therefore reach the sum of the two.
+Global concurrency (`agent.max_concurrent_agents`) caps concurrent Jira worker turns. Feishu direct sessions run on a **separate** budget (`feishu.direct.max_concurrent`, default 5) so an interactive `/chat` turn is not queued behind a Jira backlog.
 
 With `feishu.direct.verbosity: detailed` (the default), each turn posts one updatable **turn card**: a session-state header, collapsible per-tool panels (failures expanded by default) and a control row; when the turn ends the card is sealed (its button row becomes a stats line) and the next turn gets a fresh card. The card is the **process plane** and the per-turn completion text is the **result plane** (quotable, searchable). Two platform constraints drive that shape: a Feishu card is capped at 30KB and updates replace the whole card, so cards are per-turn and degrade within a turn by budget; card updates and thread-internal messages produce no push notification, so notification is left to Feishu's own conversation semantics.
 
@@ -78,23 +78,30 @@ Regardless of source, all tasks are normalized into a unified `Task` entity:
 
 Jira normalization: `labels` trimmed and lowercased; `priority` integers only; `blocked_by` derived from issue links; timestamps parsed from ISO-8601. (The route-agent-produced `Task` is a planned path, not implemented.)
 
-## Worker Subprocess Isolation
+## Worker opencode v2 driver
 
-Each task attempt executes as an independent `opencode run` subprocess:
+Each task attempt drives an opencode v2 session through `opencode api` (tasking 0.7 requires `opencode >=2.0 <3`, see ADR 0035):
 
 ```bash
-opencode run --format json --auto --dir <workspace> --agent <build> "<rendered prompt>"
+opencode api session.create --data '{"location":{"directory":"<workspace>"},"model":{...}}'
+opencode api session.prompt --param sessionID=<ses_...> --data '{"text":"<rendered prompt>"}'
+opencode api session.get / session.permission.list / session.message.list   # polling
+opencode api session.interrupt --param sessionID=<ses_...>                  # timeout/abort
 ```
 
-- **OS-level isolation**: each worker is an independent process, with cwd set to the per-task workspace path.
-- **Permission auto-approve**: by default appends the `--auto` flag (`opencode.auto_approve: true`), auto-approving permission requests not explicitly denied by `.opencode/opencode.json`, suited for unattended runs. When set to `false`, the agent hangs on permission confirmations until the turn timeout.
-- **JSON event stream**: all `opencode run` calls use `--format json`, extracting the session ID and token usage from the structured event stream.
-- **Bounded session continuation loop (aligned with Symphony)**: turn 1 inside the worker creates an opencode session with the full prompt; turn 2+ uses `-s <sessionID>` to continue the same session (the agent keeps full conversation context across turns). After the worker exits, continuation retry creates a **fresh session** (no old session ID passed), and the agent re-evaluates progress from `git log` / filesystem — avoiding conversation-history bloat and error propagation. After each success it rechecks the tracker state; if still active and under `max_turns`, it starts the next turn call.
-- **Session lifecycle management**: turn 1 creates a session and writes a workspace sidecar file (`.tasking-session.json`); turn 2+ continues the same session; continuation retry uses a fresh session; when a task enters terminal state triggering workspace cleanup, it reads the last session ID from the sidecar and runs `opencode session delete`.
+- **Shared background service**: auto-discovers the machine's user-level opencode service (the same one the user's TUI uses); tasking never manages that process. `opencode.server_url` overrides it explicitly.
+- **Progress and terminal state come from polling** (ADR 0037): `session.get`'s `outcome` (succeeded/failed/interrupted) is the terminal state; `session.message.list` settled-assistant diffs provide tool entries (`state.input`/`state.metadata.exit`/`state.time`) and text; `session.permission.list` provides pending approvals.
+- **Permission posture** (ADR 0036): `auto_approve: true` creates the session with an allow-all ruleset; `false` follows the workspace's `.opencode` rules, so `ask` pauses and posts an approval card (see usage). Posture changes apply immediately via `session.update`.
+- **Bounded session continuation loop (aligned with Symphony)**: turn 1 creates the opencode session with the full prompt; turn 2+ continues `session.prompt` on the same session (the agent keeps full conversation context). After the worker exits, continuation retry creates a **fresh session**. After each success it rechecks the tracker state; if still active and under `max_turns`, the next turn starts; the agent is re-resolved each turn and switched at turn boundaries.
+- **Session lifecycle management**: the sidecar file (`.tasking-session.json`) is written the moment a session is created (a restart mid-first-turn is still discoverable by the sweep); turn 2+ reuses it; when a task enters terminal state triggering workspace cleanup, it reads the last session ID from the sidecar and deletes the session. **Failed retries do not continue the old session** — when an attempt ends `failed`/`timed_out`, that attempt's session is removed immediately (orphan cleanup, logged as `orphan session deleted`) and the next retry starts a fresh session.
 - **Attempt lifecycle**: goes through `preparing_workspace` → `building_prompt` → `launching_agent` → `finishing`, with terminal states `succeeded` / `failed` / `timed_out` / `stalled` / `canceled_by_reconciliation`.
-- **Failure classification**: wall-clock timeout (`turn_timeout_ms`) → `timed_out` (`turn_timeout`); inactivity timeout (`inactivity_timeout_ms`) → `timed_out` (`inactivity_timeout`); subprocess abnormal exit → `failed`; stall (scheduler-detected) → `stalled`.
-- **Three-tier timeout model**: inactivity timeout (10min, subprocess layer, kills when stdout/stderr has no data) → wall-clock timeout (1h, absolute cap, kills when hit) → stall timeout (2h, scheduler layer, fallback for a fully stuck worker). The three tiers run independently; whichever triggers first terminates the subprocess. Inactivity and wall-clock send SIGTERM to the parent process only inside the subprocess, then escalate to a process-group SIGKILL after a 10s kill grace (matching `tasking stop`'s daemon termination cadence, see ADR 0020); stall group-kills directly via an AbortSignal at the scheduler layer.
-- **Token extraction**: accumulates `part.tokens` from the `step_finish` event of `opencode run --format json`; falls back to process-level timing when unavailable.
+- **Failure classification**: wall-clock timeout (`turn_timeout_ms`) → `timed_out` (`turn_timeout`); inactivity timeout (`inactivity_timeout_ms`) → `timed_out` (`inactivity_timeout`); a session `failed` outcome → `failed`; stall (scheduler-detected) → `stalled`.
+- **Timer matrix**: inactivity (10min, no new messages across poll cycles) → wall-clock (1h, execution budget) → stall (2h, scheduler layer). **Inactivity and wall-clock pause while waiting for approval**, when the approval budget (30min) takes over and auto-rejects on expiry. Timeouts/aborts use the interrupt ladder (`session.interrupt` → short grace → clean up residual api processes); process-group kills are gone.
+- **Token extraction**: accumulates polled message/session tokens (total = input+output+reasoning, cache reported separately); falls back to timing when unavailable.
+- **Daemon restart sweep**: at startup, persisted sessions are filtered through `session.active` and still-running ones get an `interrupt`; the task then fails into normal retry.
+- **Graceful shutdown drain**: on SIGINT/SIGTERM, after `scheduler.stop()` the daemon waits (bounded, ≤15s) for in-flight attempts to settle — the interrupt ladder first sends `interrupt` to the server to kill the server-side turn, then orphan-session cleanup runs; only on timeout does it give up and exit. This closes the zombie window where the daemon dies but the server-side turn keeps burning tokens.
+- **Jira MCP injection**: every dispatch merge-writes `mcp.servers.jira` into the workspace `.opencode/opencode.json` (other servers and skills untouched). The injected script path prefers the sibling build output and falls back to `dist/mcp/jira-server.js` when running from source; `codemode: true` puts `jira_rest`/`jira_upload_attachment` into the session's Code Mode tool catalog (directly callable by the agent, no shell fallback needed); a missing script is logged as an error by the worker and reported ✗ by doctor.
+- **Prompt size guard**: task descriptions over 40k chars are truncated (with a marker) before prompt rendering; `session.prompt` text is hard-capped at 120k chars (throws `prompt_too_large` beyond that) — prompts travel on argv via `--data`, and the guard avoids the Linux ~128KB per-argument limit (E2BIG).
 - **Workspace retention**: after a successful attempt the workspace is not deleted, for reuse by subsequent turns.
 
 Before starting the worker, three safety invariants are enforced (see below).
@@ -138,7 +145,7 @@ Additionally:
 - **hook scripts are fully trusted**: hooks in `WORKFLOW.md` run arbitrary shell via `bash -lc` in the workspace directory, bounded by `hooks.timeout_ms` (default 60s). A hook timeout produces a `hook_timeout` error category. Only version-control hooks from trusted sources.
 - **symlink safety**: `isWithinRoot` uses `realpathSync` to resolve symlinks before prefix matching, rejecting symlink escapes. workspace == root is rejected.
 - **orchestrator does not write to the tracker**: ticket changes (state transitions, comments) are done by the coding agent through its tools; the orchestrator is read-only.
-- **API tokens never enter logs**: `$VAR` indirection keeps secrets out of `WORKFLOW.md`; logs do not record token values.
+- **API tokens never enter logs**: `$VAR` indirection keeps secrets out of `WORKFLOW.md`; logs do not record token values. Commands shown on approval cards and in fallback texts are redacted the same way — `Bearer`/`Basic`/`token`/`api_key` style credential values and bare token runs ≥32 chars render as `***` (the command stays readable, the credential does not).
 
 ## Observability
 
@@ -155,6 +162,7 @@ Enabled via `--port` or `server.port`. Endpoints:
 - `GET /api/v1/<identifier>` — single issue details
 - `GET /api/v1/<identifier>/activity?limit=N` — the running task's opencode activity event stream (assistant text / tool calls / step tokens, near-live, 1 Hz poll; `tool_use` events carry the execution detail fields)
 - `POST /api/v1/refresh` — triggers an immediate poll + reconcile (returns `{queued, coalesced, operations}`)
+- `POST /api/v1/direct/:rootId/delete` — ends and cleans up the given direct session (backend for the TUI `d` key; marks done, aborts the in-flight turn, seals the card, notifies the thread, deletes the underlying opencode session and runtime; 404 when not wired or unknown)
 
 Unsupported methods return `405 Method Not Allowed`. The bind address is configured via `server.host` (default `0.0.0.0`).
 
@@ -180,4 +188,4 @@ The scheduler extends `EventEmitter`, emitting events on dispatch/workerExit/ret
 
 ## Design Origin
 
-This architecture is ported from the [Symphony](https://github.com/openai/symphony) SPEC, with three substitutions (Linear→Jira, Codex app-server→`opencode run`, Elixir→TypeScript) and one planned delta (route agent + inbox, **not implemented**). Full design decisions are in `openspec/changes/bootstrap-tasking-runtime/design.md`.
+This architecture is ported from the [Symphony](https://github.com/openai/symphony) SPEC, with three substitutions (Linear→Jira, Codex app-server→opencode v2 API, Elixir→TypeScript) and one planned delta (route agent + inbox, **not implemented**). Full design decisions are in `openspec/changes/bootstrap-tasking-runtime/design.md`.

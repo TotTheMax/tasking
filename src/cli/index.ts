@@ -21,7 +21,12 @@ import { CommentBridge } from "../bridge/comment-bridge.js";
 import { loadDotenvIfPresent } from "../config/dotenv.js";
 import { ConfigManager } from "../config/manager.js";
 import { validateStartupConfig } from "../config/validator.js";
+import { buildApprovalCard } from "../direct/card.js";
 import { DirectSessionManager } from "../direct/manager.js";
+import { defaultApiExec } from "../driver/api-client.js";
+import { ApprovalCoordinator } from "../driver/approval.js";
+import { interruptSession as interruptSessionOp, replyPermission } from "../driver/session-ops.js";
+import { collectWorkspaceSessionIds, sweepActiveSessions } from "../driver/sweep.js";
 import { ActivityStore } from "../observability/activity-store.js";
 import { type ConfigRuntimeInfo, buildConfigView } from "../observability/config-view.js";
 import { HttpDashboard } from "../observability/http-dashboard.js";
@@ -29,7 +34,13 @@ import { LogRingBuffer } from "../observability/log-buffer.js";
 import { ConsoleLogger, type Logger } from "../observability/logger.js";
 import { TerminalDashboard } from "../observability/terminal-dashboard.js";
 import { Scheduler } from "../scheduler/scheduler.js";
-import { TaskingError } from "../shared/errors.js";
+import { TaskingError, toTaskingError } from "../shared/errors.js";
+import {
+  classifyOpencodeVersion,
+  probeOpencodeAuth,
+  probeOpencodeService,
+  probeOpencodeVersion,
+} from "../shared/opencode-version.js";
 import { createInitialState } from "../shared/types.js";
 import { setLocale, setTranslateWarnLogger, translate } from "../translate/locale.js";
 import { runAttempt } from "../worker/runner.js";
@@ -193,6 +204,34 @@ async function runStart(args: string[]): Promise<number> {
     return 1;
   }
 
+  const ocVersion = probeOpencodeVersion();
+  const ocGate = ocVersion === null ? null : classifyOpencodeVersion(ocVersion);
+  if (ocVersion === null || ocGate?.hardFail) {
+    console.error(
+      ocVersion === null
+        ? "未在 PATH 找到 opencode（tasking 0.7 需要 opencode >=2.0 <3）——安装见 https://opencode.ai"
+        : ocGate?.message,
+    );
+    return 1;
+  }
+  if (ocGate?.status === "unvalidated") {
+    console.error(ocGate.message);
+  }
+  {
+    const service = probeOpencodeService();
+    if (service.status === "unreachable") {
+      console.error(
+        `opencode 服务已注册但不可达（${service.url ?? ""}）——尝试 opencode service restart；daemon 将尝试自动拉起`,
+      );
+    }
+    const auth = probeOpencodeAuth();
+    if (!auth.ok) {
+      console.error(
+        `opencode 认证探测失败（${auth.detail}）——模型调用将失败，请运行 opencode auth login`,
+      );
+    }
+  }
+
   loadDotenvIfPresent(dirname(workflowPath));
 
   const port = values.port ? Number.parseInt(values.port, 10) : undefined;
@@ -244,6 +283,133 @@ async function runStart(args: string[]): Promise<number> {
   let tracker: JiraTracker | null = null;
   let scheduler: Scheduler | null = null;
   let activityStore: ActivityStore = new ActivityStore();
+  let feishuRef: FeishuSource | null = null;
+  let bindingsRef: BindingStore | null = null;
+  const sessionIssueIndex = new Map<string, string>();
+  const jiraApprovalCards = new Map<
+    string,
+    { messageId: string; rootId: string; request: import("../driver/approval.js").ApprovalRequest }
+  >();
+  const jiraApprovalResolution = (
+    state: "replied" | "expired" | "cancelled" | "external" | "pending",
+    decision?: import("../driver/session-ops.js").PermissionDecision,
+  ):
+    | { state: "replied"; decision: "once" | "always" | "reject" }
+    | { state: "expired" | "cancelled" | "external" } =>
+    state === "replied" && (decision === "once" || decision === "always" || decision === "reject")
+      ? { state: "replied", decision }
+      : { state: state as "expired" | "cancelled" | "external" };
+  const jiraApprovalRootFor = (sessionId: string): string | null => {
+    const issueId = sessionIssueIndex.get(sessionId) ?? null;
+    const binding = issueId && bindingsRef ? bindingsRef.getBinding(issueId) : null;
+    return binding?.root_id ?? null;
+  };
+  const stampJiraApprovalCard = (requestID: string): void => {
+    void (async () => {
+      const entry = jiraApprovalCards.get(requestID);
+      const updateCard = feishuRef?.updateCard?.bind(feishuRef);
+      if (!entry || !updateCard) return;
+      const resolution = jiraApprovals.resolutionOf(requestID);
+      if (!resolution || resolution.state === "pending") return;
+      try {
+        await updateCard(
+          entry.messageId,
+          buildApprovalCard(
+            {
+              rootId: entry.rootId,
+              turn: 0,
+              requestID,
+              action: entry.request.action,
+              resources: entry.request.resources,
+              save: entry.request.save,
+            },
+            jiraApprovalResolution(resolution.state, resolution.decision),
+          ),
+        );
+        jiraApprovalCards.delete(requestID);
+      } catch (e) {
+        logger.warn("jira approval card stamp failed", {
+          request_id: requestID,
+          error: toTaskingError(e).message,
+        });
+      }
+    })();
+  };
+  const jiraApprovals = new ApprovalCoordinator({
+    replyPermission: async (sessionId, requestID, decision) => {
+      const cfg = configMgr.current;
+      await replyPermission(
+        defaultApiExec(),
+        { command: cfg.opencode.command, serverUrl: cfg.opencode.server_url },
+        sessionId,
+        requestID,
+        decision,
+      );
+    },
+    onCardRequested: (request) => {
+      void (async () => {
+        const rootId = jiraApprovalRootFor(request.sessionId);
+        const replyCard = feishuRef?.replyCardInThread.bind(feishuRef);
+        if (!rootId || !replyCard) {
+          logger.warn("jira approval has no bound topic; it will auto-reject on timeout", {
+            session_id: request.sessionId,
+            request_id: request.requestID,
+            action: request.action,
+          });
+          return;
+        }
+        try {
+          const card = buildApprovalCard({
+            rootId,
+            turn: 0,
+            requestID: request.requestID,
+            action: request.action,
+            resources: request.resources,
+            save: request.save,
+            kind: "bridge",
+          });
+          const res = await replyCard(rootId, card);
+          if (res.message_id) {
+            jiraApprovalCards.set(request.requestID, {
+              messageId: res.message_id,
+              rootId,
+              request,
+            });
+            stampJiraApprovalCard(request.requestID);
+          }
+        } catch (e) {
+          logger.warn("jira approval card send failed", {
+            request_id: request.requestID,
+            error: toTaskingError(e).message,
+          });
+        }
+      })();
+    },
+    onCardResolved: (requestID, state) => {
+      if (state === "pending") return;
+      stampJiraApprovalCard(requestID);
+    },
+  });
+  const jiraStampedApprovalCard = (requestID: string): unknown => {
+    const request = jiraApprovals.requestOf(requestID);
+    if (!request) return undefined;
+    const resolution = jiraApprovals.resolutionOf(requestID);
+    if (!resolution || resolution.state === "pending") return undefined;
+    const rootId =
+      jiraApprovalRootFor(request.sessionId) ?? jiraApprovalCards.get(requestID)?.rootId ?? "";
+    return buildApprovalCard(
+      {
+        rootId,
+        turn: 0,
+        requestID,
+        action: request.action,
+        resources: request.resources,
+        save: request.save,
+        kind: "bridge",
+      },
+      jiraApprovalResolution(resolution.state, resolution.decision),
+    );
+  };
   if (jiraEnabled) {
     tracker = new JiraTracker(configMgr.current.tracker);
     scheduler = new Scheduler({
@@ -251,15 +417,55 @@ async function runStart(args: string[]): Promise<number> {
       config: () => configMgr.current,
       logger,
       runAttemptFn: runAttempt,
+      approvalEvents: (task, event) => {
+        if (event.kind === "expired") {
+          jiraApprovals.markExpired(event.requestID);
+          return;
+        }
+        const bySession = new Map<string, typeof event.pending>();
+        for (const p of event.pending) {
+          sessionIssueIndex.set(p.sessionID, task.id);
+          const list = bySession.get(p.sessionID) ?? [];
+          list.push(p);
+          bySession.set(p.sessionID, list);
+        }
+        for (const [sessionId, pending] of bySession) {
+          jiraApprovals.ingest(sessionId, pending);
+        }
+      },
     });
     activityStore = scheduler.activityStore;
   }
+
   const trackerlessState = createInitialState(
     configMgr.current.polling.interval_ms,
     configMgr.current.agent.max_concurrent_agents,
   );
   const runtimeState = () => (scheduler !== null ? scheduler.state : trackerlessState);
   const requestRefreshFn = () => scheduler?.requestRefresh() ?? false;
+
+  const sweepIds = new Set(collectWorkspaceSessionIds(configMgr.current.workspace.root));
+  if (configMgr.current.feishu.enabled) {
+    const sweepStore = new BindingStore(join(configMgr.current.workspace.root, "bindings.db"));
+    try {
+      for (const s of sweepStore.listDirectSessionsByStatus("running")) {
+        if (s.session_id) sweepIds.add(s.session_id);
+      }
+    } finally {
+      sweepStore.close();
+    }
+  }
+  if (sweepIds.size > 0) {
+    await sweepActiveSessions({
+      exec: defaultApiExec(),
+      base: {
+        command: configMgr.current.opencode.command,
+        serverUrl: configMgr.current.opencode.server_url,
+      },
+      sessionIds: [...sweepIds],
+      logger,
+    });
+  }
 
   const daemon = new Daemon({
     configManager: configMgr,
@@ -313,11 +519,13 @@ async function runStart(args: string[]): Promise<number> {
       return 1;
     }
     const feishu = new FeishuSource(configMgr.current.feishu, logger);
+    feishuRef = feishu;
     logger.info("feishu api base", {
       edition: configMgr.current.feishu.edition,
       base: feishuApiBase(configMgr.current.feishu.edition),
     });
     bindings = new BindingStore(join(configMgr.current.workspace.root, "bindings.db"));
+    bindingsRef = bindings;
     if (configMgr.current.feishu.direct.enabled) {
       directManager = new DirectSessionManager({
         feishu,
@@ -326,7 +534,21 @@ async function runStart(args: string[]): Promise<number> {
         logger,
         activity: (key, evt) => activityStore.record(key, evt),
         clearActivity: (key) => activityStore.clear(key),
-        deleteSession: (sid) => deleteSession(sid, logger),
+        deleteSession: (sid) =>
+          deleteSession(sid, logger, {
+            command: configMgr.current.opencode.command,
+            serverUrl: configMgr.current.opencode.server_url,
+          }),
+        interruptSession: async (sid) => {
+          await interruptSessionOp(
+            defaultApiExec(),
+            {
+              command: configMgr.current.opencode.command,
+              serverUrl: configMgr.current.opencode.server_url,
+            },
+            sid,
+          );
+        },
       });
       await directManager.recover();
       directManager.start();
@@ -343,6 +565,10 @@ async function runStart(args: string[]): Promise<number> {
       requestRefresh: requestRefreshFn,
       scheduler: scheduler ?? undefined,
       direct: directManager ?? undefined,
+      approvals: {
+        reply: (requestID, decision) => jiraApprovals.reply(requestID, decision),
+        stampedCard: (requestID) => jiraStampedApprovalCard(requestID),
+      },
     });
     if (values.fresh) {
       const reconciled = await bridge.freshStartReset();
@@ -403,6 +629,9 @@ async function runStart(args: string[]): Promise<number> {
           output_tokens: 0,
           total_tokens: 0,
         },
+      permissionTimeoutMs: () => configMgr.current.opencode.permission_timeout_ms,
+      deleteDirectSession: (rootId) =>
+        directManager ? directManager.deleteSessionByRoot(rootId, "TUI") : Promise.resolve(false),
     });
     actualPort = await dashboard.start();
     const host = configMgr.current.server.host;
@@ -439,13 +668,25 @@ async function runStart(args: string[]): Promise<number> {
           output_tokens: 0,
           total_tokens: 0,
         },
+      permissionTimeoutMs: () => configMgr.current.opencode.permission_timeout_ms,
+      deleteDirectSession: (rootId) =>
+        directManager ? directManager.deleteSessionByRoot(rootId, "TUI") : Promise.resolve(false),
     });
     tui.start(1000);
   }
 
   const shutdown = async (sig: string) => {
     logger.info("received signal, shutting down", { signal: sig });
-    if (scheduler !== null) scheduler.stop();
+    if (scheduler !== null) {
+      scheduler.stop();
+      await Promise.race([
+        scheduler.drain(15000),
+        new Promise((resolve) => {
+          const t = setTimeout(resolve, 16000);
+          t.unref?.();
+        }),
+      ]);
+    }
     if (bridge) bridge.stop();
     if (directManager) {
       directManager.stop();
@@ -834,6 +1075,15 @@ async function runTui(args: string[]): Promise<number> {
     logger,
     dashboardUrl,
     logBuffer,
+    deleteDirectSession: async (rootId: string) => {
+      const res = await fetch(
+        `http://${displayHost}:${port}/api/v1/direct/${encodeURIComponent(rootId)}/delete`,
+        { method: "POST" },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { ok?: boolean };
+      return json.ok === true;
+    },
   });
 
   tui.start(1000);

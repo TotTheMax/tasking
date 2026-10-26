@@ -1,0 +1,11 @@
+{
+  "data": {
+    "id": "ses_ebbff62bcffeUnTka3kVCTz0H8",
+    "projectID": "e6046fee478105887837a3de4592fd4d4df0b01b",
+    "model": { "id": "deepseek-v4.1-flash-free", "providerID": "opencode", "variant": "default" },
+    "cost": 0,
+    "tokens": { "input": 0, "output": 0, "reasoning": 0, "cache": { "read": 0, "write": 0 } },
+    "time": { "created": 1792142253383, "updated": 1792142253383 },
+    "location": { "directory": "/tmp/opencode/fixcap/work" }
+  }
+}

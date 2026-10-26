@@ -206,4 +206,40 @@ describe("dictionary integrity guards", () => {
       );
     }
   });
+
+  it("keeps every catch-all (^(.*)$) rule at the tail so later rules stay reachable", () => {
+    const first = PATTERNS.findIndex((rule) => rule.re.source === "^(.*)$");
+    if (first === -1) return;
+    const after = PATTERNS.slice(first).filter((rule) => rule.re.source !== "^(.*)$");
+    expect(
+      after.map((r) => r.re.source),
+      "rules after a catch-all are unreachable",
+    ).toEqual([]);
+  });
+
+  it("translates the opencode v2 gate and approval surfaces (reachability)", () => {
+    setLocale("en");
+    expect(
+      translate("服务已注册但不可达（http://127.0.0.1:1）——尝试 opencode service restart"),
+    ).toBe(
+      "Service is registered but unreachable (http://127.0.0.1:1) — try opencode service restart",
+    );
+    expect(
+      translate(
+        "opencode 版本不支持：检测到 3.0.0，tasking 0.7 需要 opencode >=2.0 <3，请运行 opencode upgrade --major 升级",
+      ),
+    ).toBe(
+      "Unsupported opencode version: found 3.0.0; tasking 0.7 needs opencode >=2.0 <3 — run opencode upgrade --major",
+    );
+    expect(translate(" · ⏳ 等待审批（剩 30m）")).toBe(" · ⏳ waiting for approval (30m left)");
+    expect(
+      translate("🔐 等待审批：shell echo x（当前客户端不支持卡片，30 分钟未处理将自动拒绝）"),
+    ).toBe(
+      "🔐 Waiting for approval: shell echo x (this client does not support cards; auto-reject in 30 minutes)",
+    );
+    // No untranslated Han should survive on the single-line gate message.
+    expect(translate("无已认证 provider（opencode auth login）")).toBe(
+      "No authenticated provider (run opencode auth login)",
+    );
+  });
 });

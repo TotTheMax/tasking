@@ -2,6 +2,7 @@ import type { ConfigManager } from "../config/manager.js";
 import { validateStartupConfig } from "../config/validator.js";
 import type { Logger } from "../observability/logger.js";
 import { TaskingError, toTaskingError } from "../shared/errors.js";
+import { readTaskingVersion } from "./version.js";
 
 export interface DaemonOptions {
   configManager: ConfigManager;
@@ -56,7 +57,10 @@ export class Daemon {
     });
 
     this.running = true;
-    this.logger.info("daemon started", { workflow: this.configManager.workflowPath });
+    this.logger.info("daemon started", {
+      workflow: this.configManager.workflowPath,
+      tasking_version: readTaskingVersion(),
+    });
 
     this.scheduleTick(0);
     return 0;

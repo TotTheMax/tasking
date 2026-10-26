@@ -13,6 +13,15 @@ import { JiraTracker } from "../adapters/jira/tracker.js";
 import type { FeishuConfig, TrackerConfig } from "../config/config-types.js";
 import { loadDotenvIfPresent } from "../config/dotenv.js";
 import { ConfigManager } from "../config/manager.js";
+import { getMcpServerScriptPath } from "../mcp/inject.js";
+import {
+  type OpencodeAuthProbe,
+  type OpencodeServiceProbe,
+  classifyOpencodeVersion,
+  probeOpencodeAuth,
+  probeOpencodeService,
+  probeOpencodeVersion,
+} from "../shared/opencode-version.js";
 import { setLocale, translate } from "../translate/locale.js";
 import { readTaskingVersion } from "./version.js";
 import { resolveWorkflowPathOrReport } from "./workflow-path.js";
@@ -28,6 +37,9 @@ interface DoctorItem {
 export interface DoctorDeps {
   fetchImpl?: typeof fetch;
   opencodeVersion?: () => string | null;
+  opencodeService?: () => OpencodeServiceProbe;
+  opencodeAuth?: () => OpencodeAuthProbe;
+  mcpScriptPath?: () => string;
 }
 
 const ICONS: Record<DoctorStatus, string> = {
@@ -36,17 +48,6 @@ const ICONS: Record<DoctorStatus, string> = {
   skip: "−",
   info: "·",
 };
-
-function defaultOpencodeVersion(): string | null {
-  try {
-    const res = spawnSync("opencode", ["--version"], { timeout: 5000, encoding: "utf8" });
-    if (res.status !== 0 || res.error !== undefined) return null;
-    const text = `${res.stdout ?? ""}${res.stderr ?? ""}`.trim();
-    return text === "" ? "unknown" : (text.split("\n")[0] ?? "unknown");
-  } catch {
-    return null;
-  }
-}
 
 function probeToItem(prefix: string, item: ProbeItem): DoctorItem {
   const status: DoctorStatus =
@@ -62,7 +63,7 @@ export async function runDoctor(
   workflowPath?: string,
 ): Promise<number> {
   output.write(`tasking ${readTaskingVersion()}\n`);
-  const opencodeVersion = deps.opencodeVersion ?? defaultOpencodeVersion;
+  const opencodeVersion = deps.opencodeVersion ?? probeOpencodeVersion;
   const items: DoctorItem[] = [];
 
   const resolvedPath = resolveWorkflowPathOrReport(cwd, workflowPath, (message) =>
@@ -176,6 +177,16 @@ export async function runDoctor(
     }
 
     if (tracker) {
+      const mcpScript = deps.mcpScriptPath?.() ?? getMcpServerScriptPath();
+      if (existsSync(mcpScript)) {
+        items.push({ name: "Jira MCP 脚本", status: "pass", detail: mcpScript });
+      } else {
+        items.push({
+          name: "Jira MCP 脚本",
+          status: "fail",
+          detail: `未找到（${mcpScript}）——agent 无法使用 Jira MCP 工具；先 npm run build`,
+        });
+      }
       try {
         const jira = new JiraTracker(tracker, deps.fetchImpl);
         const info = await jira.fetchServerInfo({ timeoutMs: 5000 });
@@ -189,15 +200,44 @@ export async function runDoctor(
   }
 
   const ocVersion = opencodeVersion();
-  items.push(
-    ocVersion === null
-      ? {
-          name: "opencode",
+  if (ocVersion === null) {
+    items.push({
+      name: "opencode",
+      status: "fail",
+      detail: "未在 PATH 找到 opencode——安装见 https://opencode.ai",
+    });
+  } else {
+    const gate = classifyOpencodeVersion(ocVersion);
+    items.push({
+      name: "opencode 版本",
+      status: gate.hardFail ? "fail" : "pass",
+      detail: gate.message ?? `在 PATH（${gate.normalized ?? ocVersion}）`,
+    });
+    if (!gate.hardFail) {
+      const service = (deps.opencodeService ?? probeOpencodeService)();
+      if (service.status === "running") {
+        items.push({ name: "opencode 服务", status: "pass", detail: service.url ?? "" });
+      } else if (service.status === "unreachable") {
+        items.push({
+          name: "opencode 服务",
           status: "fail",
-          detail: "未在 PATH 找到 opencode——安装见 https://opencode.ai",
-        }
-      : { name: "opencode", status: "pass", detail: `在 PATH（${ocVersion}）` },
-  );
+          detail: `服务已注册但不可达（${service.url ?? ""}）——尝试 opencode service restart`,
+        });
+      } else {
+        items.push({
+          name: "opencode 服务",
+          status: "info",
+          detail: "后台服务未运行——daemon 启动时会自动拉起",
+        });
+      }
+      const auth = (deps.opencodeAuth ?? probeOpencodeAuth)();
+      items.push({
+        name: "opencode 认证",
+        status: auth.ok ? "pass" : "fail",
+        detail: auth.ok ? auth.detail : `${auth.detail}——模型调用将失败`,
+      });
+    }
+  }
 
   output.write(translate("tasking doctor — 全链路只读体检\n\n"));
   for (const item of items) {

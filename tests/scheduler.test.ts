@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { EffectiveConfig } from "../src/config/config-types.js";
 import { resolveConfig } from "../src/config/resolver.js";
@@ -643,6 +643,173 @@ describe("session ID propagation", () => {
     }
   });
 
+  it("drain() on shutdown lets the aborted attempt settle and delete its session", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 1;
+      const task = makeTask({ id: "1", state: "In Progress" });
+      const tracker = mockTracker([task]);
+      const runFn = (async (opts: { signal?: AbortSignal }) => {
+        await new Promise<void>((resolve) => {
+          opts.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return {
+          status: "failed",
+          error: "aborted",
+          usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+          session_id: "ses_shutdown1",
+          started_at: Date.now(),
+          ended_at: Date.now(),
+        };
+      }) as never;
+      const calls: string[][] = [];
+      const apiExec = (async (args: string[]) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+      }) as never;
+      const sched = new Scheduler({
+        tracker,
+        config: () => config,
+        logger,
+        runAttemptFn: runFn,
+        apiExec,
+      });
+      const tickPromise = sched.tick();
+      const waitForRunning = async (): Promise<void> => {
+        for (let i = 0; i < 200 && sched.state.running.size === 0; i++) {
+          await new Promise((r) => setTimeout(r, 10));
+        }
+      };
+      await waitForRunning();
+      expect(sched.state.running.size).toBe(1);
+      sched.stop();
+      await sched.drain(5000);
+      await tickPromise;
+      expect(sched.state.running.size).toBe(0);
+      expect(calls.find((a) => a.includes("session.remove"))?.at(-1)).toBe(
+        "sessionID=ses_shutdown1",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("sweeps terminal workspaces periodically even if the task left running earlier", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 1;
+      const done = makeTask({ id: "9", identifier: "ENG-9", state: "Done" });
+      const active: Task[] = [];
+      const tracker = mockTracker(active);
+      let sweepSeen = 0;
+      (tracker as { fetchIssuesByStates: unknown }).fetchIssuesByStates = async () => {
+        sweepSeen++;
+        return [done];
+      };
+      const wsPath = resolveWorkspacePath(done.identifier, config.workspace.root);
+      mkdirSync(dirname(wsPath), { recursive: true });
+      mkdirSync(wsPath, { recursive: true });
+      const sched = new Scheduler({
+        tracker,
+        config: () => config,
+        logger,
+        runAttemptFn: (async () => ({
+          status: "succeeded",
+          error: null,
+          usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+          session_id: null,
+          started_at: Date.now(),
+          ended_at: Date.now(),
+        })) as never,
+      });
+      for (let i = 0; i < 9; i++) await sched.tick();
+      expect(existsSync(wsPath)).toBe(true);
+      expect(sweepSeen).toBe(0);
+      await sched.tick();
+      expect(sweepSeen).toBe(1);
+      expect(existsSync(wsPath)).toBe(false);
+      sched.stop();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes the orphan opencode session when a failed attempt will be retried fresh", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 1;
+      const task = makeTask({ id: "1", state: "In Progress" });
+      const tracker = mockTracker([task]);
+      const runFn = (async () => ({
+        status: "failed",
+        error: "boom",
+        usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+        session_id: "ses_orphan1",
+        started_at: Date.now(),
+        ended_at: Date.now(),
+      })) as never;
+      const calls: string[][] = [];
+      const apiExec = (async (args: string[]) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+      }) as never;
+      const sched = new Scheduler({
+        tracker,
+        config: () => config,
+        logger,
+        runAttemptFn: runFn,
+        apiExec,
+      });
+      await sched.tick();
+      await new Promise((r) => setTimeout(r, 30));
+      const remove = calls.find((a) => a.includes("session.remove"));
+      expect(remove).toBeDefined();
+      expect(remove?.[remove.length - 1]).toBe("sessionID=ses_orphan1");
+      sched.stop();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the session when an attempt succeeds (continuation reuses it)", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 1;
+      const task = makeTask({ id: "1", state: "In Progress" });
+      const tracker = mockTracker([task]);
+      const runFn = (async () => ({
+        status: "succeeded",
+        error: null,
+        usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+        session_id: "ses_keep1",
+        started_at: Date.now(),
+        ended_at: Date.now(),
+      })) as never;
+      const calls: string[][] = [];
+      const apiExec = (async (args: string[]) => {
+        calls.push(args);
+        return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+      }) as never;
+      const sched = new Scheduler({
+        tracker,
+        config: () => config,
+        logger,
+        runAttemptFn: runFn,
+        apiExec,
+      });
+      await sched.tick();
+      await new Promise((r) => setTimeout(r, 30));
+      expect(calls.find((a) => a.includes("session.remove"))).toBeUndefined();
+      sched.stop();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("passes null session_id on stalled retry", async () => {
     const root = tempRoot();
     try {
@@ -658,6 +825,111 @@ describe("session ID propagation", () => {
       await sched.reconcileRunningIssues();
       const retryEntry = sched.state.retry_attempts.get(task.id);
       expect(retryEntry?.session_id).toBeNull();
+      sched.stop();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shares one seen-message map across a task's attempts (continuation dedup)", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 1;
+      const task = makeTask({ id: "dedup-1", state: "In Progress" });
+      const tracker = mockTracker([task]);
+      const maps: Array<Map<string, string> | undefined> = [];
+      const runFn = (async (opts: { seenMessages?: Map<string, string> }) => {
+        maps.push(opts.seenMessages);
+        return {
+          status: "succeeded",
+          error: null,
+          usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+          session_id: "ses_dedup",
+          started_at: Date.now(),
+          ended_at: Date.now(),
+        };
+      }) as never;
+      vi.useFakeTimers();
+      const sched = new Scheduler({ tracker, config: () => config, logger, runAttemptFn: runFn });
+      await sched.tick();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(maps.length).toBeGreaterThanOrEqual(2);
+      expect(maps[0]).toBeDefined();
+      expect(maps[1]).toBe(maps[0]);
+      sched.stop();
+      vi.useRealTimers();
+    } finally {
+      vi.useRealTimers();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("approvalEvents carry the task id (binding lookups need issue_id)", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 1;
+      config.opencode.permission_timeout_ms = 600000;
+      const task = makeTask({ id: "10101", state: "In Progress" });
+      const tracker = mockTracker([task]);
+      const seen: Array<{ id: string; identifier: string }> = [];
+      const runFn = (async (opts: {
+        onPendingPermissions?: (p: unknown[]) => void;
+      }) => {
+        opts.onPendingPermissions?.([
+          { id: "per_x", sessionID: "ses_x", action: "shell", resources: ["echo x"] },
+        ]);
+        return {
+          status: "succeeded",
+          error: null,
+          usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+          session_id: "ses_x",
+          started_at: Date.now(),
+          ended_at: Date.now(),
+        };
+      }) as never;
+      const sched = new Scheduler({
+        tracker,
+        config: () => config,
+        logger,
+        runAttemptFn: runFn,
+        approvalEvents: (t, _event) => {
+          seen.push(t);
+        },
+      });
+      await sched.tick();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(seen[0]?.id).toBe("10101");
+      expect(seen[0]?.identifier).toBe("ENG-1");
+      sched.stop();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not terminate a run waiting for approval (stall skips it)", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 1;
+      config.opencode.stall_timeout_ms = 1;
+      const task = makeTask({ id: "1", state: "In Progress" });
+      const tracker = mockTracker([task]);
+      const neverResolve = () => new Promise(() => {});
+      const sched = makeScheduler(tracker, config, undefined, neverResolve as never);
+      await sched.tick();
+      const entry = sched.state.running.get(task.id);
+      expect(entry).toBeDefined();
+      if (entry) {
+        entry.waiting_approval = true;
+        entry.waiting_since = Date.now();
+        entry.last_event_at = Date.now() - 10_000;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      await sched.reconcileRunningIssues();
+      expect(sched.state.running.get(task.id)).toBeDefined();
+      expect(sched.state.retry_attempts.get(task.id)).toBeUndefined();
       sched.stop();
     } finally {
       rmSync(root, { recursive: true, force: true });

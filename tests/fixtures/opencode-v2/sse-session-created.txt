@@ -1,0 +1,6 @@
+data: {"id":"evt_139db62c90012WfjYBIq1zYoIn","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_139db6aa0001xVmWyY5iJC7w7P","created":1791972043424,"type":"session.created","location":{"directory":"/tmp/opencode/sandbox-proj"},"data":{"sessionID":"ses_ec6249563ffeTSI6L2SzQ2wnBv","slug":"neon-squid","version":"2.0.29","projectID":"3812d4e55569cd47d2ee782bca1ad781c95da7fa","location":{"directory":"/tmp/opencode/sandbox-proj"},"subpath":"","title":"spike"},"durable":{"aggregateID":"ses_ec6249563ffeTSI6L2SzQ2wnBv","seq":0,"version":1}}
+

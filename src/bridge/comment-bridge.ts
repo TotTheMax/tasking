@@ -85,6 +85,13 @@ export interface CommentBridgeDeps {
   requestRefresh?: () => boolean;
   scheduler?: SchedulerPort;
   direct?: DirectSessionPort;
+  approvals?: {
+    reply(
+      requestID: string,
+      decision: import("../driver/session-ops.js").PermissionDecision,
+    ): Promise<import("../driver/approval.js").ReplyOutcome>;
+    stampedCard?: (requestID: string) => unknown;
+  };
   retryDelaysMs?: number[];
 }
 
@@ -126,9 +133,38 @@ export class CommentBridge {
       transition_id?: unknown;
       transition_name?: unknown;
       agent?: unknown;
+      request_id?: unknown;
     };
     const name = typeof value.action === "string" ? value.action : "";
     if (name === "") return undefined;
+    if (name === "approve_once" || name === "approve_always" || name === "approve_reject") {
+      if (!this.deps.approvals) {
+        return { toast: { type: "warning", content: "审批通道未就绪" } };
+      }
+      if (!this.claimCardAction(action)) {
+        return { toast: { type: "info", content: "该操作已处理" } };
+      }
+      const requestID = typeof value.request_id === "string" ? value.request_id : "";
+      if (requestID === "") {
+        return { toast: { type: "error", content: "审批单标识缺失，无法处理" } };
+      }
+      const decision =
+        name === "approve_once" ? "once" : name === "approve_always" ? "always" : "reject";
+      const outcome = await this.deps.approvals.reply(requestID, decision);
+      const toast =
+        outcome === "replied"
+          ? { type: "success" as const, content: decision === "reject" ? "已拒绝" : "已允许" }
+          : outcome === "already"
+            ? { type: "info" as const, content: "该审批已处理" }
+            : outcome === "unknown"
+              ? { type: "warning" as const, content: "审批单不存在或已过期" }
+              : { type: "error" as const, content: "审批提交失败，请重试" };
+      const card =
+        outcome === "replied" || outcome === "already"
+          ? this.deps.approvals.stampedCard?.(requestID)
+          : undefined;
+      return { toast, ...(card !== undefined ? { card } : {}) };
+    }
     if (BRIDGE_JIRA_CARD_ACTIONS.has(name) && this.jiraTracker === null) {
       return { toast: { type: "warning", content: "该操作需要 Jira 任务源" } };
     }

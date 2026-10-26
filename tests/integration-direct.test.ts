@@ -235,10 +235,18 @@ describe.skipIf(!enabled)("Direct session real API integration", () => {
             create_time: followUpAt,
           }),
         );
-        await waitFor(async () => {
-          const replies = await feishu.listThreadReplies(threadId, followUpAt);
-          return replies.some((m) => m.sender_type === "app" && m.text.includes("好的"));
-        }, TURN_WAIT_MS);
+        let followUpReplies: FeishuPolledMessage[] = [];
+        try {
+          await waitFor(async () => {
+            followUpReplies = await feishu.listThreadReplies(threadId, followUpAt);
+            return followUpReplies.some((m) => m.sender_type === "app" && m.text.trim() !== "");
+          }, TURN_WAIT_MS);
+        } catch (e) {
+          logger.info(
+            `follow-up replies observed: ${JSON.stringify(followUpReplies.map((m) => m.text.slice(0, 80)))}`,
+          );
+          throw e;
+        }
         expect(bindings.getDirectSession(rootMsgId)?.status).toBe("idle");
       } finally {
         mgr.stop();

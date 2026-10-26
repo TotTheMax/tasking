@@ -99,7 +99,7 @@ hooks:
 # agent: concurrency & retry policy
 # ============================================================================
 agent:
-  # Global concurrency cap. At most this many opencode run subprocesses run simultaneously.
+  # Global concurrency cap. At most this many opencode sessions run simultaneously.
   max_concurrent_agents: 10
 
   # Turn limit within a single worker. When reached, the worker exits and the scheduler schedules a continuation retry.
@@ -113,11 +113,11 @@ agent:
   max_concurrent_agents_by_state: {}
 
 # ============================================================================
-# opencode: worker subprocess configuration
+# opencode: driver configuration
 # ============================================================================
 opencode:
-  # opencode launch command. Default "opencode run".
-  command: opencode run
+  # opencode launch command. Default "opencode" (driven through opencode api).
+  command: opencode
 
   # opencode agent profile name.
   agent: build
@@ -126,10 +126,10 @@ opencode:
   # Empty array (default) = no validation, any `agent:<name>` passes through; non-empty = advisory validation, unknown names warn and fall back to the default. Not a hard allowlist.
   agents: []
 
-  # Optional. opencode model (provider/model format), maps to `--model`. Default null (unset; uses opencode's default model).
+  # Optional. opencode model (provider/model format), maps to `Model.Ref.id`. Default null (unset; uses opencode's default model).
   model: null
 
-  # Optional. Model variant (provider-specific reasoning effort such as high/max/minimal), maps to `--variant`. Default null (unset). Independent of model.
+  # Optional. Model variant (provider-specific reasoning effort such as high/max/minimal), maps to `Model.Ref.variant`. Default null (unset). Independent of model.
   variant: null
 
   # Per-turn timeout (ms). Default 3600000 = 1 hour. Must be > 0.
@@ -217,7 +217,7 @@ feishu:
     # Directory-prefix allow-list for ad-hoc path mode (`/chat /abs/path <msg>`); empty = unrestricted.
     path_roots: []
 
-    # true = pass --auto to opencode run (auto-approve permissions not explicitly denied).
+    # true = session-level allow-all permissions ruleset (overrides workspace ask; workspace deny still applies).
     # Default false: the permission stance comes from the target directory's own .opencode config.
     auto_approve: false
 

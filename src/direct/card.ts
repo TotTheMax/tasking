@@ -1,3 +1,4 @@
+import { redactSecrets } from "../shared/redact.js";
 import { translate } from "../translate/locale.js";
 
 export type TurnCardPhase =
@@ -24,10 +25,12 @@ export interface TurnCardToolEvent {
 
 export interface TurnCardState {
   rootId: string;
+  waitingRemainingMs?: number | null;
   sessionName: string;
   sessionStatus: TurnCardSessionStatus;
   turns: number;
   totalTokens: number;
+  contextTokens?: number;
   queued: number;
   turn: number;
   phase: TurnCardPhase;
@@ -120,10 +123,14 @@ export function isFailed(evt: TurnCardToolEvent): boolean {
 
 export function toolSummary(evt: TurnCardToolEvent): string {
   if (typeof evt.title === "string" && evt.title.trim() !== "") return evt.title;
-  const command = evt.input?.command;
+  const input = evt.input;
+  if (input === undefined) return "";
+  const command = input.command;
   if (typeof command === "string" && command.trim() !== "") return command;
-  const filePath = evt.input?.filePath;
-  if (typeof filePath === "string" && filePath !== "") return filePath;
+  const path = input.path ?? input.filePath;
+  if (typeof path === "string" && path !== "") return path;
+  const pattern = input.pattern;
+  if (typeof pattern === "string" && pattern !== "") return pattern;
   return "";
 }
 
@@ -259,6 +266,17 @@ function renderFooter(state: TurnCardState): Array<Record<string, unknown>> {
   ];
 }
 
+function renderWaitingMarker(state: TurnCardState): string {
+  if (state.waitingRemainingMs === undefined || state.waitingRemainingMs === null) return "";
+  const mins = Math.max(0, Math.round(state.waitingRemainingMs / 60000));
+  return translate(` · ⏳ 等待审批（剩 ${mins}m）`);
+}
+
+function renderContextMarker(state: TurnCardState): string {
+  if (state.contextTokens === undefined || state.contextTokens <= 0) return "";
+  return ` · ctx ≈${formatTokens(state.contextTokens)}`;
+}
+
 function renderPostureMarker(state: TurnCardState): string {
   const agent = state.agentOverride ? ` · 🧠 ${state.agentOverride}` : "";
   const posture =
@@ -327,7 +345,7 @@ function renderCard(state: TurnCardState, levels: number[]): Record<string, unkn
       template: "blue",
       title: {
         tag: "plain_text",
-        content: `📁 ${state.sessionName} · ${translate(SESSION_STATUS_LABEL[state.sessionStatus])} · ${state.turns} turn${state.turns === 1 ? "" : "s"} · ≈${formatTokens(state.totalTokens)}${queuePart}${renderPostureMarker(state)}`,
+        content: `📁 ${state.sessionName} · ${translate(SESSION_STATUS_LABEL[state.sessionStatus])} · ${state.turns} turn${state.turns === 1 ? "" : "s"} · ≈${formatTokens(state.totalTokens)}${renderContextMarker(state)}${queuePart}${renderWaitingMarker(state)}${renderPostureMarker(state)}`,
       },
     },
     body: { elements },
@@ -350,4 +368,88 @@ export function buildTurnCard(state: TurnCardState): unknown {
     }
   }
   return card;
+}
+
+export interface ApprovalCardRequest {
+  rootId: string;
+  turn: number;
+  requestID: string;
+  action: string;
+  resources: string[];
+  save?: string[];
+  kind?: "bridge" | "direct";
+}
+
+export type ApprovalCardResolution =
+  | { state: "replied"; decision: "once" | "always" | "reject" }
+  | { state: "expired" | "cancelled" | "external" };
+
+function approvalButton(
+  label: string,
+  action: string,
+  req: ApprovalCardRequest,
+  type: "default" | "primary" | "danger" = "default",
+): Record<string, unknown> {
+  return {
+    tag: "button",
+    text: { tag: "plain_text", content: label },
+    type,
+    size: "medium",
+    behaviors: [
+      {
+        type: "callback",
+        value: {
+          action,
+          root_id: req.rootId,
+          turn: req.turn,
+          request_id: req.requestID,
+          ...(req.kind ? { kind: req.kind } : {}),
+        },
+      },
+    ],
+  };
+}
+
+const APPROVAL_STAMP: Record<string, string> = {
+  "replied:once": "✅ 已允许",
+  "replied:always": "♾️ 已始终允许",
+  "replied:reject": "❌ 已拒绝",
+  expired: "⏰ 超时已拒绝",
+  cancelled: "⛔ 已随任务中断",
+  external: "☑️ 已自动处理",
+};
+
+export function buildApprovalCard(
+  req: ApprovalCardRequest,
+  resolution?: ApprovalCardResolution,
+): Record<string, unknown> {
+  const resources = req.resources.map((r) => `\`${redactSecrets(r)}\``).join(" · ");
+  const saveNote =
+    req.save && req.save.length > 0
+      ? `${translate("\n始终允许将按模式保存：")}${req.save.map((p) => redactSecrets(p)).join("、")}`
+      : "";
+  const elements: Array<Record<string, unknown>> = [
+    {
+      tag: "markdown",
+      content: `🔐 **等待审批** · ${req.action}\n${resources}${saveNote}`,
+    },
+  ];
+  if (resolution) {
+    const key =
+      resolution.state === "replied" ? `replied:${resolution.decision}` : resolution.state;
+    elements.push({ tag: "markdown", content: `— ${APPROVAL_STAMP[key] ?? "已处理"} —` });
+  } else {
+    elements.push(approvalButton("✅ 允许一次", "approve_once", req, "primary"));
+    elements.push(approvalButton("♾️ 始终允许", "approve_always", req));
+    elements.push(approvalButton("✖ 拒绝", "approve_reject", req, "danger"));
+  }
+  return {
+    schema: "2.0",
+    config: { update_multi: true },
+    header: {
+      title: { tag: "plain_text", content: "权限审批" },
+      template: "blue",
+    },
+    body: { elements },
+  };
 }

@@ -1,5 +1,7 @@
 # 三层超时模型
 
+> **0.7 更新**：worker 已改为经 `opencode api` 驱动 v2 会话（ADR 0035），不再有子进程与进程组击杀；超时/中止走中断梯子（`session.interrupt` → 短宽限 → 清理残留 api 进程）。下列“子进程层/进程组 SIGKILL”的机制描述对应 0.6.x（`support/v1` 分支）；v2 的计时器矩阵见 [架构](./architecture.md) 与 ADR 0037。
+
 tasking worker 子进程（`opencode run`）使用三层超时保护，各层独立运行，先触发者先终止子进程。子进程层的超时终止带升级：SIGTERM 优雅退出 → 10s 宽限（kill grace）→ 进程组 SIGKILL 硬杀（见 ADR 0020）。
 
 ## 模型总览

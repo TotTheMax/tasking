@@ -1,6 +1,6 @@
 {
   "name": "@tothemax/tasking",
-  "version": "0.6.19",
+  "version": "0.7.0",
   "description": "A TypeScript CLI daemon that orchestrates opencode coding-agent work from Jira (structured) and Feishu (unstructured) task sources.",
   "type": "module",
   "license": "MIT",
@@ -45,9 +45,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "vitest run tests/e2e.test.ts tests/bridge-flow.test.ts tests/trackerless.test.ts",
-    "test:integration": "INTEGRATION=1 vitest run tests/integration-real.test.ts tests/integration-direct.test.ts",
+    "test:integration": "INTEGRATION=1 vitest run tests/integration-real.test.ts tests/integration-direct.test.ts tests/integration-opencode-v2.test.ts",
     "prepublishOnly": "npm run build",
-    "test:event-flow": "INTEGRATION=1 vitest run tests/integration-event-flow.test.ts"
+    "test:event-flow": "INTEGRATION=1 vitest run tests/integration-event-flow.test.ts",
+    "test:card-smoke": "INTEGRATION=1 CARD_SMOKE=1 vitest run tests/integration-card-smoke.test.ts",
+    "test:direct-approval": "INTEGRATION=1 DIRECT_APPROVAL=1 vitest run tests/integration-direct-approval.test.ts",
+    "test:jira-worker": "INTEGRATION=1 JIRA_WORKER=1 vitest run tests/integration-jira-worker.test.ts",
+    "test:jira-approval": "INTEGRATION=1 JIRA_APPROVAL=1 vitest run tests/integration-jira-approval.test.ts"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.73.0",
@@ -57,6 +61,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@opencode/client": "2.0.29",
+    "@opencode/sdk": "2.0.29",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^2.1.9",

@@ -182,7 +182,7 @@ export const EXACT: Record<string, string> = {
   "🔐 权限姿态": "🔐 Permission posture",
   "🔒 恢复默认": "🔒 Restore default",
   "🔒 默认": "🔒 Default",
-  "🔒 默认（不传 --auto）": "🔒 Default (no --auto)",
+  "🔒 默认（跟随项目配置）": "🔒 Default (follows project config)",
   "🔓 本会话放开": "🔓 Unlock this session",
   "🔓 收回": "🔓 Re-lock",
   "🔓 已放开本会话权限（下一轮生效）。目标仓库自身的 deny 规则仍然生效；/auto reset 可恢复。":
@@ -367,6 +367,7 @@ export const EXACT: Record<string, string> = {
   "intake 群可达": "intake group reachable",
   "intake_chat_id 未配置": "intake_chat_id is not configured",
   "Jira 连接": "Jira connection",
+  "Jira MCP 脚本": "Jira MCP script",
   "Language of the generated WORKFLOW.md comments and guidance. Press enter for 中文.":
     "Language of the generated WORKFLOW.md comments and guidance. Press enter for 中文.",
   "🆕 已开启新会话：上下文已清空（话题、目录与名称不变），旧 opencode 会话已删除。":
@@ -385,6 +386,47 @@ export const EXACT: Record<string, string> = {
     "The app may belong to the other Feishu edition (China mainland) — set feishu.edition: feishu in WORKFLOW.md",
   "若应用创建于另一版飞书（海外版 Lark），请在 WORKFLOW.md 设置 feishu.edition: lark":
     "The app may belong to the other Feishu edition (overseas Lark) — set feishu.edition: lark in WORKFLOW.md",
+  审批通道未就绪: "Approval channel is not ready",
+  "审批单标识缺失，无法处理": "Approval id is missing; cannot process",
+  已允许: "Allowed",
+  已拒绝: "Rejected",
+  该审批已处理: "This approval has already been handled",
+  审批单不存在或已过期: "The approval no longer exists or has expired",
+  "审批提交失败，请重试": "Failed to submit the approval; please retry",
+  "opencode auth list 失败": "opencode auth list failed",
+  "无已认证 provider（opencode auth login）": "No authenticated provider (run opencode auth login)",
+  "opencode 认证探测失败": "opencode auth probe failed",
+  "opencode 版本": "opencode version",
+  "opencode 服务": "opencode service",
+  "opencode 认证": "opencode auth",
+  空输出: "empty output",
+  "✅ 已允许": "✅ Allowed",
+  "♾️ 已始终允许": "♾️ Always allowed",
+  "❌ 已拒绝": "❌ Rejected",
+  "⏰ 超时已拒绝": "⏰ Timed out and rejected",
+  "⛔ 已随任务中断": "⛔ Cancelled with the turn",
+  "☑️ 已自动处理": "☑️ Auto-resolved",
+  "删除仅作用于直连会话（聚焦 Direct sessions 列表或进入其详情）":
+    "Delete only applies to direct sessions (focus the Direct sessions list or open its detail)",
+  "当前 TUI 未接入删除通道": "This TUI has no delete channel wired",
+  "正在删除…": "Deleting…",
+  "已删除会话（话题内也已结束）": "Session deleted (also ended in the topic)",
+  "删除失败（详见 daemon 日志）": "Delete failed (see daemon logs)",
+  "再按一次 d 确认删除会话：": "Press d again to confirm deleting session: ",
+  "本轮上下文已达 ≈": "This turn's context reached about",
+  "tokens；后续回复会明显变慢，建议发 /new 开新会话（目录不变、上下文清空）":
+    "tokens; later replies will get much slower; send /new for a fresh session (same directory, context cleared)",
+  已处理: "Handled",
+  "✅ 允许一次": "✅ Allow once",
+  "♾️ 始终允许": "♾️ Always allow",
+  "✖ 拒绝": "✖ Reject",
+  权限审批: "Permission approval",
+  "后台服务未运行——daemon 启动时会自动拉起":
+    "Background service is not running — the daemon will start it automatically",
+  "\n始终允许将按模式保存：": "\nAlways-allow will be saved per pattern: ",
+  "已放开本会话权限（立即生效）": "Session permissions unlocked (effective now)",
+  "未在 PATH 找到 opencode（tasking 0.7 需要 opencode >=2.0 <3）——安装见 https://opencode.ai":
+    "opencode not found on PATH (tasking 0.7 needs opencode >=2.0 <3) — see https://opencode.ai",
 };
 
 export const PATTERNS: PatternRule[] = [
@@ -582,9 +624,9 @@ export const PATTERNS: PatternRule[] = [
   },
   {
     re: new RegExp(
-      `^${normalizeTemplate('⚠️ 本轮未完成（退出码 ${result.exitCode}，${durationSec}s）。${stats.lastText ? `\n\n${truncate(stats.lastText)}` : ""}')}$`,
+      `^${normalizeTemplate('⚠️ 本轮未完成（${result.error ?? result.status}，${durationSec}s）。${stats.lastText ? `\n\n${truncate(stats.lastText)}` : ""}')}$`,
     ),
-    en: "⚠️ This turn did not complete (exit code $1, $2s).$3",
+    en: "⚠️ This turn did not complete ($1, $2s).$3",
   },
   {
     re: new RegExp(
@@ -603,6 +645,12 @@ export const PATTERNS: PatternRule[] = [
   {
     re: new RegExp(`^${normalizeTemplate("未找到（${wfPath}）——先运行 tasking init")}$`),
     en: "not found ($1) — run tasking init first",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("未找到（${mcpScript}）——agent 无法使用 Jira MCP 工具；先 npm run build")}$`,
+    ),
+    en: "not found ($1) — agent cannot use Jira MCP tools; run npm run build first",
   },
   {
     re: new RegExp(
@@ -1135,6 +1183,62 @@ export const PATTERNS: PatternRule[] = [
       `^${normalizeTemplate('${ICONS[item.status]} ${translate(item.name)}${translate("：")}${translate(item.detail)}\n')}$`,
     ),
     en: "$1 $2\n",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate('服务已注册但不可达（${service.url ?? ""}）——尝试 opencode service restart')}$`,
+    ),
+    en: "Service is registered but unreachable ($1) — try opencode service restart",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate("${auth.detail}——模型调用将失败")}$`),
+    en: "$1 — model calls will fail",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate('无法识别 opencode 版本（${raw || "空输出"}），tasking 0.7 需要 opencode >=2.0 <3')}$`,
+    ),
+    en: "Unrecognized opencode version ($1); tasking 0.7 needs opencode >=2.0 <3",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("opencode 版本不支持：检测到 ${normalized}，tasking 0.7 需要 opencode >=2.0 <3，请运行 opencode upgrade --major 升级")}$`,
+    ),
+    en: "Unsupported opencode version: found $1; tasking 0.7 needs opencode >=2.0 <3 — run opencode upgrade --major",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("opencode ${normalized} 未经验证（已验证：2.${VALIDATED_MINOR}.x），如遇异常请反馈")}$`,
+    ),
+    en: "opencode $1 is not yet validated (validated: 2.$2.x); report any anomalies",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate('opencode 服务已注册但不可达（${service.url ?? ""}）——尝试 opencode service restart；daemon 将尝试自动拉起')}$`,
+    ),
+    en: "opencode service is registered but unreachable ($1) — try opencode service restart; the daemon will try to start it",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("opencode 认证探测失败（${auth.detail}）——模型调用将失败，请运行 opencode auth login")}$`,
+    ),
+    en: "opencode auth probe failed ($1) — model calls will fail; run opencode auth login",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate(" · ⏳ 等待审批（剩 ${mins}m）")}$`),
+    en: " · ⏳ waiting for approval ($1m left)",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("🔐 **等待审批** · ${req.action}\n${resources}${saveNote}")}$`,
+    ),
+    en: "🔐 **Waiting for approval** · $1\n$2",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate('🔐 等待审批：${request.action} ${request.resources.join("、")}（当前客户端不支持卡片，30 分钟未处理将自动拒绝）')}$`,
+    ),
+    en: "🔐 Waiting for approval: $1 $2 (this client does not support cards; auto-reject in 30 minutes)",
   },
   {
     re: new RegExp(`^${normalizeTemplate('${style.bold("任务来源")}')}$`),

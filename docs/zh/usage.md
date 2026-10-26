@@ -7,7 +7,7 @@
 ### 前置要求
 
 - **Node.js 22+**:在终端运行 `node --version` 确认。
-- **opencode CLI**:需在 `PATH` 上可执行 `opencode run`。安装见 [opencode.ai](https://opencode.ai)。
+- **opencode CLI**:需在 `PATH` 上可执行 **opencode v2**（`>=2.0 <3`；v1 请 `opencode upgrade --major`）。安装见 [opencode.ai](https://opencode.ai)。
 - **Jira 账号**(结构化源):需要 API token,用于 Basic auth。
 - **飞书应用**(非结构化源,可选):需要 app id/secret,用于接收 IM 消息与回复。
 
@@ -251,7 +251,7 @@ TUI 显示:
 
 1. **WORKFLOW.md 解析** — front matter 能否解析、tracker 是什么;
 2. **飞书**(仅 `feishu.enabled: true`)— 凭据换 token → 三个 scope 探针(列群/读群消息/传文件)→ intake 群可达(机器人所在群列表含 `intake_chat_id`);
-3. **Jira**(仅 `tracker.kind: jira`)— 连接测试(同 init 的 Connection Test 逻辑,只取 serverInfo);
+3. **Jira**(仅 `tracker.kind: jira`)— 连接测试(同 init 的 Connection Test 逻辑,只取 serverInfo)+ **Jira MCP 脚本**存在性(缺失报 ✗ 并提示 `npm run build`,否则任务 agent 拿不到 Jira 工具);
 4. **opencode** — 是否在 `PATH`。
 
 ```bash
@@ -319,12 +319,13 @@ feishu:
 **命令**（在 intake 群或已绑话题内发）：
 
 - `/issue <title>` + 可选第 2 行起 `<description>`：建 Jira issue（title→summary、desc→description 字段；描述可省略——仅标题的 `/issue` 也会建 issue，description 为空；project/assignee/labels 锁定复用 tracker 配置保证被拾起；type 默认 `create_issue_type`，可 `--type <name|N>` 覆盖；可 `--agent <name>` 在创建时打 `agent:<name>` 标签指定该任务使用的 agent）。`/issue` 无参列出项目可用 issueType + 默认。该命令消息即话题根。多行描述按 API 版本正确落库（v2 字符串 / v3 ADF 段落），不额外写首条 comment（ADR 0009）。
-- `/chat <project> <msg>` / `/chat /绝对路径 <msg>`：在固定目录创建 opencode 直连会话（仅 intake 群；需配置 `feishu.direct`，见下）。命令消息即话题根，首条消息为首 turn prompt；此后**直接回复该话题即续聊**（运行中追问自动排队并合并续跑），话题内 `/stop` 中断当前任务、`/done` 结束会话（并删除底层 opencode 会话，与空闲 TTL 过期一致）。每 turn 回一条完成文本；过程展示量级可配 `feishu.direct.verbosity`：`quiet`（仅正文）/ `summary`（正文+统计行）/ `detailed`（默认，为每个 turn 发一张**过程卡片**：工具调用的折叠面板、失败默认展开、头部件显示会话名/状态/累计 token，面板组件需飞书/Lark 客户端 >= V7.9，更低版本显示「请升级」占位符、可显式改回 `summary`；turn 结束时该卡被封存为纯记录，下一轮另发一张，并另发一张 **markdown 结果卡片**承载完整回答——`summary`/`quiet` 下结果仍是纯文本）。一个话题严格对应一个 opencode session，daemon 重启后从 `direct_sessions` 表恢复。`tasking stop`/Ctrl-C 会立即中止在飞的直连轮次（SIGKILL 子进程树，话题内卡片盖「已中断」章、排队中的消息丢弃）；进程被强杀（`kill -9`）来不及中止时，重启后由恢复逻辑兜底（会话标 idle 并在话题里提示重发）。活跃直连会话在 TUI 中以独立的 **Direct sessions** 区块展示，含会话名称（首条 prompt）、状态、空闲时长、token 与排队数，标题含活跃会话数 `(N)`（有 turn 在跑时 `(N · R running)`）（`←/→`/Tab 切换焦点；`Enter` 进入直连详情，`a` 复用 activity 视图；直连 token 计入首页 `Tokens:` 总额），不影响 Jira 的 running/retry 列表。直连与 Jira 路径互不影响。
-  - **轮次完成消息的构成**：它不是提示词约束、也不是二次 LLM 摘要 —— tasking 从 `opencode run --format json` 的事件流机械组装：正文 = 本 turn 最后一条 assistant `text` 事件（模型对你消息的自然回复，你的消息即 prompt，无额外模板）；末行统计（`⏱ 耗时 · 🔧 工具调用数 · ≈tokens`）来自 `tool_use`/`step_finish` 事件计数与计时；权限拒绝数来自工具 error 事件文本；超 3500 字截断。失败/超时的提示文案由 tasking 生成。
+- `/chat <project> <msg>` / `/chat /绝对路径 <msg>`：在固定目录创建 opencode 直连会话（仅 intake 群；需配置 `feishu.direct`，见下）。命令消息即话题根，首条消息为首 turn prompt；此后**直接回复该话题即续聊**（运行中追问自动排队并合并续跑），话题内 `/stop` 中断当前任务、`/done` 结束会话（并删除底层 opencode 会话，与空闲 TTL 过期一致）。每 turn 回一条完成文本；过程展示量级可配 `feishu.direct.verbosity`：`quiet`（仅正文）/ `summary`（正文+统计行）/ `detailed`（默认，为每个 turn 发一张**过程卡片**：工具调用的折叠面板、失败默认展开、头部件显示会话名/状态/累计 token，面板组件需飞书/Lark 客户端 >= V7.9，更低版本显示「请升级」占位符、可显式改回 `summary`；turn 结束时该卡被封存为纯记录，下一轮另发一张，并另发一张 **markdown 结果卡片**承载完整回答——`summary`/`quiet` 下结果仍是纯文本）。一个话题严格对应一个 opencode session，daemon 重启后从 `direct_sessions` 表恢复。`tasking stop`/Ctrl-C 会立即中止在飞的直连轮次（SIGKILL 子进程树，话题内卡片盖「已中断」章、排队中的消息丢弃）；进程被强杀（`kill -9`）来不及中止时，重启后由恢复逻辑兜底（会话标 idle 并在话题里提示重发）。活跃直连会话在 TUI 中以独立的 **Direct sessions** 区块展示，含会话名称（首条 prompt）、状态、空闲时长、token 与排队数，标题含活跃会话数 `(N)`（有 turn 在跑时 `(N · R running)`）（`←/→`/Tab 切换焦点；`Enter` 进入直连详情，`a` 复用 activity 视图；直连 token 计入首页 `Tokens:` 总额），不影响 Jira 的 running/retry 列表。直连列表或直连详情页按 `d` 可**删除会话**(两段确认:再按一次 `d` 执行,任意其他键取消;确认文案显示会话标题)——完整走 `/done` 收尾:标记 done、中断在飞轮次、封存卡片、话题内发结束通知、删除底层 opencode 会话并清运行时,话题已找不到时通知静默跳过。直连与 Jira 路径互不影响。
+  - **轮次完成消息的构成**：它不是提示词约束、也不是二次 LLM 摘要 —— tasking 从轮询到的会话消息机械组装：正文 = 本 turn 最后一条 assistant 文本消息（模型对你消息的自然回复，你的消息即 prompt，无额外模板）；末行统计（`⏱ 耗时 · 🔧 工具调用数 · ≈tokens`）来自工具条目计数、消息 token 与计时（合计口径 = input+output+reasoning，见 ADR 0037）；超 3500 字截断。失败/超时的提示文案由 tasking 生成。
 - `/chat`：列出已配置项目 + path 模式用法。
 - **直连富输入**：话题内直接发**图片/文件**（含"文字+截图"的 post 富文本）→ 下载到工作区 inbox 目录（`<workspace.root>/direct-inbox/`，单附件 ≤20MB，超限/失败会提示）并把绝对路径交给 agent——日志/CSV/代码立即有用，截图取决于模型是否具备视觉。**合并转发**消息按既有解析处理；"转发+留言"会拆成两条消息（各成一轮），需要一轮处理时先用 `/collect` 攒齐再 `/send`。
-- **直连会话内命令**：`/auto [on|once|off]`（查看/切换本会话权限姿态，下一轮生效）、`/agent <name>`、`/model <name>`（切换本会话 agent/model，`reset` 恢复配置默认）、`/collect` → `/send`（多消息收集：把多条消息（含图片/文件）合并为**一轮**提交；`/cancel` 丢弃；10 分钟无新消息自动提交；缓冲在内存，重启丢失）、`/name <文本>`（给本会话改名，用于卡片头部与 TUI；无参数回显当前名）、`/new`（清空上下文开新会话，并删除被放弃的旧 opencode 会话）、`/status`（回一张会话状态卡）、`/stop`、`/done`、`/help`。信息类命令（`/help`、`/auto` 查看、`/collect` 状态、`/agent`/`/model` 查看）以**卡片**回复，其中 `/auto` 与 `/collect` 状态卡自带操作按钮（权限开合、开始/提交/丢弃收集），点击即执行并就地刷新该卡；卡片不可用时回落纯文本。转瞬即逝的回执（如 `📥 已收集 N 条`、附件失败告警、未知命令提示）保持纯文本。这些覆盖只作用于**本会话**，不写 WORKFLOW.md、不碰目标仓库 `.opencode`，且都在**下一轮**生效。每轮启动都会在 `tasking.log` 记一行 `direct turn starting`（含 `dir`/`agent`/`model`/`auto_approve` 与完整 spawn 命令），便于逐轮核对实际传了什么。
+- **直连会话内命令**：`/auto [on|once|off]`（查看/切换本会话权限姿态，经会话级 ruleset **立即生效**）、`/agent <name>`、`/model <name>`（切换本会话 agent/model，`reset` 恢复配置默认）、`/collect` → `/send`（多消息收集：把多条消息（含图片/文件）合并为**一轮**提交；`/cancel` 丢弃；10 分钟无新消息自动提交；缓冲在内存，重启丢失）、`/name <文本>`（给本会话改名，用于卡片头部与 TUI；无参数回显当前名）、`/new`（清空上下文开新会话，并删除被放弃的旧 opencode 会话）、`/status`（回一张会话状态卡）、`/stop`、`/done`、`/help`。信息类命令（`/help`、`/auto` 查看、`/collect` 状态、`/agent`/`/model` 查看）以**卡片**回复，其中 `/auto` 与 `/collect` 状态卡自带操作按钮（权限开合、开始/提交/丢弃收集），点击即执行并就地刷新该卡；卡片不可用时回落纯文本。转瞬即逝的回执（如 `📥 已收集 N 条`、附件失败告警、未知命令提示）保持纯文本。这些覆盖只作用于**本会话**，不写 WORKFLOW.md、不碰目标仓库 `.opencode`；权限姿态经 `session.update` 即时生效。每轮启动都会在 `tasking.log` 记一行 `direct turn starting`（含 `dir`/`agent`/`model`/`auto_approve`/`session_id`/`poll_interval_ms`），便于逐轮核对实际传了什么。
 - **直连会话的卡片操作**（`verbosity: detailed`）：轮次卡片底部提供 `⏹ 中断`（仅运行中的轮）、`🔁 重试`（重跑最近一轮的 prompt）、`📄 完整输出`（把最近一轮的工具完整明细作为 `.md` 文件发到话题；上传不可用时降级为长文本，仍装不下则提示去 TUI 活动视图）、`🔐 权限`（确认行里可选「本会话放开 / 仅下一轮 / 取消」；已放开时同按钮立即收回；卡片头始终显示 `🔓 auto` / `⚡ 下轮放开` / `🧠 <agent>`）、`🛑 结束`（两步确认后结束并删除底层 opencode 会话；确认时卡片其余内容保留）。按钮与斜杠命令并存，群成员皆可操作。生命周期消息里的操作人显示为**群成员显示名**（从 intake 群成员表解析并缓存；解析失败回落 open_id）。卡片不可用时该轮过程降级为合并文本消息。
+- **同步权限审批**（0.7 新增）：当目标目录的 `.opencode` 配置把某类操作设为 `ask`、且未放开权限姿态时，agent 执行到该操作会**挂起等待**，tasking 在会话话题投放**审批卡**（`✅ 允许一次` / `♾️ 始终允许` / `✖ 拒绝`），点击即经 `session.permission.reply` 当场续跑；「始终允许」由 opencode 服务端按命令模式保存（机器级，跨会话生效）。等待预算默认 30 分钟（`opencode.permission_timeout_ms`），到点自动拒绝并盖章；卡片在回复/超时/中断后原位盖章保留。Jira 任务的审批卡投放其绑定话题（`auto_approve: false` 时生效，见 [配置](./configuration.md)）。
 - **一次性控制台配置**（`detailed` 的完整能力需要）：① 开通 `im:resource` 权限（供 `📄` 文件上传）；② 在「事件与回调」添加 `card.action.trigger` 回调（订阅方式=长连接，供按钮）。两者可在同一次「创建版本 → 发布」里完成；未配置时卡片仍可发送与更新，`📄` 降级为文本。
 - **人工验收**（按钮点击无法自动化）：`verbosity: detailed` 下发一条 `/chat`，依次点 `⏹ 中断`、`🔁 重试`、`📄 完整输出`、`🔐 权限`（确认行）、`🛑 结束`（两步确认），确认卡片状态、完成文本与操作人信息符合预期。
 - `/state`：在已绑话题内发，以**召回式**回一张**任务状态卡**（issue key + 当前状态 + 负责人，附 `🔀 转状态`、`🔄 刷新`（按实时状态原地换卡）与 `打开 Jira` 按钮）：每次发布都会先删除旧状态卡、再在话题底部发新卡，卡不会因消息堆积而找不到（再发一次 `/state` 即可拉回眼前）。点 `🔀` 会**实时**拉取当前可用转换并逐个渲染为按钮，选中后进入确认行（确认/取消），确认才写 Jira，转完即时 nudge scheduler 并刷新状态卡、在话题内广播结果（取消不产生写操作）。`/state <N|name>` 文本转状态仍然可用，与卡片按钮共用同一份转换逻辑（运行时查 Jira，不硬编码状态名）。
@@ -478,7 +479,7 @@ polling:
 agent:
   max_concurrent_agents: 5
 opencode:
-  command: opencode run
+  command: opencode
   agent: build
 ---
 你正在处理一个 Jira 任务:{{ task.identifier }}
@@ -576,7 +577,7 @@ const content = fs.readFileSync("path/to/file").toString("base64");
 
 ```yaml
 opencode:
-  command: opencode run
+  command: opencode
   agent: build              # 兜底默认
   agents: [build, review]   # 咨询性目录(可选,空则不校验)
 ```

@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TrackerConfig } from "../src/config/config-types.js";
-import { buildMcpConfig, injectMcpConfig } from "../src/mcp/inject.js";
+import { buildMcpConfig, injectMcpConfig, resolveMcpServerScriptPath } from "../src/mcp/inject.js";
 import {
   buildMultipartBody,
   executeJiraUploadAttachment,
@@ -40,11 +40,13 @@ afterEach(() => {
 });
 
 describe("buildMcpConfig", () => {
-  it("builds config with jira MCP server and env vars", () => {
+  it("builds config with jira MCP server under mcp.servers (v2)", () => {
     const config = buildMcpConfig(makeTracker({ auth_mode: "bearer", api_key: "mytoken" }));
-    const jira = (config.mcp as Record<string, unknown>).jira as Record<string, unknown>;
+    const servers = (config.mcp as Record<string, unknown>).servers as Record<string, unknown>;
+    const jira = servers.jira as Record<string, unknown>;
     expect(jira.type).toBe("local");
     expect(jira.command).toBeDefined();
+    expect(jira.codemode).toBe(true);
     const env = jira.environment as Record<string, string>;
     expect(env.JIRA_ENDPOINT).toBe("http://example.net/rest/api/2");
     expect(env.JIRA_AUTH_MODE).toBe("bearer");
@@ -53,37 +55,118 @@ describe("buildMcpConfig", () => {
 
   it("includes basic auth env vars", () => {
     const config = buildMcpConfig(makeTracker({ auth_mode: "basic", api_user: "u@e.com" }));
-    const env = ((config.mcp as Record<string, unknown>).jira as Record<string, unknown>)
-      .environment as Record<string, string>;
+    const servers = (config.mcp as Record<string, unknown>).servers as Record<string, unknown>;
+    const env = (servers.jira as Record<string, unknown>).environment as Record<string, string>;
     expect(env.JIRA_AUTH_MODE).toBe("basic");
     expect(env.JIRA_API_USER).toBe("u@e.com");
+  });
+
+  it("does not place servers directly under mcp (v2 rule)", () => {
+    const config = buildMcpConfig(makeTracker());
+    const mcp = config.mcp as Record<string, unknown>;
+    expect(mcp.servers).toBeDefined();
+    expect(mcp.jira).toBeUndefined();
+  });
+});
+
+describe("resolveMcpServerScriptPath", () => {
+  it("prefers the first candidate that exists (dist layout wins)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-resolve-"));
+    try {
+      const srcLike = join(dir, "src", "mcp", "jira-server.js");
+      const distLike = join(dir, "dist", "mcp", "jira-server.js");
+      mkdirSync(dirname(srcLike), { recursive: true });
+      mkdirSync(dirname(distLike), { recursive: true });
+      writeFileSync(distLike, "// dist", "utf8");
+
+      expect(resolveMcpServerScriptPath([srcLike, distLike])).toBe(distLike);
+      expect(resolveMcpServerScriptPath([distLike, srcLike])).toBe(distLike);
+
+      writeFileSync(srcLike, "// src", "utf8");
+      expect(resolveMcpServerScriptPath([srcLike, distLike])).toBe(srcLike);
+
+      expect(resolveMcpServerScriptPath([join(dir, "nope.js"), distLike])).toBe(distLike);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the first candidate when none exists (visible failure)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-resolve-"));
+    try {
+      const missing = join(dir, "missing.js");
+      expect(resolveMcpServerScriptPath([missing])).toBe(missing);
+      expect(resolveMcpServerScriptPath([])).toBe("");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
 describe("injectMcpConfig", () => {
-  it("creates .opencode/opencode.json with jira MCP config", () => {
+  it("creates .opencode/opencode.json with jira MCP config under mcp.servers", () => {
     injectMcpConfig(workspace, makeTracker());
     const configPath = join(workspace, ".opencode", "opencode.json");
     expect(existsSync(configPath)).toBe(true);
     const config = JSON.parse(readFileSync(configPath, "utf8"));
-    expect(config.mcp.jira).toBeDefined();
-    expect(config.mcp.jira.environment.JIRA_ENDPOINT).toBe("http://example.net/rest/api/2");
+    expect(config.mcp.servers.jira).toBeDefined();
+    expect(config.mcp.servers.jira.codemode).toBe(true);
+    expect(config.mcp.servers.jira.environment.JIRA_ENDPOINT).toBe("http://example.net/rest/api/2");
   });
 
-  it("merges with existing .opencode/opencode.json", () => {
+  it("merges with existing .opencode/opencode.json preserving other servers", () => {
     const dir = join(workspace, ".opencode");
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, "opencode.json"),
-      JSON.stringify({ mcp: { "other-tool": { type: "local", command: ["echo"] } } }),
+      JSON.stringify({ mcp: { servers: { "other-tool": { type: "local", command: ["echo"] } } } }),
     );
 
     injectMcpConfig(workspace, makeTracker());
 
     const config = JSON.parse(readFileSync(join(dir, "opencode.json"), "utf8"));
-    expect(config.mcp["other-tool"]).toBeDefined();
-    expect(config.mpc?.jira).toBeUndefined();
-    expect(config.mcp.jira).toBeDefined();
+    expect(config.mcp.servers["other-tool"]).toBeDefined();
+    expect(config.mcp.servers.jira).toBeDefined();
+  });
+
+  it("never writes a permissions key", () => {
+    injectMcpConfig(workspace, makeTracker());
+    const config = JSON.parse(readFileSync(join(workspace, ".opencode", "opencode.json"), "utf8"));
+    expect(config.permissions).toBeUndefined();
+  });
+
+  it("drops the legacy v1 mcp.jira key when upgrading a workspace", () => {
+    const dir = join(workspace, ".opencode");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "opencode.json"),
+      JSON.stringify({
+        mcp: {
+          jira: { type: "local", command: ["node", "old.js"] },
+          servers: { "other-tool": { type: "local", command: ["echo"] } },
+        },
+      }),
+    );
+
+    injectMcpConfig(workspace, makeTracker());
+
+    const config = JSON.parse(readFileSync(join(dir, "opencode.json"), "utf8"));
+    expect(config.mcp.jira).toBeUndefined();
+    expect(config.mcp.servers["other-tool"]).toBeDefined();
+    expect(config.mcp.servers.jira).toBeDefined();
+  });
+
+  it("preserves a user-written permissions key untouched", () => {
+    const dir = join(workspace, ".opencode");
+    mkdirSync(dir, { recursive: true });
+    const userPerms = [{ action: "shell", resource: "*", effect: "ask" }];
+    writeFileSync(join(dir, "opencode.json"), JSON.stringify({ permissions: userPerms }));
+
+    injectMcpConfig(workspace, makeTracker());
+
+    const config = JSON.parse(readFileSync(join(dir, "opencode.json"), "utf8"));
+    expect(config.permissions).toEqual(userPerms);
+    expect(config.mcp.servers.jira).toBeDefined();
   });
 });
 

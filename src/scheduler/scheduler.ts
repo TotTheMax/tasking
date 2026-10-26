@@ -2,6 +2,8 @@ import { EventEmitter } from "node:events";
 import { isActiveState, isTerminalState } from "../adapters/jira/tracker.js";
 import type { EffectiveConfig } from "../config/config-types.js";
 import { validateDispatchConfig } from "../config/validator.js";
+import { defaultApiExec } from "../driver/api-client.js";
+import { deleteSession as deleteOpencodeSession } from "../driver/session-ops.js";
 import { ActivityStore } from "../observability/activity-store.js";
 import type { Logger } from "../observability/logger.js";
 import { TaskingError, toTaskingError } from "../shared/errors.js";
@@ -26,16 +28,19 @@ export interface SchedulerDeps {
   config: () => EffectiveConfig;
   logger: Logger;
   runAttemptFn: typeof runAttempt;
-  spawnRunner?: (
-    cmd: string[],
-    cwd: string,
-    timeout: number,
-    inactivityTimeout: number,
-    signal?: AbortSignal,
-  ) => Promise<unknown>;
+  apiExec?: import("../driver/api-client.js").ApiExecFn;
+  sleep?: (ms: number) => Promise<void>;
+  approvalEvents?: (
+    task: { id: string; identifier: string },
+    event:
+      | { kind: "pending"; pending: import("../driver/session-ops.js").PendingPermission[] }
+      | { kind: "expired"; requestID: string },
+  ) => void;
 }
 
 const CONTINUATION_DELAY_MS = 1000;
+const TERMINAL_SWEEP_TICKS = 10;
+const SEEN_MESSAGES_MAX_TASKS = 1000;
 const BASE_BACKOFF_MS = 10000;
 const MAX_BACKOFF_POWER = 10;
 
@@ -116,12 +121,14 @@ export function hasStateSlot(
 }
 
 export class Scheduler extends EventEmitter {
+  private readonly seenMessagesByTask = new Map<string, Map<string, string>>();
   readonly state: OrchestratorRuntimeState;
   readonly activityStore: ActivityStore;
   private readonly deps: SchedulerDeps;
   private running = false;
   private refreshRequested = false;
   private tickInFlight = false;
+  private tickCount = 0;
 
   constructor(deps: SchedulerDeps) {
     super();
@@ -175,6 +182,15 @@ export class Scheduler extends EventEmitter {
   }
 
   private async tickBody(): Promise<void> {
+    this.tickCount++;
+    if (
+      this.running &&
+      this.tickCount % TERMINAL_SWEEP_TICKS === 0 &&
+      this.state.running.size === 0 &&
+      this.state.retry_attempts.size === 0
+    ) {
+      await this.sweepTerminalWorkspaces("debug");
+    }
     await this.reconcileRunningIssues();
     const config = this.deps.config();
 
@@ -304,7 +320,31 @@ export class Scheduler extends EventEmitter {
         promptTemplate: config.prompt_template,
         logger: this.deps.logger.child({ task_identifier: task.identifier }),
         trackerStateChecker,
-        spawnRunner: this.deps.spawnRunner as never,
+        apiExec: this.deps.apiExec,
+        sleep: this.deps.sleep,
+        seenMessages: this.seenMessagesFor(task.id),
+        onPendingPermissions: this.deps.approvalEvents
+          ? (pending) => {
+              if (pending.length > 0 && !entry.waiting_approval) {
+                entry.waiting_approval = true;
+                entry.waiting_since = Date.now();
+              }
+              this.deps.approvalEvents?.(
+                { id: task.id, identifier: task.identifier },
+                { kind: "pending", pending },
+              );
+            }
+          : undefined,
+        onPermissionReply: this.deps.approvalEvents
+          ? (requestID) => {
+              entry.waiting_approval = false;
+              entry.waiting_since = null;
+              this.deps.approvalEvents?.(
+                { id: task.id, identifier: task.identifier },
+                { kind: "expired", requestID },
+              );
+            }
+          : undefined,
         sessionId: entry.session_id,
         startTurn,
         signal: entry.abort?.signal,
@@ -318,6 +358,10 @@ export class Scheduler extends EventEmitter {
           onEvent: (event) => {
             entry.last_event = event.event;
             entry.last_event_at = Date.now();
+            if (event.event === "turn_completed") {
+              entry.waiting_approval = false;
+              entry.waiting_since = null;
+            }
             if (event.message) {
               entry.last_message = event.message;
             }
@@ -383,9 +427,39 @@ export class Scheduler extends EventEmitter {
       this.scheduleRetry(task, 1, null, true, result.session_id ?? entry.session_id ?? null);
     } else {
       const nextAttempt = (entry.retry_attempt ?? 0) + 1;
+      const orphan = result.session_id ?? entry.session_id ?? null;
+      if (orphan) {
+        void this.deleteOrphanSession(orphan, task.identifier, nextAttempt);
+      }
       this.scheduleRetry(task, nextAttempt, result.error, false);
     }
     this.emit("workerExit", task.id, result.status);
+  }
+
+  private async deleteOrphanSession(
+    sessionId: string,
+    identifier: string,
+    nextAttempt: number,
+  ): Promise<void> {
+    const config = this.deps.config();
+    try {
+      await deleteOpencodeSession(
+        this.deps.apiExec ?? defaultApiExec(),
+        { command: config.opencode.command, serverUrl: config.opencode.server_url },
+        sessionId,
+      );
+      this.deps.logger.info("orphan session deleted", {
+        task_identifier: identifier,
+        session_id: sessionId,
+        next_attempt: nextAttempt,
+      });
+    } catch (e) {
+      this.deps.logger.warn("orphan session delete failed", {
+        task_identifier: identifier,
+        session_id: sessionId,
+        error: toTaskingError(e).message,
+      });
+    }
   }
 
   private scheduleRetry(
@@ -463,7 +537,10 @@ export class Scheduler extends EventEmitter {
           const fresh = refreshed.find((t) => t.id === taskId);
           if (fresh && isTerminalState(fresh.state, config.tracker.terminal_states)) {
             const wsPath = resolveWorkspacePath(retry.identifier, config.workspace.root);
-            await removeWorkspace(wsPath, config.hooks, this.deps.logger);
+            await removeWorkspace(wsPath, config.hooks, this.deps.logger, undefined, {
+              command: config.opencode.command,
+              serverUrl: config.opencode.server_url,
+            });
             this.deps.logger.info("continuation retry found terminal task, cleaned workspace", {
               task_identifier: retry.identifier,
             });
@@ -492,11 +569,28 @@ export class Scheduler extends EventEmitter {
     await this.reconcileTrackerStates();
   }
 
+  private seenMessagesFor(taskId: string): Map<string, string> {
+    const existing = this.seenMessagesByTask.get(taskId);
+    if (existing) return existing;
+    if (this.seenMessagesByTask.size >= SEEN_MESSAGES_MAX_TASKS) {
+      for (const key of this.seenMessagesByTask.keys()) {
+        if (key !== taskId && !this.state.running.has(key)) {
+          this.seenMessagesByTask.delete(key);
+          break;
+        }
+      }
+    }
+    const created = new Map<string, string>();
+    this.seenMessagesByTask.set(taskId, created);
+    return created;
+  }
+
   private async reconcileStalledRuns(): Promise<void> {
     const config = this.deps.config();
     if (config.opencode.stall_timeout_ms <= 0) return;
     const now = Date.now();
     for (const [taskId, entry] of this.state.running) {
+      if (entry.waiting_approval) continue;
       const lastActivity = entry.last_event_at ?? entry.started_at;
       if (now - lastActivity > config.opencode.stall_timeout_ms) {
         await this.terminateRunning(taskId, false, "stalled");
@@ -568,34 +662,60 @@ export class Scheduler extends EventEmitter {
     const elapsed = Math.max(0, (Date.now() - entry.started_at) / 1000);
     this.state.totals.seconds_running += elapsed;
     if (cleanup) {
+      const config = this.deps.config();
       await removeWorkspace(
         entry.workspace_path,
-        this.deps.config().hooks,
+        config.hooks,
         this.deps.logger,
         entry.session_id,
+        { command: config.opencode.command, serverUrl: config.opencode.server_url },
       );
     }
     this.emit("terminate", taskId, reason);
   }
 
   async startupTerminalCleanup(): Promise<void> {
+    await this.sweepTerminalWorkspaces("warn");
+  }
+
+  async sweepTerminalWorkspaces(logLevel: "warn" | "debug" = "debug"): Promise<void> {
     const config = this.deps.config();
     let terminal: Task[];
     try {
       terminal = await this.deps.tracker.fetchIssuesByStates(config.tracker.terminal_states);
     } catch (e) {
-      this.deps.logger.warn("terminal cleanup fetch failed, continuing startup", {
-        error: toTaskingError(e).message,
-      });
+      const msg =
+        logLevel === "warn"
+          ? "terminal cleanup fetch failed, continuing startup"
+          : "terminal cleanup fetch failed";
+      if (logLevel === "warn") {
+        this.deps.logger.warn(msg, { error: toTaskingError(e).message });
+      } else {
+        this.deps.logger.debug(msg, { error: toTaskingError(e).message });
+      }
       return;
     }
     for (const task of terminal) {
       try {
         const wsPath = resolveWorkspacePath(task.identifier, config.workspace.root);
-        await removeWorkspace(wsPath, config.hooks, this.deps.logger);
+        await removeWorkspace(wsPath, config.hooks, this.deps.logger, undefined, {
+          command: config.opencode.command,
+          serverUrl: config.opencode.server_url,
+        });
+        this.seenMessagesByTask.delete(task.id);
       } catch (e) {
         this.deps.logger.debug("workspace cleanup skipped", { error: toTaskingError(e).message });
       }
+    }
+  }
+
+  async drain(timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.state.running.size > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => {
+        const t = setTimeout(resolve, 100);
+        t.unref?.();
+      });
     }
   }
 }

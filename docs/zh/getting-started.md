@@ -9,7 +9,7 @@
 | 项 | 检查 |
 |----|------|
 | Node.js 22+ | `node --version` ≥ v22 |
-| opencode CLI 在 `PATH` | `opencode --version`（装见 [opencode.ai](https://opencode.ai)） |
+| opencode **v2**（`>=2.0 <3`）在 `PATH` | `opencode --version`（装见 [opencode.ai](https://opencode.ai)；从 v1 升级用 `opencode upgrade --major`） |
 | 飞书自建应用管理员 | 直连主线路必需（见下） |
 | Jira 账号 | 仅接 Jira 时需要（见第二章） |
 
@@ -149,7 +149,7 @@ env:
   GITLAB_TOKEN: glpat-xxxxxxxxxxxxxxxxxxxx
   GITLAB_HOST: 192.168.10.180
 opencode:
-  command: opencode run
+  command: opencode
   agent: build
 ```
 

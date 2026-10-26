@@ -114,7 +114,7 @@ worker 并发与重试策略。
 
 | 字段 | 类型 | 默认值 | 必需 | 说明 |
 |------|------|--------|------|------|
-| `max_concurrent_agents` | integer | `10` | 否 | 封顶 Jira worker 的并发 `opencode run` 子进程数。飞书直连会话走独立预算(`feishu.direct.max_concurrent`),机器上的子进程总数可达两者之和 |
+| `max_concurrent_agents` | integer | `10` | 否 | 封顶 Jira worker 的并发 turn 数。飞书直连会话走独立预算(`feishu.direct.max_concurrent`)。 |
 | `max_turns` | positive integer | `20` | 否 | 一次 worker 内 session 续轮调用的上限。turn 1 创建 opencode session,turn 2+ 使用 `-s <sessionID>` 续接同一 session(agent 跨 turn 保持完整对话上下文)。worker 退出后 continuation retry 创建全新 session(agent 从 `git log` 重新评估进度)。设为 `1` 时仅单轮执行。 |
 | `max_retry_backoff_ms` | integer | `300000`(5 分钟) | 否 | 失败退避延迟的封顶值 |
 | `max_concurrent_agents_by_state` | map<string, positive integer> | `{}` | 否 | 按状态并发上限;状态键小写化;非正数/非数值项被忽略 |
@@ -132,21 +132,24 @@ agent:
 
 ## `opencode` 块
 
-worker(`opencode run` 子进程)配置。
+worker 的 opencode v2 驱动配置（tasking 0.7 起要求 `opencode >=2.0 <3`，turn 经 `opencode api` 驱动，见 ADR 0035）。
 
 | 字段 | 类型 | 默认值 | 必需 | 说明 |
 |------|------|--------|------|------|
-| `command` | string(shell) | `opencode run` | 是(派发) | worker 启动命令;按空白拆分为命令 + 参数 |
-| `agent` | string | `build` | 否 | `--agent` 参数值,即 opencode agent profile;作为 per-task 兜底默认 |
+| `command` | string(shell) | `opencode` | 是(派发) | opencode 可执行命令;按空白拆分为命令 + 参数（0.7 起不再包含 `run`） |
+| `agent` | string | `build` | 否 | 会话 agent，即 opencode agent profile;作为 per-task 兜底默认 |
 | `agents` | string[] | `[]` | 否 | 已知 opencode agent profile 的咨询性目录;非空时供 `/agent` 命令展示并对未知名友好提示,空则不校验(任何 `agent:<name>` 标签直通)。不作为硬白名单 |
-| `model` | string\|null | `null` | 否 | `--model` 参数值(`provider/model` 格式);`null` 或空串时不追加标志,走 opencode 默认模型 |
-| `variant` | string\|null | `null` | 否 | `--variant` 参数值(provider 特定推理档位,如 `high`/`max`/`minimal`);`null` 或空串时不追加标志。与 `model` 彼此独立 |
-| `turn_timeout_ms` | integer | `3600000`(1 小时) | 否 | 单次 turn 的硬墙钟总超时;无论活动状态如何,到点必杀。超时则 attempt 标记为 `timed_out`(`turn_timeout`) |
-| `stall_timeout_ms` | integer | `7200000`(2 小时) | 否 | 停滞检测阈值(scheduler 层,检查 worker 是否卡死);`<= 0` 禁用。设为大于 `turn_timeout_ms` 以确保只在墙钟和不活跃均无效时才兜底 |
-| `inactivity_timeout_ms` | integer | `600000`(10 分钟) | 否 | 不活跃超时(subprocess 层,检查 stdout/stderr 原始字节);收到数据时重置计时器,静默超过此值则 SIGTERM 终止。`<= 0` 禁用不活跃超时 |
-| `auto_approve` | boolean | `true` | 否 | 自动放行 opencode 权限请求(追加 `--auto` 标志);设为 `false` 时需通过 `.opencode/opencode.json` permission 规则手动配置 |
+| `model` | string\|null | `null` | 否 | `provider/model` 格式;映射会话的 `Model.Ref`。`null` 或空串时用服务端默认模型 |
+| `variant` | string\|null | `null` | 否 | provider 特定推理档位(如 `high`/`max`/`minimal`),映射 `Model.Ref.variant`。与 `model` 彼此独立 |
+| `turn_timeout_ms` | integer | `3600000`(1 小时) | 否 | 单次 turn 的执行墙钟超时（**等待审批期间暂停**）；超时走中断梯子并标记 `timed_out`(`turn_timeout`) |
+| `stall_timeout_ms` | integer | `7200000`(2 小时) | 否 | 停滞检测阈值(scheduler 层);`<= 0` 禁用。等待审批期间不判停滞 |
+| `inactivity_timeout_ms` | integer | `600000`(10 分钟) | 否 | 不活跃超时（轮询周期无新消息，**等待审批期间暂停**）；`<= 0` 禁用 |
+| `auto_approve` | boolean | `true` | 否 | 会话级权限姿态：`true` 时建会话携带全放 ruleset（工作区 ask 规则被覆盖）；`false` 时听工作区规则——**`ask` 权限会挂起等待审批卡**（v1 的“自动拒绝”语义已废止，见 ADR 0036） |
+| `poll_interval_ms` | integer | `2000` | 否 | 轮询间隔（进度/审批/终态均由此节奏读取，见 ADR 0037） |
+| `permission_timeout_ms` | integer | `1800000`(30 分钟) | 否 | 审批等待预算；挂起期间接管计时，到点自动拒绝并盖章 |
+| `server_url` | string\|null | `null` | 否 | 逃生口：非空时所有 api 调用透传 `--server <url>`；默认自动发现机器共享后台服务 |
 
-worker 实际启动命令为:`<command> [--auto] --dir <workspace> --agent <agent> [--model <model>] [--variant <variant>] "<prompt>"`。`--model`/`--variant` 仅当对应字段非空时追加。`--agent` 的值每 turn 从任务的 `agent:<name>` 标签(若有)重新解析,回退到 `opencode.agent`;详见 [飞书↔Jira 评论桥](./usage.md) 的 `/agent` 命令与 ADR 0011。
+worker 的 turn 经 `opencode api` 驱动：首 turn `session.create`（显式 location=工作区、`Model.Ref`、按需全放 ruleset）→ `session.prompt`；进度与终态由轮询 `session.get` / `session.permission.list` / `session.message.list` 取得；超时/中止经 `session.interrupt`。`agent` 每 turn 从任务的 `agent:<name>` 标签(若有)重新解析，回退到 `opencode.agent`，在 turn 边界经会话切换生效；详见 [飞书↔Jira 评论桥](./usage.md) 的 `/agent` 命令与 ADR 0011。
 
 ## `router` 块
 
@@ -195,12 +198,12 @@ route agent 同一时刻最多一个运行(除非另行配置),不阻塞结构�
 | `enabled` | boolean | `true`(段存在时) | 否 | 段内显式 `enabled: false` 可关闭直连 |
 | `projects` | map（名称 → 路径字符串，或 `{ path, auto_approve }`） | `{}` | 否 | 项目名 → 目录映射；`/chat <项目名> <消息>` 使用。值为对象形态时 `auto_approve` 覆盖全局值 |
 | `path_roots` | string[] | `[]` | 否 | ad-hoc path 模式（`/chat /绝对路径 <消息>`）的目录前缀白名单；空 = 不限制 |
-| `auto_approve` | boolean | `false` | 否 | 为 true 时给 `opencode run` 传 `--auto`（自动放行未被显式拒绝的权限）。默认 false：权限姿态由目标目录自己的 `.opencode` 权限配置决定，`ask` 项被安全自动拒绝并在总结中说明 |
+| `auto_approve` | boolean | `false` | 否 | 为 true 时会话携带全放 ruleset（自动放行未被显式拒绝的权限）。默认 false：权限姿态由目标目录自己的 `.opencode` 权限配置决定，`ask` 项**挂起等待审批卡**（0.7 起；v1 的“自动拒绝”已废止） |
 | `verbosity` | `quiet`\|`summary`\|`detailed` | `detailed` | 否 | 镜像到飞书的事件量级：`quiet` 仅最终回复正文（权限拒绝提示保留）；`summary` 正文 + 一行统计（⏱/🔧/tokens，老客户端环境的显式回退）；`detailed`（默认）为每个 turn 发一张可原地更新的过程卡片（工具明细折叠面板 + 中断/重试/完整输出/结束按钮；失败面板默认展开），turn 结束时再发一张 markdown 结果卡片（标题/表格/代码块正常渲染；超长时改发 `.md` 附件）。折叠面板需飞书/Lark 客户端 >= V7.9，更低版本显示「请升级」占位符（不影响结果投递） |
 | `max_concurrent` | integer | `5` | 否 | 直连 turn 的全局并发上限（独立于 Jira 的 `max_concurrent_agents`）；同目录/同会话始终串行 |
 | `idle_ttl_ms` | integer | `2592000000`(30 天) | 否 | 空闲多久后把会话标记为 expired（不删除 opencode 磁盘上的 session） |
 
-直连 turn 继承操作者级的 `opencode.agent`、`opencode.model`、`opencode.variant`（非空时分别作为 `--agent`/`--model`/`--variant` 追加），与 Jira worker 一致；目标目录自身的 `.opencode/` 配置仍治理权限/LSP/formatter。
+直连 turn 继承操作者级的 `opencode.agent`、`opencode.model`、`opencode.variant`（非空时映射会话 agent 与 `Model.Ref`），与 Jira worker 一致；目标目录自身的 `.opencode/` 配置仍治理权限/LSP/formatter。
 
 零配置即可用（path 模式）：`feishu.enabled: true` 且无 `direct` 子块时，群里 `/chat /绝对路径 <消息>` 直接可用。要按项目名使用，加两行：
 
@@ -334,7 +337,7 @@ tracker:
 
 ## `env` 块
 
-注入 worker 子进程（`opencode run`）的环境变量。值支持 `$VAR` 间接引用（与 `tracker.api_key` 相同语义），解析为空字符串时注入空字符串值。缺失的 `env` 段默认为空对象。
+注入 worker 驱动器进程的环境变量。值支持 `$VAR` 间接引用（与 `tracker.api_key` 相同语义），解析为空字符串时注入空字符串值。缺失的 `env` 段默认为空对象。
 
 `config.env` 的值优先于继承的 `process.env`——WORKFLOW.md 显式声明的值覆盖 daemon 进程的环境变量。
 

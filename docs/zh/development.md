@@ -8,7 +8,7 @@
 |------|------|------|
 | Node.js | 22+ | 运行时与构建工具链;`package.json` 的 `engines` 字段声明 `>=22` |
 | npm | 10+ | 随 Node 安装 |
-| opencode CLI | 与本机 opencode 版本一致 | worker 子进程依赖;本地开发需在 `PATH` 上可执行 `opencode run` |
+| opencode CLI | **v2**（`>=2.0 <3`） | worker 经 `opencode api` 驱动；本地开发需在 `PATH` 上可执行 `opencode`（v1 请 `opencode upgrade --major`） |
 | Jira 凭据 | 可选 | 真实集成测试从真实 `JIRA_E2E_*` 环境变量或仓库根 `.env` 文件解析（`cp .env.example .env` 填写个人环境；无代码默认值——`INTEGRATION=1` 且缺失时快速失败并列出缺失键）；未设 `INTEGRATION=1` 时该测试干净跳过 |
 | 飞书凭据 | 可选 | 真实集成测试从真实 `FEISHU_E2E_*` 环境变量或仓库根 `.env` 文件解析（同上）；未设 `INTEGRATION=1` 时干净跳过 |
 
@@ -49,7 +49,7 @@ src/
 │   └── manager.ts    # 动态 watch + 重载(保留上一良好配置)
 ├── scheduler/        # 结构化调度器(Symphony 式确定性调度)
 │   └── scheduler.ts  # 轮询 tick、状态机、并发、退避 retry、reconcile
-├── worker/           # opencode run 子进程 worker
+├── worker/           # turn 循环（经 opencode v2 api 驱动）
 │   ├── runner.ts     # 子进程启动、续轮循环、失败分类、token 提取
 │   └── prompt.ts     # 严格 Liquid 模板渲染、续轮指引构建
 ├── workspace/        # per-task 工作区管理与安全不变式
@@ -86,7 +86,7 @@ src/
 | `npm test` | 运行全部测试 | `vitest run`,CI 必须通过 |
 | `npm run test:watch` | 测试监听模式 | `vitest`,开发时自动重跑 |
 | `npm run test:e2e` | 运行 mock 驱动的端到端测试 | `vitest run tests/e2e.test.ts tests/bridge-flow.test.ts`（调度链路 + 飞书↔Jira bridge 全流程） |
-| `npm run test:integration` | 运行真实 API 集成测试 | `INTEGRATION=1 vitest run tests/integration-real.test.ts`（真实飞书测试 bot/群 + 真实 Jira TEST 项目） |
+| `npm run test:integration` | 运行真实 API 集成测试 | `INTEGRATION=1 vitest run tests/integration-real.test.ts tests/integration-direct.test.ts tests/integration-opencode-v2.test.ts`（真实飞书测试 bot/群 + 真实 Jira TEST 项目 + 真实 opencode v2 冒烟） |
 
 ### 构建产物
 
@@ -109,6 +109,12 @@ npm test
 - **Mock 驱动 E2E（硬门禁）**：修改**飞书适配器**、**Jira 适配器**、**调度器**或**飞书↔Jira comment bridge** 逻辑后，必须运行 `npm run test:e2e`（`tests/e2e.test.ts` + `tests/bridge-flow.test.ts`）。该测试无外部依赖，CI 的 `npm test` 已强制。
 - **真实 API 集成（live 环境可达时必跑）**：同样的子系统变更，在 live 测试环境可达时（本地开发含内网路由）还必须运行 `npm run test:integration`（`INTEGRATION=1`，真实飞书测试 bot/群 + 真实 Jira TEST 项目）。凭据从真实环境变量或仓库根 `.env` 文件解析（`cp .env.example .env` 填写个人测试环境）；无代码默认值——`INTEGRATION=1` 且缺失时快速失败并列出缺失键。环境不可达时（如 CI 的 ubuntu-latest）该测试被跳过，但须在 commit message 或 MR 描述中注明原因。真实集成能拦截 mock 假阳性（见 `docs/known-issues.md` 与 ADR 0010）。
 - **其他变更**：按需测试——运行路由映射表（`AGENTS.md`）中对应子系统的单测文件；若变更影响端到端行为，再加跑相关 E2E 套件。
+- **真实 opencode v2 冒烟**：`tests/integration-opencode-v2.test.ts`（`INTEGRATION=1`）自起私有 v2 `serve`（临时 config/db，provider key 取自本地 auth.json）驱动 create/prompt/pending/reply/outcome 与 interrupt；provider 由 `OPENCODE_SMOKE_MODEL`（默认 `siliconflow-cn/Qwen/Qwen3.5-4B`）决定，`OPENCODE_SMOKE_SHARED=1` 时改用机器共享服务（适合依赖 console workspace 的模型）；无 v2 二进制或无凭据、或 provider 配额耗尽时以明确原因跳过。
+- **opencode v2 字段纪律（Fixture 先行）**：任何喂 opencode v2 JSON 的测试 mock MUST 经 `tests/helpers/opencode-fixtures.ts` 构造——它克隆 `tests/fixtures/opencode-v2/rest/` 下**真实抓取**的载荷（provenance: captured），只覆盖值；**禁止手写 v2 形状**（手写形状会漂回 v1 字段名如 `tool`/`state.output`/`state.time`/数组式 `session.active`，代码与 mock 共享同一错误假设、一起过测试却与真实不符）。新增/修改任何 v2 字段读取时：先按 `tests/fixtures/opencode-v2/provenance.md` 的抓取方法把真实载荷补进 `rest/`，再写 fixture 派生的测试。
+- **Jira 路径真机 E2E**：`npm run test:jira-worker`（`INTEGRATION=1 JIRA_WORKER=1`）在真实 Jira TEST 项目建 issue（唯一 label 隔离候选）→ 调度器派发 → worker 建工作区 + 注入 MCP → **真实 opencode v2 turn** 建文件 → 沿真实工作流逐跳转终态 → 下一 tick 回收工作区；issue 在 finally 删除（ADR 0015）。
+- **Jira 路径审批真机 E2E（半自动）**：`npm run test:jira-approval`（`INTEGRATION=1 JIRA_APPROVAL=1`）真实 Jira 任务（`auto_approve:false`）→ 调度器派发 → worker 工作区 ask 挂起 → 真实飞书审批卡发到**绑定话题** → 真人点击（真实 WS 回调）→ bridge `approve_*` → 协调器 → 真实 `permission.reply` → 会话恢复；60 秒无点击则走事件通道派发作为兜底。
+- **整合真机 E2E（半自动）**：`npm run test:direct-approval`（`INTEGRATION=1 DIRECT_APPROVAL=1`）跑完整跨组件闭环——`/chat` → 直连 turn → 真实 opencode v2（受管 serve）执行 shell → 工作区 `ask` 挂起 → 真实飞书审批卡发到话题 → 人工点「允许一次」→ 真实 WS 路由回填 opencode 会话 → turn 完成。
+- **真实飞书审批卡冒烟（半自动）**：`npm run test:card-smoke`（`INTEGRATION=1 CARD_SMOKE=1`）把真实审批卡发到 intake 群，人工点「允许一次」两次，验证真实 WS 事件通道 → 路由器 → 协调器只 reply 一次并原位盖章；需测试 app 已订阅 `card.action.trigger`。
 - 新增端到端测试文件时，请同步加入 `package.json` 的 `test:e2e` 脚本文件列表。
 
 ## 开发运行

@@ -7,6 +7,7 @@ import type {
 export interface SnapshotExtras {
   direct?: RuntimeDirectSession[];
   directTotals?: { input_tokens: number; output_tokens: number; total_tokens: number };
+  permissionTimeoutMs?: number;
 }
 
 export function buildSnapshot(
@@ -41,6 +42,15 @@ export function buildSnapshot(
       agent: entry.agent,
       model: entry.model,
       variant: entry.variant,
+      ...(entry.waiting_approval
+        ? {
+            waiting_approval: true,
+            waiting_remaining_ms:
+              entry.waiting_since != null
+                ? Math.max(0, (extras.permissionTimeoutMs ?? 1800000) - (now - entry.waiting_since))
+                : null,
+          }
+        : {}),
     };
   });
 

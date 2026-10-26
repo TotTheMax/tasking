@@ -1,0 +1,93 @@
+{
+  "data": [
+    {
+      "id": "msg_14400b861001DlnJ6pilWCu6FP",
+      "time": { "created": 1792142260321 },
+      "type": "idle",
+      "outcome": "succeeded"
+    },
+    {
+      "id": "msg_14400b11c001VVy1bF6f4pmEvV",
+      "time": { "created": 1792142258468, "streamed": 1792142260316, "completed": 1792142260318 },
+      "type": "assistant",
+      "agent": "build",
+      "model": { "id": "deepseek-v4.1-flash-free", "providerID": "opencode", "variant": "default" },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "The command already ran successfully. The user just wanted me to run `echo fixture-capture`. It output `fixture-capture`. I should report that.\n\nThe system update is just informational about tool catalog changes. Nothing more to do.",
+          "state": { "reasoningField": "reasoning_content" },
+          "time": { "created": 1792142259899, "completed": 1792142260310 }
+        },
+        { "type": "text", "text": "Done. The command output:\n\n```\nfixture-capture\n```" }
+      ],
+      "finish": "stop",
+      "rawFinish": "stop",
+      "cost": 0,
+      "tokens": {
+        "input": 891,
+        "output": 14,
+        "reasoning": 48,
+        "cache": { "read": 5888, "write": 0 }
+      }
+    },
+    {
+      "id": "msg_14400b116001BGVsVYo2BWns3O",
+      "metadata": {
+        "notice": "instructions",
+        "instructionSources": ["core/codemode", "core/mcp-guidance"]
+      },
+      "time": { "created": 1792142258454 },
+      "type": "system",
+      "text": "The Code Mode tool catalog has changed.\n\nNew tools are available in addition to those previously listed:\n  - tools.codegraph.codegraph_explore({\n  /**\n   * Symbol names, file names, or short code terms to explore (e.g., \"AuthService loginUser session-manager\", \"GraphTraverser BFS impact traversal.ts\"). For a flow question, name the symbols spanning the flow (e.g. \"mutateElement renderScene\"). A natural-language question works too — no prior codegraph_search needed.\n   */\n  query: string,\n  /** Maximum number of files to include source code from (default: 12). @default 12 */\n  maxFiles?: number,\n  /**\n   * Absolute path to the project to query (or any directory inside it) — codegraph uses the nearest .codegraph/ index at or above that path. Omit to use this session's default project. Pass it to query a second codebase, or when the server root has no index of its own (e.g. a monorepo where only sub-projects are indexed, so there is no default project).\n   */\n  projectPath: string,\n}): Promise<unknown> // PRIMARY TOOL — call FIRST for almost any question OR before an edit: how does X work, architecture, a bug, where/what...\n\n<mcp_instructions>\n  <server name=\"codegraph\">\n    Use tools from this server through `execute` under `tools[\"codegraph\"]`.\n    # Codegraph — available (per-project; pass projectPath)\n    \n    Codegraph is a SQLite knowledge graph of a codebase's symbols, edges, and\n    files (30+ languages): one `codegraph_explore` call returns the verbatim, line-numbered source\n    of the relevant symbols PLUS the call paths between them and a blast-radius\n    summary — replacing a grep + Read loop with one round-trip.\n    \n    This server started somewhere with no `.codegraph/` of its own, so there is no\n    default project — but the tools are available and work **per project**:\n    \n    - To query a project that HAS a `.codegraph/` index (e.g. a service inside a\n      monorepo, or a second repo), pass its path as `projectPath` to\n      `codegraph_explore` (and any other codegraph tool). Codegraph resolves the\n      nearest `.codegraph/` at or above that path and answers from it — for as many\n      projects as you like in one session.\n    - For a project with no `.codegraph/`, use your built-in tools (Read/Grep/Glob)\n      for that project. Indexing is the user's decision — don't run it yourself, but\n      if it comes up they can run `codegraph init` in a project to enable codegraph\n      there (a new index is picked up live, no restart).\n    \n    \n    ---\n    CodeGraph v1.6.2 is available (this server is running v1.6.0). Update with `codegraph upgrade`. This server keeps running the old version until the user upgrades — mention it when convenient; do not run the upgrade yourself.\n  </server>\n</mcp_instructions>",
+      "description": "Instructions updated: core/codemode, core/mcp-guidance"
+    },
+    {
+      "id": "msg_144009e9a001zn2oNnow9dwu1T",
+      "time": { "created": 1792142253732, "streamed": 1792142256236, "completed": 1792142258444 },
+      "type": "assistant",
+      "agent": "build",
+      "model": { "id": "deepseek-v4.1-flash-free", "providerID": "opencode", "variant": "default" },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "The user wants me to run a shell command.",
+          "state": { "reasoningField": "reasoning_content" },
+          "time": { "created": 1792142255848, "completed": 1792142256227 }
+        },
+        {
+          "type": "tool",
+          "id": "call_00_o3z433fnsxxyewwjg5tiibmt",
+          "name": "shell",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": { "command": "echo fixture-capture" },
+            "content": [{ "type": "text", "text": "fixture-capture\n" }],
+            "metadata": { "status": "completed", "truncated": false, "exit": 0 }
+          },
+          "time": { "created": 1792142256025, "ran": 1792142256233, "completed": 1792142258442 }
+        }
+      ],
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 3961,
+        "output": 40,
+        "reasoning": 10,
+        "cache": { "read": 2048, "write": 0 }
+      }
+    },
+    {
+      "id": "msg_144009ddb0019JwnqxoPvk00KZ",
+      "time": { "created": 1792142253709 },
+      "text": "Run this shell command: echo fixture-capture",
+      "type": "user"
+    }
+  ],
+  "cursor": {
+    "previous": "eyJpZCI6Im1zZ18xNDQwMGI4NjEwMDFEbG5KNnBpbFdDdTZGUCIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6InByZXZpb3VzIn0",
+    "next": "eyJpZCI6Im1zZ18xNDQwMDlkZGIwMDE5SnducXhvUHZrMDBLWiIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6Im5leHQifQ"
+  }
+}

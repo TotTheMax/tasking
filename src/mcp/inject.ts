@@ -5,8 +5,14 @@ import type { TrackerConfig } from "../config/config-types.js";
 import { resolveEnvVar } from "../config/resolver.js";
 
 export function getMcpServerScriptPath(): string {
-  const url = new URL("../mcp/jira-server.js", import.meta.url);
-  return fileURLToPath(url);
+  return resolveMcpServerScriptPath([
+    fileURLToPath(new URL("../mcp/jira-server.js", import.meta.url)),
+    fileURLToPath(new URL("../../dist/mcp/jira-server.js", import.meta.url)),
+  ]);
+}
+
+export function resolveMcpServerScriptPath(candidates: string[]): string {
+  return candidates.find((p) => existsSync(p)) ?? candidates[0] ?? "";
 }
 
 export function buildMcpConfig(tracker: TrackerConfig): Record<string, unknown> {
@@ -17,14 +23,17 @@ export function buildMcpConfig(tracker: TrackerConfig): Record<string, unknown> 
   const authMode = tracker.auth_mode;
   return {
     mcp: {
-      jira: {
-        type: "local",
-        command: ["node", scriptPath],
-        environment: {
-          JIRA_ENDPOINT: endpoint,
-          JIRA_AUTH_MODE: authMode,
-          JIRA_API_KEY: apiKey,
-          JIRA_API_USER: apiUser,
+      servers: {
+        jira: {
+          type: "local",
+          command: ["node", scriptPath],
+          environment: {
+            JIRA_ENDPOINT: endpoint,
+            JIRA_AUTH_MODE: authMode,
+            JIRA_API_KEY: apiKey,
+            JIRA_API_USER: apiUser,
+          },
+          codemode: true,
         },
       },
     },
@@ -50,7 +59,11 @@ export function injectMcpConfig(workspacePath: string, tracker: TrackerConfig): 
 
   const mcpConfig = buildMcpConfig(tracker);
   const existingMcp = (existing.mcp as Record<string, unknown>) ?? {};
-  existing.mcp = { ...existingMcp, ...(mcpConfig.mcp as Record<string, unknown>) };
+  delete existingMcp.jira;
+  const existingServers = (existingMcp.servers as Record<string, unknown>) ?? {};
+  const newServers = (mcpConfig.mcp as Record<string, unknown>).servers as Record<string, unknown>;
+  existingMcp.servers = { ...existingServers, ...newServers };
+  existing.mcp = existingMcp;
 
   writeFileSync(configPath, JSON.stringify(existing, null, 2), "utf8");
 }

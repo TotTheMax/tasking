@@ -8,22 +8,25 @@ import {
 } from "../adapters/feishu/source.js";
 import type { BindingStore, DirectSession } from "../bridge/binding-store.js";
 import { parseChat } from "../bridge/commands.js";
+import { readTaskingVersion } from "../cli/version.js";
 import type { DirectConfig, EffectiveConfig } from "../config/config-types.js";
+import { type ApiExecFn, defaultApiExec, describeApiCommand } from "../driver/api-client.js";
+import { ApprovalCoordinator, type ApprovalRequest } from "../driver/approval.js";
+import type { PendingPermission, PermissionDecision } from "../driver/session-ops.js";
+import { ALLOW_ALL_RULES, replyPermission, setSessionPermissions } from "../driver/session-ops.js";
+import type { TurnDriverEvent } from "../driver/turn-driver.js";
 import type { ActivityEvent } from "../observability/activity-store.js";
 import type { Logger } from "../observability/logger.js";
 import { TaskingError, toTaskingError } from "../shared/errors.js";
+import { redactSecrets } from "../shared/redact.js";
 import type { RuntimeDirectSession } from "../shared/types.js";
-import {
-  type OpencodeEvent,
-  type SubprocessResult,
-  runDefaultSubprocess,
-} from "../worker/runner.js";
 import {
   CARD_BUDGET_BYTES,
   type TurnCardPhase,
   type TurnCardSessionStatus,
   type TurnCardState,
   type TurnCardToolEvent,
+  buildApprovalCard,
   buildCompletionCard,
   buildInfoCard,
   buildTurnCard,
@@ -31,7 +34,7 @@ import {
   isFailed,
   toolSummary,
 } from "./card.js";
-import { buildDirectCommand } from "./command.js";
+import { type DirectTurnDriver, createDefaultTurnDriver } from "./driver.js";
 
 export interface DirectFeishuPort {
   replyInThread(
@@ -58,24 +61,17 @@ export interface DirectFeishuPort {
   ): Promise<{ message_id: string; root_id: string | null; thread_id: string | null }>;
 }
 
-export type DirectSpawnFn = (
-  cmd: string[],
-  cwd: string,
-  timeout: number,
-  inactivityTimeout: number,
-  signal?: AbortSignal,
-  onOpencodeEvent?: (evt: OpencodeEvent) => void,
-) => Promise<SubprocessResult>;
-
 export interface DirectManagerDeps {
   feishu: DirectFeishuPort;
   store: BindingStore;
   config: () => EffectiveConfig;
   logger: Logger;
-  spawn?: DirectSpawnFn;
+  turnDriver?: DirectTurnDriver;
+  apiExec?: ApiExecFn;
   activity?: (sessionKey: string, evt: ActivityEvent) => void;
   clearActivity?: (sessionKey: string) => void;
   deleteSession?: (sessionId: string) => Promise<void>;
+  interruptSession?: (sessionId: string) => Promise<void>;
   cardRetryDelayMs?: number;
 }
 
@@ -96,6 +92,7 @@ export interface DirectCardActionValue {
   action?: unknown;
   root_id?: unknown;
   turn?: unknown;
+  request_id?: unknown;
 }
 
 import type { CardActionReply } from "../shared/info-card.js";
@@ -115,6 +112,13 @@ interface SessionRuntime {
   flushedTools: number;
   autoOnce: boolean;
   turnUsedOnce: boolean;
+  postureOpen: boolean;
+  appliedAgent: string | null;
+  appliedModel: string | null;
+  contextTokens: number;
+  waitingApproval: boolean;
+  waitingSince: number | null;
+  seenMessages: Map<string, string>;
   heartbeatTimer: NodeJS.Timeout | null;
   collect: string[] | null;
   collectTimer: NodeJS.Timeout | null;
@@ -140,8 +144,22 @@ export function isDirectEnabled(config: EffectiveConfig): boolean {
   return config.feishu.enabled && config.feishu.direct.enabled;
 }
 
-const defaultSpawn: DirectSpawnFn = (cmd, cwd, timeout, inactivityTimeout, signal, onEvent) =>
-  runDefaultSubprocess(cmd, cwd, timeout, inactivityTimeout, signal, undefined, onEvent);
+const defaultDriverFor = (exec: ApiExecFn): DirectTurnDriver => createDefaultTurnDriver(exec);
+
+function approvalCardResolution(
+  state: "replied" | "expired" | "cancelled" | "external" | "pending",
+  decision?: PermissionDecision,
+):
+  | { state: "replied"; decision: "once" | "always" | "reject" }
+  | { state: "expired" | "cancelled" | "external" } {
+  if (
+    state === "replied" &&
+    (decision === "once" || decision === "always" || decision === "reject")
+  ) {
+    return { state: "replied", decision };
+  }
+  return { state: state as "expired" | "cancelled" | "external" };
+}
 
 export class DirectSessionManager {
   private readonly deps: DirectManagerDeps;
@@ -151,6 +169,12 @@ export class DirectSessionManager {
   private readonly cardActionSeen = new Map<string, number>();
   private readonly memberCache = new Map<string, { at: number; names: Map<string, string> }>();
   private pendingWork = 0;
+  private readonly approvalRoots = new Map<string, string>();
+  private readonly approvalCards = new Map<
+    string,
+    { messageId: string; rootId: string; request: ApprovalRequest }
+  >();
+  private readonly approvals: ApprovalCoordinator;
   private readonly dirSlots = new Map<string, { busy: boolean; waiters: Array<() => void> }>();
   private running = false;
   private halted = false;
@@ -160,6 +184,26 @@ export class DirectSessionManager {
 
   constructor(deps: DirectManagerDeps) {
     this.deps = deps;
+    const exec = () => deps.apiExec ?? defaultApiExec();
+    this.approvals = new ApprovalCoordinator({
+      replyPermission: async (sessionId, requestID, decision) => {
+        const cfg = deps.config();
+        await replyPermission(
+          exec(),
+          { command: cfg.opencode.command, serverUrl: cfg.opencode.server_url },
+          sessionId,
+          requestID,
+          decision,
+        );
+      },
+      onCardRequested: (request) => {
+        void this.sendApprovalCard(request);
+      },
+      onCardResolved: (requestID, state, decision) => {
+        if (state === "pending") return;
+        void this.stampApprovalCard(requestID);
+      },
+    });
   }
 
   start(): void {
@@ -254,8 +298,11 @@ export class DirectSessionManager {
     if (name === "done" || name === "done_confirm" || name === "cancel") {
       return this.handleLifecycleAction(name, session, rt, action);
     }
+    if (name === "approve_once" || name === "approve_always" || name === "approve_reject") {
+      return await this.handleApprovalAction(name, value);
+    }
     if (name === "perm" || name === "perm_on" || name === "perm_once" || name === "perm_cancel") {
-      return this.handlePermissionAction(name, session, rt);
+      return await this.handlePermissionAction(name, session, rt);
     }
     if (name.startsWith("auto_") || name.startsWith("collect_")) {
       return this.handleInfoAction(name, session, rt, action);
@@ -294,11 +341,184 @@ export class DirectSessionManager {
     return { toast: { type: "warning", content: "未知操作" } };
   }
 
-  private handlePermissionAction(
+  private turnNow(rootId: string): number {
+    const session = this.deps.store.getDirectSession(rootId);
+    return (session?.turns ?? 0) + 1;
+  }
+
+  private async handlePendingPermissions(
+    rootId: string,
+    pending: PendingPermission[],
+  ): Promise<void> {
+    const bySession = new Map<string, PendingPermission[]>();
+    for (const p of pending) {
+      this.approvalRoots.set(p.sessionID, rootId);
+      const list = bySession.get(p.sessionID) ?? [];
+      list.push(p);
+      bySession.set(p.sessionID, list);
+    }
+    for (const [sessionId, items] of bySession) {
+      this.approvals.ingest(sessionId, items);
+    }
+  }
+
+  private async sendApprovalCard(request: ApprovalRequest): Promise<void> {
+    const rootId = this.sessionRootByApproval(request);
+    if (rootId === null) return;
+    const card = buildApprovalCard({
+      rootId,
+      turn: this.turnNow(rootId),
+      requestID: request.requestID,
+      action: request.action,
+      resources: request.resources,
+      save: request.save,
+      kind: "direct",
+    });
+    const replyCard = this.deps.feishu.replyCardInThread;
+    if (!replyCard) {
+      await this.replySafe(
+        rootId,
+        `🔐 等待审批：${request.action} ${redactSecrets(request.resources.join("、"))}（当前客户端不支持卡片，30 分钟未处理将自动拒绝）`,
+      );
+      return;
+    }
+    try {
+      const res = await replyCard.call(this.deps.feishu, rootId, card);
+      if (res.message_id) {
+        this.approvalCards.set(request.requestID, { messageId: res.message_id, rootId, request });
+        const state = this.approvals.state(request.requestID);
+        if (state !== undefined && state !== "pending") {
+          void this.stampApprovalCard(request.requestID);
+        }
+      }
+    } catch (e) {
+      this.deps.logger.warn("approval card send failed", {
+        request_id: request.requestID,
+        error: toTaskingError(e).message,
+      });
+    }
+  }
+
+  private sessionRootByApproval(request: ApprovalRequest): string | null {
+    const recorded = this.approvalRoots.get(request.sessionId);
+    if (recorded !== undefined) return recorded;
+    for (const rootId of this.runtime.keys()) {
+      const session = this.deps.store.getDirectSession(rootId);
+      if (session?.session_id === request.sessionId) return rootId;
+    }
+    return null;
+  }
+
+  private async stampApprovalCard(requestID: string): Promise<void> {
+    const entry = this.approvalCards.get(requestID);
+    const resolution = this.approvals.resolutionOf(requestID);
+    if (!entry || !resolution || resolution.state === "pending") return;
+    const update = this.deps.feishu.updateCard;
+    if (!update) {
+      this.approvalCards.delete(requestID);
+      return;
+    }
+    const card = buildApprovalCard(
+      {
+        rootId: entry.rootId,
+        turn: this.turnNow(entry.rootId),
+        requestID,
+        action: entry.request.action,
+        resources: entry.request.resources,
+        save: entry.request.save,
+      },
+      approvalCardResolution(resolution.state, resolution.decision),
+    );
+    try {
+      await update.call(this.deps.feishu, entry.messageId, card);
+      this.approvalCards.delete(requestID);
+    } catch (e) {
+      this.deps.logger.warn("approval card stamp failed", {
+        request_id: requestID,
+        error: toTaskingError(e).message,
+      });
+    }
+  }
+
+  private async handleApprovalAction(
+    name: string,
+    value: DirectCardActionValue,
+  ): Promise<CardActionReply> {
+    const requestID = typeof value.request_id === "string" ? value.request_id : null;
+    if (!requestID) {
+      return { toast: { type: "error", content: "审批单标识缺失，无法处理" } };
+    }
+    const decision: PermissionDecision =
+      name === "approve_once" ? "once" : name === "approve_always" ? "always" : "reject";
+    const outcome = await this.approvals.reply(requestID, decision);
+    const toast =
+      outcome === "replied"
+        ? { type: "success" as const, content: decision === "reject" ? "已拒绝" : "已允许" }
+        : outcome === "already"
+          ? { type: "info" as const, content: "该审批已处理" }
+          : outcome === "unknown"
+            ? { type: "warning" as const, content: "审批单不存在或已过期" }
+            : { type: "error" as const, content: "审批提交失败，请重试" };
+    const card =
+      outcome === "replied" || outcome === "already"
+        ? this.stampedApprovalCard(requestID)
+        : undefined;
+    return { toast, ...(card !== undefined ? { card } : {}) };
+  }
+
+  private stampedApprovalCard(requestID: string): unknown | undefined {
+    const request = this.approvals.requestOf(requestID);
+    if (!request) return undefined;
+    const resolution = this.approvals.resolutionOf(requestID);
+    if (!resolution || resolution.state === "pending") return undefined;
+    const rootId = this.approvalRoots.get(request.sessionId) ?? "";
+    return buildApprovalCard(
+      {
+        rootId,
+        turn: this.turnNow(rootId),
+        requestID,
+        action: request.action,
+        resources: request.resources,
+        ...(request.save ? { save: request.save } : {}),
+        kind: "direct",
+      },
+      approvalCardResolution(resolution.state, resolution.decision),
+    );
+  }
+
+  private async applySessionPosture(
+    session: DirectSession,
+    rt: SessionRuntime,
+    open: boolean,
+  ): Promise<void> {
+    const sessionId = session.session_id;
+    if (!sessionId) {
+      rt.postureOpen = open;
+      return;
+    }
+    const cfg = this.deps.config();
+    try {
+      await setSessionPermissions(
+        this.deps.apiExec ?? defaultApiExec(),
+        { command: cfg.opencode.command, serverUrl: cfg.opencode.server_url },
+        sessionId,
+        open ? ALLOW_ALL_RULES : null,
+      );
+      rt.postureOpen = open;
+    } catch (e) {
+      this.deps.logger.warn("session posture update failed", {
+        root_id: session.root_id,
+        open,
+        error: toTaskingError(e).message,
+      });
+    }
+  }
+
+  private async handlePermissionAction(
     name: string,
     session: DirectSession,
     rt: SessionRuntime,
-  ): CardActionReply {
+  ): Promise<CardActionReply> {
     const card = (confirm: boolean): { card?: unknown } => {
       const built = this.permissionCard(session, rt, confirm);
       return built === null ? {} : { card: built };
@@ -312,6 +532,7 @@ export class DirectSessionManager {
         rt.autoOnce = false;
         rt.turnUsedOnce = false;
         this.deps.store.updateDirectSession(session.root_id, { auto_approve_override: null });
+        await this.applySessionPosture(fresh, rt, false);
         return { toast: { type: "success", content: "已收回权限放开" }, ...card(false) };
       }
       return { toast: { type: "warning", content: "请确认是否放开权限" }, ...card(true) };
@@ -321,8 +542,9 @@ export class DirectSessionManager {
       return { toast: { type: "success", content: "已设置为仅下一轮放开" }, ...card(false) };
     }
     this.deps.store.updateDirectSession(session.root_id, { auto_approve_override: "on" });
+    await this.applySessionPosture(fresh, rt, true);
     return {
-      toast: { type: "success", content: "已放开本会话权限（下一轮生效）" },
+      toast: { type: "success", content: "已放开本会话权限（立即生效）" },
       ...card(false),
     };
   }
@@ -333,6 +555,18 @@ export class DirectSessionManager {
     const state: TurnCardState = {
       ...rt.turn,
       autoPosture: this.turnAutoPosture(fresh, rt),
+      ...(rt.waitingApproval
+        ? {
+            waitingRemainingMs:
+              rt.waitingSince !== null
+                ? Math.max(
+                    0,
+                    this.deps.config().opencode.permission_timeout_ms -
+                      (Date.now() - rt.waitingSince),
+                  )
+                : null,
+          }
+        : {}),
       agentOverride: fresh.agent_override,
     };
     if (confirm) state.confirmPermission = true;
@@ -462,7 +696,7 @@ export class DirectSessionManager {
         ? translate("🔓 本会话放开")
         : current === "once"
           ? translate("⚡ 仅下一轮放开")
-          : translate("🔒 默认（不传 --auto）");
+          : translate("🔒 默认（跟随项目配置）");
     return buildInfoCard({
       title: "🔐 权限姿态",
       rootId: session.root_id,
@@ -840,9 +1074,32 @@ export class DirectSessionManager {
     return true;
   }
 
+  async deleteSessionByRoot(rootId: string, operator?: string): Promise<boolean> {
+    const session = this.deps.store.getDirectSession(rootId);
+    if (!session) return false;
+    if (session.status === "done" || session.status === "expired") return true;
+    await this.executeDone(session, operator ?? "TUI");
+    return true;
+  }
+
   async recover(): Promise<void> {
     const running = this.deps.store.listDirectSessionsByStatus("running");
     for (const s of running) {
+      if (s.session_id && this.deps.interruptSession) {
+        try {
+          await this.deps.interruptSession(s.session_id);
+          this.deps.logger.info("direct session interrupted on restart", {
+            root_id: s.root_id,
+            session_id: s.session_id,
+          });
+        } catch (e) {
+          this.deps.logger.warn("direct session interrupt on restart failed", {
+            root_id: s.root_id,
+            session_id: s.session_id,
+            error: toTaskingError(e).message,
+          });
+        }
+      }
       this.deps.store.markDirectSessionStatus(s.root_id, "idle");
       await this.finalizeStoredCard(
         s,
@@ -919,6 +1176,18 @@ export class DirectSessionManager {
         input_tokens: s.input_tokens,
         output_tokens: s.output_tokens,
         total_tokens: s.total_tokens,
+        ...(rt?.waitingApproval
+          ? {
+              waiting_approval: true,
+              waiting_remaining_ms:
+                rt.waitingSince !== null
+                  ? Math.max(
+                      0,
+                      config.opencode.permission_timeout_ms - (Date.now() - rt.waitingSince),
+                    )
+                  : null,
+            }
+          : {}),
       };
     });
   }
@@ -1064,6 +1333,13 @@ export class DirectSessionManager {
         flushedTools: 0,
         autoOnce: false,
         turnUsedOnce: false,
+        postureOpen: false,
+        appliedAgent: null,
+        appliedModel: null,
+        contextTokens: 0,
+        waitingApproval: false,
+        waitingSince: null,
+        seenMessages: new Map<string, string>(),
         heartbeatTimer: null,
         collect: null,
         collectTimer: null,
@@ -1171,6 +1447,7 @@ export class DirectSessionManager {
       sessionStatus: busy ? "queued" : fresh.status,
       turns: fresh.turns,
       totalTokens: fresh.total_tokens,
+      contextTokens: rt.contextTokens,
       queued: rt.queue.length,
       turn: fresh.turns + 1,
       phase: "running",
@@ -1185,6 +1462,8 @@ export class DirectSessionManager {
     rt.turnUsedOnce = false;
     rt.turnStartedAt = 0;
     rt.flushedTools = 0;
+    rt.waitingApproval = false;
+    rt.waitingSince = null;
     rt.fullDetail = [];
     rt.fullDetailBytes = 0;
     rt.fullDetailDropped = 0;
@@ -1296,10 +1575,19 @@ export class DirectSessionManager {
       turn.sessionName = fresh.name ?? sessionName(fresh.path);
       turn.autoPosture = this.turnAutoPosture(fresh, rt);
       turn.agentOverride = fresh.agent_override;
+      turn.waitingRemainingMs = rt.waitingApproval
+        ? rt.waitingSince !== null
+          ? Math.max(
+              0,
+              this.deps.config().opencode.permission_timeout_ms - (Date.now() - rt.waitingSince),
+            )
+          : null
+        : undefined;
       if (rt.turnStartedAt > 0) {
         turn.sessionStatus = fresh.status;
         turn.turns = fresh.turns;
         turn.totalTokens = fresh.total_tokens;
+        turn.contextTokens = rt.contextTokens;
       }
     }
     turn.queued = rt.queue.length;
@@ -1351,7 +1639,7 @@ export class DirectSessionManager {
     await this.replySafe(rootId, truncate(toolTextLines(pending), 2000));
   }
 
-  private accumulateTool(rt: SessionRuntime, evt: OpencodeEvent): void {
+  private accumulateTool(rt: SessionRuntime, evt: TurnDriverEvent): void {
     const panel: TurnCardToolEvent = { tool: evt.tool ?? "tool" };
     if (evt.title !== undefined) panel.title = evt.title;
     if (evt.status !== undefined) panel.status = evt.status;
@@ -1556,24 +1844,27 @@ export class DirectSessionManager {
     const sessionId = session.session_id;
     const isFirstTurn = sessionId === null;
     const autoApprove = this.resolveTurnAutoApprove(session, rt);
-    const cmd = buildDirectCommand({
-      opencodeCommand: config.opencode.command,
-      dir: session.path,
-      message: prompt,
-      sessionId,
-      autoApprove,
-      agent: session.agent_override ?? config.opencode.agent,
-      model: session.model_override ?? config.opencode.model,
-      variant: config.opencode.variant,
-    });
+    const effectiveAgent = session.agent_override ?? config.opencode.agent;
+    const effectiveModel = session.model_override ?? config.opencode.model;
+    const switchAgent = effectiveAgent !== rt.appliedAgent;
+    const switchModel = effectiveModel !== rt.appliedModel;
     this.deps.logger.info("direct turn starting", {
       root_id: session.root_id,
       dir: session.path,
-      agent: session.agent_override ?? config.opencode.agent,
-      model: session.model_override ?? config.opencode.model ?? null,
+      agent: effectiveAgent,
+      model: effectiveModel ?? null,
       auto_approve: autoApprove,
       continuation: !isFirstTurn,
-      cmd: cmd.slice(0, -1).join(" "),
+      session_id: sessionId ?? undefined,
+      switch_agent: switchAgent,
+      switch_model: switchModel,
+      poll_interval_ms: config.opencode.poll_interval_ms,
+      tasking_version: readTaskingVersion(),
+      command: describeApiCommand({
+        command: config.opencode.command,
+        operation: "session.prompt",
+        serverUrl: config.opencode.server_url,
+      }),
       message: truncate(prompt, 60),
     });
     this.deps.store.updateDirectSession(session.root_id, { status: "running" });
@@ -1604,7 +1895,7 @@ export class DirectSessionManager {
     const abort = new AbortController();
     rt.abort = abort;
 
-    const onEvent = (evt: OpencodeEvent): void => {
+    const onEvent = (evt: TurnDriverEvent): void => {
       if (evt.type === "tool_use") {
         stats.toolCalls++;
         if (
@@ -1629,7 +1920,13 @@ export class DirectSessionManager {
         const activity: ActivityEvent = { ts: Date.now(), turn: turnNo, type: evt.type };
         if (evt.text !== undefined) activity.text = evt.text;
         if (evt.tool !== undefined) activity.tool = evt.tool;
-        if (evt.tokens !== undefined) activity.tokens = evt.tokens;
+        if (evt.usage !== undefined) {
+          activity.tokens = {
+            input: evt.usage.input_tokens,
+            output: evt.usage.output_tokens,
+            total: evt.usage.total_tokens,
+          };
+        }
         if (evt.title !== undefined) activity.title = evt.title;
         if (evt.input !== undefined) activity.input = evt.input;
         if (evt.output !== undefined) activity.output = evt.output;
@@ -1642,16 +1939,38 @@ export class DirectSessionManager {
       }
     };
 
-    let result: SubprocessResult;
+    const turnDriver =
+      this.deps.turnDriver ?? defaultDriverFor(this.deps.apiExec ?? defaultApiExec());
+    let result: Awaited<ReturnType<DirectTurnDriver>>;
     try {
-      result = await (this.deps.spawn ?? defaultSpawn)(
-        cmd,
-        session.path,
-        config.opencode.turn_timeout_ms,
-        config.opencode.inactivity_timeout_ms,
-        abort.signal,
+      result = await turnDriver({
+        command: config.opencode.command,
+        serverUrl: config.opencode.server_url,
+        directory: session.path,
+        prompt,
+        sessionId,
+        autoApprove,
+        postureOpen: rt.postureOpen,
+        agent: effectiveAgent,
+        model: effectiveModel,
+        variant: config.opencode.variant,
+        switchAgent,
+        switchModel,
+        pollIntervalMs: config.opencode.poll_interval_ms,
+        permissionTimeoutMs: config.opencode.permission_timeout_ms,
+        turnTimeoutMs: config.opencode.turn_timeout_ms,
+        inactivityTimeoutMs: config.opencode.inactivity_timeout_ms,
+        sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
         onEvent,
-      );
+        seenMessages: rt.seenMessages,
+        onPendingPermissions: (pending) => this.handlePendingPermissions(session.root_id, pending),
+        onPermissionReply: (requestID) => this.approvals.markExpired(requestID),
+        onWaitingForApproval: (waiting) => {
+          rt.waitingApproval = waiting;
+          rt.waitingSince = waiting ? Date.now() : null;
+        },
+        signal: abort.signal,
+      });
     } catch (e) {
       rt.abort = null;
       rt.queue = [];
@@ -1669,34 +1988,48 @@ export class DirectSessionManager {
     } finally {
       rt.abort = null;
       this.stopHeartbeat(rt);
+      rt.waitingApproval = false;
+      rt.waitingSince = null;
     }
 
     const durationSec = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
     const fresh = this.deps.store.getDirectSession(session.root_id);
     if (!fresh || fresh.status === "done" || fresh.status === "expired") return;
-
-    const extracted = result.sessionAndUsage;
-    if (extracted) {
-      stats.inputTokens = extracted.usage.input_tokens;
-      stats.outputTokens = extracted.usage.output_tokens;
-      stats.totalTokens = extracted.usage.total_tokens;
-      this.aggregate.inputTokens += extracted.usage.input_tokens;
-      this.aggregate.outputTokens += extracted.usage.output_tokens;
-      this.aggregate.totalTokens += extracted.usage.total_tokens;
-      this.deps.store.addDirectSessionUsage(session.root_id, extracted.usage, 0);
+    rt.postureOpen = result.postureOpened;
+    if (result.contextTokens !== undefined && result.contextTokens > rt.contextTokens) {
+      rt.contextTokens = result.contextTokens;
     }
-    if (extracted?.session_id) {
-      this.deps.store.updateDirectSession(session.root_id, { session_id: extracted.session_id });
+    if (isFirstTurn || result.agentSwitched !== false) {
+      rt.appliedAgent = effectiveAgent;
+    }
+    if (isFirstTurn || result.modelSwitched !== false) {
+      rt.appliedModel = effectiveModel;
     }
 
-    if (rt.stopRequested) {
+    const usage = result.usage;
+    if (usage) {
+      stats.inputTokens = usage.input_tokens;
+      stats.outputTokens = usage.output_tokens;
+      stats.totalTokens = usage.total_tokens;
+      this.aggregate.inputTokens += usage.input_tokens;
+      this.aggregate.outputTokens += usage.output_tokens;
+      this.aggregate.totalTokens += usage.total_tokens;
+      this.deps.store.addDirectSessionUsage(session.root_id, usage, 0);
+    }
+    if (result.sessionId) {
+      this.deps.store.updateDirectSession(session.root_id, { session_id: result.sessionId });
+    }
+    this.approvals.cancelAll(result.sessionId);
+
+    if (result.status === "interrupted" || rt.stopRequested) {
       this.deps.store.markDirectSessionStatus(session.root_id, "idle");
       await this.finalizeTurnCard(session.root_id, "interrupted", stats, durationSec);
       return;
     }
-    if (result.timedOut) {
-      const reason =
-        result.timedOutReason === "inactivity" ? translate("无输出超时") : translate("整体超时");
+    if (result.status === "timed_out") {
+      const reason = result.error?.includes("inactivity_timeout")
+        ? translate("无输出超时")
+        : translate("整体超时");
       this.deps.store.markDirectSessionStatus(session.root_id, "idle");
       await this.finalizeTurnCard(session.root_id, "failed", stats, durationSec);
       await this.replySafe(
@@ -1705,12 +2038,12 @@ export class DirectSessionManager {
       );
       return;
     }
-    if (result.exitCode !== 0) {
+    if (result.status === "failed" || result.status === "error") {
       this.deps.store.markDirectSessionStatus(session.root_id, "idle");
       await this.finalizeTurnCard(session.root_id, "failed", stats, durationSec, true);
       await this.replySafe(
         session.root_id,
-        `⚠️ 本轮未完成（退出码 ${result.exitCode}，${durationSec}s）。${stats.lastText ? `\n\n${truncate(stats.lastText)}` : ""}`.trim(),
+        `⚠️ 本轮未完成（${result.error ?? result.status}，${durationSec}s）。${stats.lastText ? `\n\n${truncate(stats.lastText)}` : ""}`.trim(),
       );
       return;
     }
@@ -1956,7 +2289,7 @@ export class DirectSessionManager {
         ? "🔓 本会话放开"
         : postureNow === "once"
           ? "⚡ 仅下一轮放开"
-          : "🔒 默认（不传 --auto）";
+          : "🔒 默认（跟随项目配置）";
     return [
       `当前权限姿态：${current}`,
       this.autoSourceLabel(session),

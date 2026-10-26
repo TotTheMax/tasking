@@ -106,7 +106,38 @@ describe("resolver", () => {
     expect(cfg.agent.max_concurrent_agents).toBe(10);
     expect(cfg.agent.max_retry_backoff_ms).toBe(300000);
     expect(cfg.hooks.timeout_ms).toBe(60000);
-    expect(cfg.opencode.command).toBe("opencode run");
+    expect(cfg.opencode.command).toBe("opencode");
+  });
+
+  it("applies v2 opencode defaults", () => {
+    const cfg = resolveConfig({}, "/tmp", "prompt");
+    expect(cfg.opencode.poll_interval_ms).toBe(2000);
+    expect(cfg.opencode.permission_timeout_ms).toBe(1800000);
+    expect(cfg.opencode.server_url).toBeNull();
+  });
+
+  it("resolves v2 opencode keys from raw config", () => {
+    const cfg = resolveConfig(
+      {
+        opencode: {
+          command: "/usr/local/bin/opencode",
+          poll_interval_ms: 1000,
+          permission_timeout_ms: 7200000,
+          server_url: "http://127.0.0.1:48123",
+        },
+      },
+      "/tmp",
+      "prompt",
+    );
+    expect(cfg.opencode.command).toBe("/usr/local/bin/opencode");
+    expect(cfg.opencode.poll_interval_ms).toBe(1000);
+    expect(cfg.opencode.permission_timeout_ms).toBe(7200000);
+    expect(cfg.opencode.server_url).toBe("http://127.0.0.1:48123");
+  });
+
+  it("resolves empty server_url string to null", () => {
+    const cfg = resolveConfig({ opencode: { server_url: "" } }, "/tmp", "prompt");
+    expect(cfg.opencode.server_url).toBeNull();
   });
 
   it("defaults interface_language to zh", () => {
@@ -892,7 +923,7 @@ describe("tracker.kind: none (trackerless deployments)", () => {
       "/tmp",
       "p",
     );
-    expect(cfg.opencode.command).toBe("opencode run");
+    expect(cfg.opencode.command).toBe("opencode");
     expect(validateDispatchConfig(cfg).ok).toBe(true);
     expect(
       validateDispatchConfig(cfg).errors.some((e) => e.category === "missing_opencode_command"),

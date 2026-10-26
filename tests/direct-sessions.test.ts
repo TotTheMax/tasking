@@ -8,13 +8,13 @@ import { BindingStore as BindingStoreImpl } from "../src/bridge/binding-store.js
 import type { EffectiveConfig } from "../src/config/config-types.js";
 import { DEFAULTS, type DirectConfig } from "../src/config/config-types.js";
 import { resolveConfig } from "../src/config/resolver.js";
-import { buildDirectCommand } from "../src/direct/command.js";
+import type { DirectTurnOutcome } from "../src/direct/driver.js";
 import { type DirectFeishuPort, DirectSessionManager } from "../src/direct/manager.js";
+import type { TurnDriverEvent } from "../src/driver/turn-driver.js";
 import type { ActivityEvent } from "../src/observability/activity-store.js";
 import { TaskingError } from "../src/shared/errors.js";
 import { translateCard } from "../src/translate/card.js";
 import { setLocale, translate } from "../src/translate/locale.js";
-import type { OpencodeEvent, SubprocessResult } from "../src/worker/runner.js";
 
 let workdir: string;
 let dbPath: string;
@@ -151,40 +151,54 @@ class FakeFeishu {
 type SpawnCall = {
   cmd: string[];
   cwd: string;
-  onEvent?: (evt: OpencodeEvent) => void;
+  request: import("../../src/direct/driver.js").DirectTurnRequest;
+  onEvent?: (evt: TurnDriverEvent) => void;
   signal?: AbortSignal;
 };
 
 class FakeRunner {
   calls: SpawnCall[] = [];
-  private resolvers: Array<(r: SubprocessResult) => void> = [];
+  private resolvers: Array<(r: DirectTurnOutcome) => void> = [];
 
   spawn = (
-    cmd: string[],
-    cwd: string,
-    _timeout: number,
-    _inactivityTimeout: number,
-    signal?: AbortSignal,
-    onOpencodeEvent?: (evt: OpencodeEvent) => void,
-  ): Promise<SubprocessResult> => {
-    this.calls.push({ cmd, cwd, signal, onEvent: onOpencodeEvent });
-    return new Promise<SubprocessResult>((resolve) => {
+    request: import("../../src/direct/driver.js").DirectTurnRequest,
+  ): Promise<DirectTurnOutcome> => {
+    const cmd = [
+      "opencode",
+      "run",
+      "--dir",
+      request.directory,
+      ...(request.sessionId ? ["-s", request.sessionId] : []),
+      ...(request.autoApprove ? ["--auto"] : []),
+      ...(request.agent ? ["--agent", request.agent] : []),
+      ...(request.model ? ["--model", request.model] : []),
+      ...(request.variant ? ["--variant", request.variant] : []),
+      request.prompt,
+    ];
+    this.calls.push({
+      cmd,
+      cwd: request.directory,
+      request,
+      signal: request.signal,
+      onEvent: request.onEvent,
+    });
+    return new Promise<DirectTurnOutcome>((resolve) => {
       this.resolvers.push(resolve);
     });
   };
 
-  finish(index: number, events: OpencodeEvent[], exitCode = 0): void {
+  finish(index: number, events: TurnDriverEvent[], exitCode = 0): void {
     const call = this.calls[index];
     for (const evt of events) call?.onEvent?.(evt);
+    const status: DirectTurnOutcome["status"] =
+      exitCode === 0 ? "succeeded" : exitCode === 124 ? "timed_out" : "failed";
     this.resolvers[index]?.({
-      exitCode,
-      stdout: "",
-      stderr: "",
-      timedOut: false,
-      sessionAndUsage: {
-        session_id: events.find((e) => e.sessionId)?.sessionId ?? `ses_fake${this.calls.length}`,
-        usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
-      },
+      status,
+      sessionId:
+        (this.calls[index]?.request.sessionId as string | null) ?? `ses_fake${this.calls.length}`,
+      usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
+      error: status === "succeeded" ? null : `exit ${exitCode}`,
+      postureOpened: this.calls[index]?.request.autoApprove ?? false,
     });
   }
 
@@ -196,118 +210,13 @@ class FakeRunner {
   }
 }
 
-function textEvent(text: string): OpencodeEvent {
+function textEvent(text: string): TurnDriverEvent {
   return { type: "text", text, sessionId: "ses_fake1" };
 }
 
-function toolEvent(title: string, status: "completed" | "error" = "completed"): OpencodeEvent {
+function toolEvent(title: string, status: "completed" | "error" = "completed"): TurnDriverEvent {
   return { type: "tool_use", tool: "bash", title, status };
 }
-
-describe("buildDirectCommand", () => {
-  it("first turn: --format json, explicit --dir, no -s, no --auto, no --title", () => {
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/tasking",
-      message: "跑测试",
-      sessionId: null,
-      autoApprove: false,
-    });
-    expect(cmd).toContain("--format");
-    expect(cmd.indexOf("--dir")).toBeGreaterThanOrEqual(0);
-    expect(cmd[cmd.indexOf("--dir") + 1]).toBe("/repos/tasking");
-    expect(cmd).not.toContain("--title");
-    expect(cmd).not.toContain("-s");
-    expect(cmd).not.toContain("--auto");
-    expect(cmd[cmd.length - 1]).toBe("跑测试");
-  });
-
-  it("continuation: -s session, no --title", () => {
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/t",
-      message: "再看看",
-      sessionId: "ses_x",
-      autoApprove: false,
-    });
-    expect(cmd).toContain("-s");
-    expect(cmd[cmd.indexOf("-s") + 1]).toBe("ses_x");
-    expect(cmd).not.toContain("--title");
-  });
-
-  it("autoApprove passes --auto", () => {
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/t",
-      message: "hi",
-      sessionId: null,
-      autoApprove: true,
-    });
-    expect(cmd).toContain("--auto");
-  });
-
-  it("passes the configured agent/model/variant (Jira-path parity)", () => {
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/t",
-      message: "hi",
-      sessionId: null,
-      autoApprove: false,
-      agent: "build",
-      model: "deepseek/deepseek-v4-flash",
-      variant: "high",
-    });
-    expect(cmd[cmd.indexOf("--agent") + 1]).toBe("build");
-    expect(cmd[cmd.indexOf("--model") + 1]).toBe("deepseek/deepseek-v4-flash");
-    expect(cmd[cmd.indexOf("--variant") + 1]).toBe("high");
-    expect(cmd[cmd.length - 1]).toBe("hi");
-  });
-
-  it("omits agent/model/variant when unset or empty", () => {
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/t",
-      message: "hi",
-      sessionId: null,
-      autoApprove: false,
-      agent: "",
-      model: null,
-      variant: undefined,
-    });
-    expect(cmd).not.toContain("--agent");
-    expect(cmd).not.toContain("--model");
-    expect(cmd).not.toContain("--variant");
-  });
-
-  it("prompt invariant: the user's message is the sole prompt, verbatim — no template, no wrapper", () => {
-    const message = "帮我看下这个报错\n第二行";
-    const cmd = buildDirectCommand({
-      opencodeCommand: "opencode run",
-      dir: "/repos/t",
-      message,
-      sessionId: null,
-      autoApprove: false,
-      agent: "build",
-      model: "deepseek/deepseek-v4-flash",
-      variant: "high",
-    });
-    expect(cmd).toEqual([
-      "opencode",
-      "run",
-      "--format",
-      "json",
-      "--dir",
-      "/repos/t",
-      "--agent",
-      "build",
-      "--model",
-      "deepseek/deepseek-v4-flash",
-      "--variant",
-      "high",
-      message,
-    ]);
-  });
-});
 
 describe("DirectSessionManager", () => {
   it("creates a session from /chat <project>, ACKs, runs first turn, posts summary", async () => {
@@ -318,7 +227,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     const root = msg({ message_id: "om_root1", text: "/chat tasking 帮我跑一下测试" });
     const handled = await mgr.handleIntakeMessage(root);
@@ -357,7 +266,7 @@ describe("DirectSessionManager", () => {
       store,
       config: () => cfg,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_root_cfg", text: "/chat tasking 你好" }));
     await runner.waitForCall(1);
@@ -376,7 +285,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     const handled = await mgr.handleIntakeMessage(
       msg({ message_id: "om_root2", text: "/chat nope 你好" }),
@@ -397,7 +306,7 @@ describe("DirectSessionManager", () => {
         store,
         config: () => directConfig({ path_roots: ["/repos"] }),
         logger: fakeLogger(),
-        spawn: runner.spawn,
+        turnDriver: runner.spawn,
       });
       const handled = await mgr.handleIntakeMessage(
         msg({ message_id: "om_root3", text: `/chat ${target} 看看这个目录` }),
@@ -419,7 +328,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_root4", text: "/chat tasking 第一问" }));
     await runner.waitForCall(1);
@@ -456,7 +365,7 @@ describe("DirectSessionManager", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_root5", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
@@ -481,7 +390,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_root6", text: "/chat tasking 改文件" }));
     await runner.waitForCall(1);
@@ -501,7 +410,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       deleteSession: async (sid) => {
         deleted.push(sid);
       },
@@ -543,7 +452,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       activity: (_k, evt) => recorded.push(evt),
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_act", text: "/chat tasking 干活" }));
@@ -580,7 +489,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_mid", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
@@ -605,7 +514,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(
       msg({ message_id: "om_tok", text: "/chat tasking 帮我看看 token 统计\n第二行" }),
@@ -632,7 +541,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: new FakeRunner().spawn,
+      turnDriver: new FakeRunner().spawn,
     });
     const restored = mgr2.listActive().find((d) => d.root_id === "om_tok");
     expect(restored?.turns).toBe(1);
@@ -661,7 +570,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_dupchat", text: "/chat tasking 首问" }));
     await runner.waitForCall(1);
@@ -689,7 +598,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       deleteSession: async () => {},
       clearActivity: () => {},
     });
@@ -723,7 +632,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_root8", text: "/chat tasking 长任务" }));
     await runner.waitForCall(1);
@@ -744,7 +653,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_sd1", text: "/chat tasking 长任务" }));
     await runner.waitForCall(1);
@@ -767,7 +676,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_q1", text: "/chat tasking 任务一" }));
     await runner.waitForCall(1);
@@ -796,7 +705,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.recover();
     expect(store.getDirectSession("om_old")?.status).toBe("idle");
@@ -819,7 +728,7 @@ describe("DirectSessionManager", () => {
       store,
       config: () => directConfig({ idle_ttl_ms: 1000 }),
       logger: fakeLogger(),
-      spawn: new FakeRunner().spawn,
+      turnDriver: new FakeRunner().spawn,
       deleteSession: async (sid) => {
         deleted.push(sid);
       },
@@ -840,7 +749,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_la", text: "/chat tasking 一号" }));
     await runner.waitForCall(1);
@@ -868,7 +777,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_root9", text: "/chat tasking 一" }));
     await runner.waitForCall(1);
@@ -896,7 +805,7 @@ describe("DirectSessionManager", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_root10", text: "/chat tasking 崩一下" }));
     await runner.waitForCall(1);
@@ -930,7 +839,7 @@ describe("DirectSessionManager sweep backstop", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -990,7 +899,7 @@ describe("DirectSessionManager review fixes", () => {
       store,
       config,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -1103,7 +1012,7 @@ describe("DirectSessionManager coverage gaps (review TAS-41)", () => {
       store,
       config,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -1210,7 +1119,7 @@ describe("DirectSessionManager verbosity levels", () => {
       store,
       config: () => directConfig({ verbosity: "quiet" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_q1", text: "/chat tasking 安静点" }));
     await runner.waitForCall(1);
@@ -1231,7 +1140,7 @@ describe("DirectSessionManager verbosity levels", () => {
       store,
       config: () => directConfig({ verbosity: "quiet" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_q2", text: "/chat tasking 改文件" }));
     await runner.waitForCall(1);
@@ -1259,7 +1168,7 @@ describe("DirectSessionManager adversarial review fixes (TAS-41)", () => {
       store,
       config,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -1273,11 +1182,11 @@ describe("DirectSessionManager adversarial review fixes (TAS-41)", () => {
     try {
       let concurrent = 0;
       let peak = 0;
-      const pending: Array<(r: SubprocessResult) => void> = [];
-      const spawn = async (): Promise<SubprocessResult> => {
+      const pending: Array<(r: DirectTurnOutcome) => void> = [];
+      const spawn = async (): Promise<DirectTurnOutcome> => {
         concurrent++;
         peak = Math.max(peak, concurrent);
-        return new Promise<SubprocessResult>((resolve) => {
+        return new Promise<DirectTurnOutcome>((resolve) => {
           pending.push((r) => {
             concurrent--;
             resolve(r);
@@ -1289,7 +1198,7 @@ describe("DirectSessionManager adversarial review fixes (TAS-41)", () => {
         store,
         config: () => directConfig({ max_concurrent: 2 }),
         logger: fakeLogger(),
-        spawn: spawn as never,
+        turnDriver: spawn as never,
       });
       for (const [i, dir] of dirs.entries()) {
         await mgr.handleIntakeMessage(msg({ message_id: `om_cap${i}`, text: `/chat ${dir} 任务` }));
@@ -1302,14 +1211,11 @@ describe("DirectSessionManager adversarial review fixes (TAS-41)", () => {
       }
       for (const resolve of pending.splice(0)) {
         resolve({
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-          timedOut: false,
-          sessionAndUsage: {
-            session_id: "ses_cap",
-            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-          },
+          status: "succeeded",
+          sessionId: "ses_cap",
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          error: null,
+          postureOpened: false,
         });
         await new Promise((r) => setTimeout(r, 30));
       }
@@ -1318,14 +1224,11 @@ describe("DirectSessionManager adversarial review fixes (TAS-41)", () => {
       }
       for (const resolve of pending.splice(0)) {
         resolve({
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-          timedOut: false,
-          sessionAndUsage: {
-            session_id: "ses_cap",
-            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-          },
+          status: "succeeded",
+          sessionId: "ses_cap",
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          error: null,
+          postureOpened: false,
         });
         await new Promise((r) => setTimeout(r, 30));
       }
@@ -1401,21 +1304,18 @@ describe("DirectSessionManager adversarial review fixes (TAS-41)", () => {
     const feishu = new FakeFeishu();
     let rejectFirst = true;
     const calls: string[][] = [];
-    const spawn = async (cmd: string[]): Promise<SubprocessResult> => {
+    const spawn = async (): Promise<DirectTurnOutcome> => {
       if (rejectFirst) {
         rejectFirst = false;
         throw new Error("spawn ENOENT");
       }
-      calls.push(cmd);
+      calls.push(["ok"]);
       return {
-        exitCode: 0,
-        stdout: "",
-        stderr: "",
-        timedOut: false,
-        sessionAndUsage: {
-          session_id: "ses_ok",
-          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-        },
+        status: "succeeded",
+        sessionId: "ses_ok",
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        error: null,
+        postureOpened: false,
       };
     };
     const mgr = new DirectSessionManager({
@@ -1423,7 +1323,7 @@ describe("DirectSessionManager adversarial review fixes (TAS-41)", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: spawn as never,
+      turnDriver: spawn as never,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_sp1", text: "/chat tasking 会挂" }));
     await mgr.whenIdle();
@@ -1482,7 +1382,7 @@ describe("DirectSessionManager adversarial review fixes (TAS-41)", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_fl", text: "/chat tasking 测试" }));
     await runner.waitForCall(1);
@@ -1512,7 +1412,7 @@ describe("DirectSessionManager adversarial review fixes (TAS-41)", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     const handled = await mgr2.handleThreadMessage(
       msg({ message_id: "om_edge", root_id: "om_rs", text: "边界消息", create_time: "1700000080" }),
@@ -1532,7 +1432,7 @@ describe("DirectSessionManager UX review fixes (TAS-41)", () => {
       store,
       config,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -1684,7 +1584,7 @@ describe("DirectSessionManager stop-then-continue regression", () => {
       store: store2,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     try {
       await mgr.handleIntakeMessage(msg({ message_id: "om_sr1", text: "/chat tasking 长" }));
@@ -1739,7 +1639,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       cardRetryDelayMs: extra.cardRetryDelayMs ?? 0,
     });
     return { feishu, runner, mgr };
@@ -1856,7 +1756,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_du1", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
@@ -1900,7 +1800,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       cardRetryDelayMs: 0,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_rc1", text: "/chat tasking 干活" }));
@@ -1943,7 +1843,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       cardRetryDelayMs: 50,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_dr1", text: "/chat tasking 干活" }));
@@ -1978,7 +1878,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       cardRetryDelayMs: 0,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_dr2", text: "/chat tasking 干活" }));
@@ -2018,7 +1918,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       cardRetryDelayMs: 0,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_dr3", text: "/chat tasking 第一轮" }));
@@ -2058,7 +1958,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       cardRetryDelayMs: 0,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_dr5", text: "/chat tasking 干活" }));
@@ -2093,7 +1993,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       cardRetryDelayMs: 0,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_dr6", text: "/chat tasking 干活" }));
@@ -2129,7 +2029,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       cardRetryDelayMs: 200,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_dr7", text: "/chat tasking 第一轮" }));
@@ -2168,7 +2068,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       cardRetryDelayMs: 0,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_dc1", text: "/chat tasking 干活" }));
@@ -2189,7 +2089,7 @@ describe("DirectSessionManager turn card actions", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -2325,7 +2225,7 @@ describe("DirectSessionManager full output on demand", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -2475,7 +2375,7 @@ describe("DirectSessionManager summary mode stays card-free", () => {
       store,
       config: () => directConfig(),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_sm1", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
@@ -2513,7 +2413,7 @@ describe("DirectSessionManager card update resilience", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       cardRetryDelayMs: 0,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_rt1", text: "/chat tasking 干活" }));
@@ -2533,7 +2433,7 @@ describe("DirectSessionManager card update resilience", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_ff1", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
@@ -2561,7 +2461,7 @@ describe("DirectSessionManager completion delivery (detailed)", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -2614,7 +2514,7 @@ describe("DirectSessionManager card-action observability", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(lines),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_ob1", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
@@ -2650,7 +2550,7 @@ describe("DirectSessionManager /done copy", () => {
       store,
       config: () => directConfig(),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_pl1", text: "/chat tasking 一" }));
     await runner.waitForCall(1);
@@ -2681,7 +2581,7 @@ describe("DirectSessionManager operator names", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -2773,7 +2673,7 @@ describe("DirectSessionManager intake guard is silent", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -2826,7 +2726,7 @@ describe("DirectSessionManager session controls", () => {
       store,
       config: () => directConfig({ verbosity: "detailed", ...over }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -3035,7 +2935,7 @@ describe("DirectSessionManager running heartbeat", () => {
         store,
         config: () => directConfig({ verbosity: "detailed" }),
         logger: fakeLogger(),
-        spawn: runner.spawn,
+        turnDriver: runner.spawn,
       });
       const created = mgr.handleIntakeMessage(
         msg({ message_id: "om_hb", text: "/chat tasking 干活" }),
@@ -3068,7 +2968,7 @@ describe("DirectSessionManager permission button", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     return { feishu, runner, mgr };
   }
@@ -3132,7 +3032,7 @@ describe("DirectSessionManager permission re-open after cancel", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_rc1", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
@@ -3178,7 +3078,7 @@ describe("DirectSessionManager running heartbeat", () => {
         store,
         config: () => directConfig({ verbosity: "detailed" }),
         logger: fakeLogger(),
-        spawn: runner.spawn,
+        turnDriver: runner.spawn,
       });
       const created = mgr.handleIntakeMessage(
         msg({ message_id: "om_hb", text: "/chat tasking 干活" }),
@@ -3212,7 +3112,7 @@ describe("DirectSessionManager /new deletes the abandoned session", () => {
       store,
       config: () => directConfig(),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       deleteSession: async (sessionId) => {
         deleted.push(sessionId);
       },
@@ -3237,6 +3137,355 @@ describe("DirectSessionManager /new deletes the abandoned session", () => {
   });
 });
 
+describe("DirectSessionManager cross-turn dedup", () => {
+  it("reuses one seen-message map across turns of a session", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "summary" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dedup", text: "/chat tasking 第一问" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("答一")]);
+    await mgr.whenIdle();
+    await mgr.handleThreadMessage(
+      msg({
+        message_id: "om_dedup2",
+        root_id: "om_dedup",
+        text: "第二问",
+        create_time: "1700000100",
+      }),
+    );
+    await runner.waitForCall(2);
+    const first = runner.calls[0]?.request.seenMessages;
+    const second = runner.calls[1]?.request.seenMessages;
+    expect(first).toBeDefined();
+    expect(second).toBe(first);
+    runner.finish(1, [textEvent("答二")]);
+    await mgr.whenIdle();
+  });
+});
+
+describe("DirectSessionManager agent/model override takes effect on the next turn", () => {
+  it("flags switch_agent only after the override changes", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "summary" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_ag1", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("答一")]);
+    await mgr.whenIdle();
+
+    // Unchanged continuation: the default agent was already applied at create.
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_ag2", root_id: "om_ag1", text: "继续", create_time: "1700000100" }),
+    );
+    await runner.waitForCall(2);
+    expect(runner.calls[1]?.request.switchAgent).toBe(false);
+    runner.finish(1, [textEvent("答二")]);
+    await mgr.whenIdle();
+
+    // Override the agent, then continue: the next turn must ask to switch.
+    await mgr.handleThreadMessage(
+      msg({
+        message_id: "om_ag3",
+        root_id: "om_ag1",
+        text: "/agent review",
+        create_time: "1700000200",
+      }),
+    );
+    await mgr.whenIdle();
+    await mgr.handleThreadMessage(
+      msg({
+        message_id: "om_ag4",
+        root_id: "om_ag1",
+        text: "再继续",
+        create_time: "1700000300",
+      }),
+    );
+    await runner.waitForCall(3);
+    expect(runner.calls[2]?.request.agent).toBe("review");
+    expect(runner.calls[2]?.request.switchAgent).toBe(true);
+    runner.finish(2, [textEvent("答三")]);
+    await mgr.whenIdle();
+  });
+
+  it("recover() interrupts the server-side turn of a running session", async () => {
+    const interrupted: string[] = [];
+    const feishu = new FakeFeishu();
+    let signalStarted: (() => void) | null = null;
+    const turnStarted = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "summary" }),
+      logger: fakeLogger(),
+      turnDriver: () => {
+        signalStarted?.();
+        return new Promise(() => {});
+      },
+      interruptSession: async (sid) => {
+        interrupted.push(sid);
+      },
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_rec1", text: "/chat tasking 干活" }));
+    await turnStarted;
+    store.updateDirectSession("om_rec1", { session_id: "ses_rec1" });
+    store.markDirectSessionStatus("om_rec1", "running");
+    await mgr.recover();
+    expect(interrupted).toEqual(["ses_rec1"]);
+    expect(store.getDirectSession("om_rec1")?.status).toBe("idle");
+  });
+
+  it("deleteSessionByRoot marks done and cleans up the opencode session", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const deleted: string[] = [];
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "summary" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      deleteSession: async (sid) => {
+        deleted.push(sid);
+      },
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_del1", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("答")]);
+    await mgr.whenIdle();
+    const sessionId = store.getDirectSession("om_del1")?.session_id ?? "";
+
+    expect(await mgr.deleteSessionByRoot("om_del1", "TUI")).toBe(true);
+    expect(store.getDirectSession("om_del1")?.status).toBe("done");
+    expect(deleted).toEqual([sessionId]);
+    expect(await mgr.deleteSessionByRoot("om_nonexistent")).toBe(false);
+    expect(await mgr.deleteSessionByRoot("om_del1")).toBe(true);
+  });
+
+  it("carries the live context size onto the turn card header", async () => {
+    const feishu = new FakeFeishu();
+    let turn = 0;
+    const driver = async () => {
+      turn += 1;
+      return {
+        status: "succeeded" as const,
+        sessionId: `ses_ctx_${turn}`,
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        error: null,
+        postureOpened: false,
+        contextTokens: turn === 1 ? 120_000 : 660_000,
+      };
+    };
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: driver as never,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_ctx1", text: "/chat tasking 干活" }));
+    await mgr.whenIdle();
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_ctx2", root_id: "om_ctx1", text: "继续", create_time: "1700000100" }),
+    );
+    await mgr.whenIdle();
+    const last = feishu.updates.at(-1) ?? feishu.cards.at(-1);
+    const header = last ? JSON.stringify(last.card) : "";
+    expect(header).toContain("ctx ≈660.0k");
+  });
+});
+
+describe("DirectSessionManager concurrent pending approvals", () => {
+  it("keeps an earlier pending approval actionable when a second one arrives", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const apiCalls: string[][] = [];
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      apiExec: async (args) => {
+        apiCalls.push(args);
+        return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+      },
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_two", text: "/chat tasking 跑两个命令" }));
+    await runner.waitForCall(1);
+    const call = runner.calls[0];
+    const per = (id: string) => ({
+      id,
+      sessionID: "ses_two",
+      action: "shell",
+      resources: [`echo ${id}`],
+      save: ["echo *"],
+    });
+    call?.request.onPendingPermissions?.([per("per_a")]);
+    call?.request.onPendingPermissions?.([per("per_a"), per("per_b")]);
+
+    const reply = await mgr.handleCardAction({
+      messageId: "om_two",
+      chatId: "oc_chat",
+      operatorOpenId: "ou_op",
+      operatorName: "张三",
+      value: {
+        action: "approve_once",
+        root_id: "om_two",
+        turn: 1,
+        request_id: "per_a",
+        kind: "direct",
+      },
+    });
+    expect(reply?.toast?.content).toContain("已允许");
+    expect(
+      apiCalls.some((a) => a.includes("session.permission.reply") && a.includes("requestID=per_a")),
+    ).toBe(true);
+    runner.finish(0, [textEvent("ok")]);
+    await mgr.whenIdle();
+  });
+
+  it("returns the stamped card in the callback response so the click is visible immediately", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      apiExec: async () => ({ exitCode: 0, stdout: "{}", stderr: "", timedOut: false }),
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_stamp", text: "/chat tasking 跑个命令" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.request.onPendingPermissions?.([
+      {
+        id: "per_stamp",
+        sessionID: "ses_stamp",
+        action: "shell",
+        resources: ["echo hi"],
+        save: ["echo *"],
+      },
+    ]);
+    const reply = await mgr.handleCardAction({
+      messageId: "om_stamp",
+      chatId: "oc_chat",
+      operatorOpenId: "ou_op",
+      operatorName: "张三",
+      value: {
+        action: "approve_once",
+        root_id: "om_stamp",
+        turn: 1,
+        request_id: "per_stamp",
+        kind: "direct",
+      },
+    });
+    const cardJson = JSON.stringify(reply?.card);
+    expect(cardJson).toContain("已允许");
+    expect(cardJson).not.toContain("approve_once");
+    expect(cardJson).not.toContain("approve_reject");
+    runner.finish(0, [textEvent("done")]);
+    await mgr.whenIdle();
+  });
+
+  it("clears the waiting-approval marker when the turn ends while still pending", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_wait", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.request.onPendingPermissions?.([
+      { id: "per_w", sessionID: "ses_w", action: "shell", resources: ["echo w"] },
+    ]);
+    runner.calls[0]?.request.onWaitingForApproval?.(true);
+    expect(mgr.listActive()[0]?.waiting_approval).toBe(true);
+    runner.finish(0, [textEvent("done")]);
+    await mgr.whenIdle();
+    expect(mgr.listActive()[0]?.waiting_approval).toBeUndefined();
+    const sealed = feishu.updates.find((u) => JSON.stringify(u.card).includes("✅ 完成"));
+    expect(sealed).toBeDefined();
+    expect(JSON.stringify(sealed?.card)).not.toContain("等待审批");
+  });
+});
+
+describe("DirectSessionManager first-turn approval", () => {
+  it("posts an approval card to the thread when the first turn pends (session_id not yet persisted)", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const apiCalls: string[][] = [];
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      apiExec: async (args) => {
+        apiCalls.push(args);
+        return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+      },
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_appr1", text: "/chat tasking 跑个命令" }));
+    await runner.waitForCall(1);
+    const call = runner.calls[0];
+    expect(call).toBeDefined();
+    await call?.request.onPendingPermissions?.([
+      {
+        id: "per_first",
+        sessionID: "ses_first_turn",
+        action: "shell",
+        resources: ["echo x"],
+        save: ["echo *"],
+      },
+    ]);
+    const approvalCard = feishu.cards.find((c) => JSON.stringify(c.card).includes("approve_once"));
+    expect(approvalCard).toBeDefined();
+    expect(approvalCard?.rootId).toBe("om_appr1");
+    const approvalJson = JSON.stringify(approvalCard?.card);
+    expect(approvalJson).toContain("per_first");
+    expect(approvalJson).toContain("approve_always");
+    expect(approvalJson).toContain("approve_reject");
+    const reply = await mgr.handleCardAction({
+      messageId: "om_appr1",
+      chatId: "oc_chat",
+      operatorOpenId: "ou_op",
+      operatorName: "张三",
+      value: {
+        action: "approve_once",
+        root_id: "om_appr1",
+        turn: 1,
+        request_id: "per_first",
+        kind: "direct",
+      },
+    });
+    expect(reply?.toast?.content).toContain("已允许");
+    expect(apiCalls.some((a) => a.includes("session.permission.reply"))).toBe(true);
+    const stamped = feishu.updates.find((u) => JSON.stringify(u.card).includes("已允许"));
+    expect(stamped).toBeDefined();
+    runner.finish(0, [textEvent("done")]);
+    await mgr.whenIdle();
+  });
+});
+
 describe("DirectSessionManager turn logging", () => {
   it("logs the effective command and posture for each turn", async () => {
     const lines: string[] = [];
@@ -3247,15 +3496,15 @@ describe("DirectSessionManager turn logging", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(lines),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_lg1", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
     const start = lines.find((l) => l.includes("direct turn starting")) ?? "";
-    expect(start).toContain("--format");
-    expect(start).toContain("--dir");
+    expect(start).toContain('"dir"');
     expect(start).toContain('"auto_approve":false');
     expect(start).toContain('"agent"');
+    expect(start).toContain('"poll_interval_ms"');
     expect(start).toContain("干活");
     runner.finish(0, [textEvent("答")]);
     await mgr.whenIdle();
@@ -3273,8 +3522,8 @@ describe("DirectSessionManager turn logging", () => {
     );
     await runner.waitForCall(2);
     const next = lines.find((l) => l.includes("direct turn starting")) ?? "";
-    expect(next).toContain("--auto");
     expect(next).toContain('"auto_approve":true');
+    expect(next).toContain('"continuation":true');
     runner.finish(1, [textEvent("答2")]);
     await mgr.whenIdle();
   });
@@ -3289,7 +3538,7 @@ describe("DirectSessionManager /name", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_nm1", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
@@ -3323,7 +3572,7 @@ describe("DirectSessionManager /name", () => {
       store,
       config: () => directConfig(),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_nm3", text: "/chat tasking 干活" }));
     await runner.waitForCall(1);
@@ -3347,7 +3596,7 @@ describe("DirectSessionManager attachments", () => {
       store,
       config: () => directConfig(),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       deleteSession: async () => {},
       clearActivity: () => {},
     });
@@ -3472,7 +3721,7 @@ describe("DirectSessionManager collect mode", () => {
       store,
       config: () => directConfig({ verbosity: "detailed" }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
       deleteSession: async () => {},
       clearActivity: () => {},
     });
@@ -3622,7 +3871,7 @@ describe("resolveTarget home expansion", () => {
       store,
       config: () => directConfig({ projects: { home: "~" } }),
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_home", text: "/chat home 你好" }));
     expect(store.getDirectSession("om_home")?.path).toBe(realpathSync(homedir()));
@@ -3641,7 +3890,7 @@ describe("interface_language en regression", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     await mgr.handleIntakeMessage(msg({ message_id: "om_root9", text: "/chat tasking hello" }));
     await runner.waitForCall(1);
@@ -3683,7 +3932,7 @@ describe("en lifecycle outbound sweep", () => {
       store,
       config: directConfig,
       logger: fakeLogger(),
-      spawn: runner.spawn,
+      turnDriver: runner.spawn,
     });
     const threadMsg = (n: number, text: string) =>
       msg({

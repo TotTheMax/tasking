@@ -9,7 +9,7 @@ A TypeScript CLI daemon that orchestrates [opencode](https://opencode.ai) coding
 - **Structured (Jira):** deterministic poll/dispatch/reconcile/retry scheduler — no LLM in the hot loop.
 - **Feishu:** direct opencode sessions (`/chat` in a group) plus a bidirectional comment bridge to Jira. The LLM `route agent` (inbox triage) is **not implemented**.
 
-Both converge on a shared normalized `Task` model, a shared workspace manager, and a shared `opencode run` worker.
+Both converge on a shared normalized `Task` model, a shared workspace manager, and a shared opencode v2 worker (driven through `opencode api`; tasking 0.7 requires `opencode >=2.0 <3`).
 
 In terms of scheduling, the `tasking` module extends the coordination model adopted from [Symphony](https://github.com/openai/symphony).
 
@@ -63,7 +63,7 @@ Key config blocks:
 - `workspace.root` — per-task workspace root (default `<tmp>/tasking_workspaces`)
 - `hooks.*` — `after_create` / `before_run` / `after_run` / `before_remove` shell hooks
 - `agent.*` — `max_concurrent_agents`, `max_turns`, `max_retry_backoff_ms`, per-state caps
-- `opencode.*` — worker command (default `opencode run`), agent profile, turn/stall timeouts
+- `opencode.*` — opencode command (default `opencode`), agent profile, model/variant, turn/stall/permission timeouts, poll interval
 - `router.*` — **not implemented**: parsed by the resolver but no runtime code consumes it (reserved for a future route-agent triage path)
 - `feishu.*` — Feishu source app credentials and `enabled` flag; `feishu.direct` enables `/chat` direct opencode sessions in fixed directories (bypasses Jira; see `docs/configuration.md`)
 - `server.port` — optional HTTP dashboard port
@@ -74,13 +74,13 @@ The prompt body is a strict Liquid-compatible template with `task` (or `issue`) 
 
 ```
 Jira (structured) ──► deterministic scheduler ──┐
-                                                 ├──► workspace ──► opencode run
+                                                 ├──► workspace ──► opencode v2 (api)
 Feishu (direct sessions) ──► direct worker ─────┘
 ```
 
 - **Structured path:** Symphony-style poll tick → state machine → reconcile → retry with exponential backoff. No LLM in the hot loop.
 - **Feishu path:** direct opencode sessions (`/chat` in a group runs opencode in a configured directory; one topic per session), plus a comment bridge mirroring issue threads ↔ Jira comments. A planned LLM route-agent inbox triage is **not implemented**.
-- **Worker:** `opencode run --dir <workspace> --agent <build> "<prompt>"` subprocess, OS-level isolation per task.
+- **Worker:** drives an opencode v2 session per task through `opencode api` (`session.create` → `session.prompt` → poll → `session.interrupt`).
 - **State:** orchestrator scheduling state is in-memory (restart = re-poll tracker); direct-session bindings are durable SQLite.
 
 See [`openspec/changes/archive/2026-06-23-bootstrap-tasking-runtime/design.md`](./openspec/changes/archive/2026-06-23-bootstrap-tasking-runtime/design.md) for the full design decisions.
@@ -97,7 +97,7 @@ See [`openspec/changes/archive/2026-06-23-bootstrap-tasking-runtime/design.md`](
 
 `tasking` is designed for **trusted environments** with a high-trust configuration:
 
-- The `opencode run` worker runs with the daemon's OS privileges. Use opencode's approval/sandbox settings to tighten execution where needed.
+- The opencode worker runs with the daemon's OS privileges. Use opencode's approval/sandbox settings to tighten execution where needed; `ask` permissions surface as Feishu approval cards.
 - **Hook scripts are fully trusted** — `WORKFLOW.md` hooks (`after_create`, `before_run`, etc.) run arbitrary shell in the workspace directory with `bash -lc`. Only version hooks from sources you control.
 - Workspace hooks are bounded by `hooks.timeout_ms` (default 60s) to avoid hanging the daemon.
 - The orchestrator performs **no tracker writes** — ticket mutations (state transitions, comments) happen inside the coding agent via its tools, not in orchestrator business logic.
@@ -105,7 +105,7 @@ See [`openspec/changes/archive/2026-06-23-bootstrap-tasking-runtime/design.md`](
 
 ### Approval & sandbox policy
 
-Approval, sandbox, and user-input behavior is delegated to `opencode run`'s own policy. Configure it via the `opencode.*` block. A run that requires user input is treated as a hard failure (it does not stall indefinitely).
+Approval and sandbox behavior is delegated to opencode's own permission policy, configured via the `opencode.*` block and each workspace's `.opencode` config. `ask` permissions pend for a Feishu approval card (default 30-minute budget, then auto-reject).
 
 ## Development
 
@@ -123,3 +123,11 @@ npm run dev -- start  # run via tsx
 MIT — see [LICENSE](./LICENSE).
 
 tasking's scheduling model and shipped agent skills draw on [openai/symphony](https://github.com/openai/symphony) (Apache-2.0). Its license notice applies to those portions.
+
+
+## Breaking changes in 0.7.0
+
+- **opencode v2 required**: tasking 0.7 requires `opencode >=2.0 <3` and refuses to start on v1 or v3+ (upgrade with `opencode upgrade --major`). opencode v1 support is frozen on the `support/v1` branch (0.6.x).
+- **`opencode.command` default changed** from `opencode run` to `opencode`; edit existing `WORKFLOW.md` files accordingly.
+- **`auto_approve: false` semantics changed**: `ask` permissions now pend for a Feishu approval card instead of being auto-rejected (and the `--auto`/`--dir`/`--variant` flags are gone).
+- **Progress is polled** (default every 2s) rather than streamed; token totals are `input + output + reasoning` (v2 has no `total` field).

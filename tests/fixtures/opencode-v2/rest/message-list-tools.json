@@ -1,0 +1,280 @@
+{
+  "data": [
+    {
+      "id": "msg_1442028f8001qJRL50nDZCvx3b",
+      "time": {
+        "created": 1792144320769,
+        "streamed": 1792144323140,
+        "completed": 1792144323144
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "deepseek-v4.1-flash-free",
+        "providerID": "opencode"
+      },
+      "content": [
+        {
+          "type": "tool",
+          "id": "call_00_sl4mlw0zrq18bxwmpao68ce2",
+          "name": "edit",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "out.txt",
+              "oldString": "hi",
+              "newString": "hi\nsecond"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Edited out.txt (1 replacement)"
+              }
+            ],
+            "metadata": {
+              "files": [
+                {
+                  "file": "out.txt",
+                  "patch": "Index: out.txt\n===================================================================\n--- out.txt\n+++ out.txt\n@@ -1,1 +1,2 @@\n hi\n+second\n",
+                  "status": "modified",
+                  "additions": 1,
+                  "deletions": 0
+                }
+              ],
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1792144322978,
+            "ran": 1792144323138,
+            "completed": 1792144323143
+          }
+        }
+      ],
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 205,
+        "output": 74,
+        "reasoning": 0,
+        "cache": {
+          "read": 7168,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_144201e15001s6LKNZ9Bv62j5d",
+      "time": {
+        "created": 1792144317982,
+        "streamed": 1792144320747,
+        "completed": 1792144320752
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "deepseek-v4.1-flash-free",
+        "providerID": "opencode"
+      },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "The system update is not relevant to my task (no .codegraph presumably). Let me continue steps 5 and 6.",
+          "state": {
+            "reasoningField": "reasoning_content"
+          },
+          "time": {
+            "created": 1792144319608,
+            "completed": 1792144320743
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_00_x38ruqbv1qnfpfir34agwojc",
+          "name": "write",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "out.txt",
+              "content": "hi\n"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Created file successfully: out.txt"
+              }
+            ],
+            "metadata": {
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1792144320183,
+            "ran": 1792144320746,
+            "completed": 1792144320751
+          }
+        }
+      ],
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 1258,
+        "output": 55,
+        "reasoning": 26,
+        "cache": {
+          "read": 6016,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1441fe93f001wgO0UteIKT7tpy",
+      "time": {
+        "created": 1792144304458,
+        "streamed": 1792144317917,
+        "completed": 1792144317961
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "deepseek-v4.1-flash-free",
+        "providerID": "opencode"
+      },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "Let me perform these in order. Some are independent but the order matters for correctness (write then edit). Let me just do them.\n\nLet me first check the directory listing maybe. But better to do them in order.\n\nLet me do steps 1-4 which are read-only, then write, then edit.\n\nActually I should do them in order. Let me call them. I can parallelize read-only ones but order requested. Let me just do sequentially in a couple of batches.\n\nStep 1: read sample.txt\nStep 2: glob **/*.txt\nStep 3: grep hello\nStep 4: list current dir\n\nThese are independent reads, can be parallel. But to honor order, I'll do them one block anyway — parallel is fine since no dependencies.\n\nThen write out.txt, then edit.\n\nNote append a line \"second\" — edit tool requires oldString present. To append, oldString = \"hi\" -> newString = \"hi\\nsecond\". But that changes content. Appending line: content \"hi\\nsecond\\n\". Let me use edit oldString \"hi\" newString \"hi\\nsecond\".\n\nActually better: write file with \"hi\\n\" then edit oldString \"hi\" newString \"hi\\nsecond\". Let me do that.",
+          "state": {
+            "reasoningField": "reasoning_content"
+          },
+          "time": {
+            "created": 1792144315564,
+            "completed": 1792144317901
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_00_aqzijxulmw3ul8o6sttpoks8",
+          "name": "read",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "sample.txt"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Read file sample.txt, lines 1-2\n1: hello world\n2: second line"
+              }
+            ],
+            "metadata": {
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1792144317696,
+            "ran": 1792144317904,
+            "completed": 1792144317941
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_01_e0nw6n0jjvobpy4e9rm8g6z0",
+          "name": "glob",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "pattern": "**/*.txt"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "/tmp/opencode/toolcap/sample.txt\n/tmp/opencode/toolcap/sub/a.txt"
+              }
+            ],
+            "metadata": {
+              "count": 2,
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1792144317710,
+            "ran": 1792144317906,
+            "completed": 1792144317960
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_02_coxy6l8mhy5kh5ry0v62gm06",
+          "name": "grep",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "pattern": "hello"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Found 1 matches\n/tmp/opencode/toolcap/sample.txt:\n  Line 1: hello world\n"
+              }
+            ],
+            "metadata": {
+              "matches": 1,
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1792144317714,
+            "ran": 1792144317909,
+            "completed": 1792144317957
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_03_v3vxe88r9v60hai06ujzvz5s",
+          "name": "read",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "."
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Read directory ., entries 1-2\nsub/\nsample.txt"
+              }
+            ],
+            "metadata": {
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1792144317897,
+            "ran": 1792144317915,
+            "completed": 1792144317939
+          }
+        }
+      ],
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 3766,
+        "output": 122,
+        "reasoning": 262,
+        "cache": {
+          "read": 2304,
+          "write": 0
+        }
+      }
+    }
+  ]
+}

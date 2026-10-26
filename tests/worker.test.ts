@@ -6,29 +6,37 @@ import type {
   AgentConfig,
   HooksConfig,
   OpencodeConfig,
+  TrackerConfig,
   WorkspaceConfig,
 } from "../src/config/config-types.js";
 import type { ActivityEvent } from "../src/observability/activity-store.js";
 import { ConsoleLogger } from "../src/observability/logger.js";
 import type { Task } from "../src/shared/types.js";
-import {
-  type OpencodeEvent,
-  type SubprocessResult,
-  type WorkerEvent,
-  buildOpencodeCommand,
-  extractSessionAndUsage,
-  parseOpencodeLine,
-  runAttempt,
-  runDefaultSubprocess,
-} from "../src/worker/runner.js";
+import { type WorkerEvent, runAttempt } from "../src/worker/runner.js";
 import { readSessionSidecar, resolveWorkspacePath } from "../src/workspace/manager.js";
+import {
+  assistantMessage,
+  idleMessage,
+  interruptResponse,
+  messageListResponse,
+  permissionListResponse,
+  sessionCreateResponse,
+  sessionGetResponse,
+} from "./helpers/opencode-fixtures.js";
 
 const logger = new ConsoleLogger({}, () => {});
 
-function makeConfig(root: string) {
+function makeConfig(root: string): {
+  opencode: OpencodeConfig;
+  hooks: HooksConfig;
+  agent: AgentConfig;
+  workspace: WorkspaceConfig;
+  tracker: TrackerConfig;
+  env: Record<string, string>;
+} {
   return {
     opencode: {
-      command: "opencode run",
+      command: "opencode",
       agent: "build",
       agents: [],
       model: null,
@@ -37,6 +45,9 @@ function makeConfig(root: string) {
       stall_timeout_ms: 300000,
       inactivity_timeout_ms: 600000,
       auto_approve: false,
+      poll_interval_ms: 1,
+      permission_timeout_ms: 600000,
+      server_url: null,
     } satisfies OpencodeConfig,
     hooks: {
       after_create: null,
@@ -90,537 +101,237 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
-function successResult(
-  tokens = { input: 10, output: 5, total: 15 },
-  sessionId = "ses_test123",
-): SubprocessResult {
-  const events = [
-    JSON.stringify({ type: "step_start", sessionID: sessionId }),
-    JSON.stringify({
-      type: "step_finish",
-      sessionID: sessionId,
-      part: { tokens, reason: "stop" },
-    }),
-  ].join("\n");
-  return {
-    exitCode: 0,
-    stdout: events,
-    stderr: "",
-    timedOut: false,
-  };
-}
-
 function tempRoot(): string {
   return mkdtempSync(join(tmpdir(), "tasking-worker-"));
 }
 
-describe("buildOpencodeCommand", () => {
-  it("builds command with --format json, --dir and --agent", () => {
-    const oc: OpencodeConfig = {
-      command: "opencode run",
-      agent: "build",
-      agents: [],
-      model: null,
-      variant: null,
-      turn_timeout_ms: 60000,
-      stall_timeout_ms: 300000,
-      inactivity_timeout_ms: 600000,
-      auto_approve: false,
-    };
-    const cmd = buildOpencodeCommand(oc, "/ws/ABC-123", "do the work");
-    expect(cmd).toEqual([
-      "opencode",
-      "run",
-      "--format",
-      "json",
-      "--dir",
-      "/ws/ABC-123",
-      "--agent",
-      "build",
-      "do the work",
-    ]);
-  });
+interface ApiScriptOptions {
+  sessionId?: string;
+  tokens?: { input: number; output: number; reasoning: number } | null;
+  outcome?: string | null;
+  messages?: Array<{
+    content?: Array<Record<string, unknown>>;
+    tokens?: { input: number; output: number; reasoning: number } | null;
+  }>;
+  messagesPerTurn?: Array<
+    Array<{
+      content?: Array<Record<string, unknown>>;
+      tokens?: { input: number; output: number; reasoning: number } | null;
+    }>
+  >;
+}
 
-  it("uses custom command prefix", () => {
-    const oc: OpencodeConfig = {
-      command: "opencode run --foo",
-      agent: "build",
-      agents: [],
-      model: null,
-      variant: null,
-      turn_timeout_ms: 60000,
-      stall_timeout_ms: 300000,
-      inactivity_timeout_ms: 600000,
-      auto_approve: false,
-    };
-    const cmd = buildOpencodeCommand(oc, "/ws", "prompt");
-    expect(cmd.slice(0, 4)).toEqual(["opencode", "run", "--foo", "--format"]);
-  });
+function apiScript(opts: ApiScriptOptions = {}) {
+  const sessionId = opts.sessionId ?? "ses_test123";
+  const tokens = opts.tokens === undefined ? { input: 10, output: 5, reasoning: 0 } : opts.tokens;
+  const outcome = opts.outcome === undefined ? "succeeded" : opts.outcome;
+  const messages = opts.messages ?? [{ content: [], tokens }];
+  const state = {
+    prompts: [] as string[],
+    createBodies: [] as Array<Record<string, unknown>>,
+    switchAgents: [] as Array<Record<string, unknown>>,
+    interrupts: 0,
+  };
+  let inFlight = false;
+  let pollsInFlight = 0;
+  let lastOutcome: string | null = null;
+  const history: Array<Record<string, unknown>> = [];
+  const ok = (stdout: string): Promise<import("../src/driver/api-client.js").ApiExecResult> =>
+    Promise.resolve({ exitCode: 0, stdout, stderr: "", timedOut: false });
+  const exec = (async (args: string[]) => {
+    const op = args[2] ?? "";
+    const dataIdx = args.indexOf("--data");
+    if (op === "session.create") {
+      state.createBodies.push(JSON.parse(args[dataIdx + 1] ?? "{}") as Record<string, unknown>);
+      return ok(sessionCreateResponse({ id: sessionId }));
+    }
+    if (op === "session.prompt") {
+      const body = JSON.parse(args[dataIdx + 1] ?? "{}") as { text?: string };
+      state.prompts.push(body.text ?? "");
+      inFlight = true;
+      pollsInFlight = 0;
+      return ok(JSON.stringify({ data: { id: `msg_user_${state.prompts.length}` } }));
+    }
+    if (op === "session.switchAgent") {
+      state.switchAgents.push(JSON.parse(args[dataIdx + 1] ?? "{}") as Record<string, unknown>);
+      return ok("");
+    }
+    if (op === "session.interrupt") {
+      state.interrupts += 1;
+      return ok(interruptResponse());
+    }
+    if (op === "session.get") {
+      const stage = !inFlight ? 0 : Math.min(pollsInFlight + 1, 2);
+      const stamp = 1000 * stage + history.length;
+      if (!inFlight) {
+        return ok(
+          sessionGetResponse({
+            id: sessionId,
+            outcome: lastOutcome,
+            time: { created: 1, updated: stamp },
+          }),
+        );
+      }
+      pollsInFlight += 1;
+      if (pollsInFlight === 1) {
+        return ok(
+          sessionGetResponse({
+            id: sessionId,
+            outcome: null,
+            time: { created: 1, updated: stamp + 5000 },
+          }),
+        );
+      }
+      lastOutcome = outcome;
+      return ok(
+        sessionGetResponse({
+          id: sessionId,
+          outcome,
+          time: { created: 1, updated: stamp + 9000 },
+        }),
+      );
+    }
+    if (op === "session.permission.list") return ok(permissionListResponse([]));
+    if (op === "session.message.list") {
+      const turnNo = state.prompts.length;
+      const currentUser =
+        turnNo > 0
+          ? { id: `msg_user_${turnNo}`, type: "user", time: { created: turnNo }, text: "p" }
+          : null;
+      if (inFlight && pollsInFlight >= 2 && outcome !== null) {
+        const turnMessages =
+          opts.messagesPerTurn && opts.messagesPerTurn.length > 0
+            ? (opts.messagesPerTurn[Math.min(turnNo - 1, opts.messagesPerTurn.length - 1)] ?? [])
+            : messages;
+        const data = turnMessages.map((m, i) =>
+          assistantMessage({
+            id: opts.messagesPerTurn ? `msg_${turnNo}_${i + 1}` : `msg_${i + 1}`,
+            content: m.content ?? [],
+            tokens: m.tokens
+              ? {
+                  input: m.tokens.input,
+                  output: m.tokens.output,
+                  reasoning: m.tokens.reasoning,
+                  cache: { read: 0, write: 0 },
+                }
+              : undefined,
+            time: { created: i + 1, streamed: i + 1, completed: i + 1 },
+          }),
+        );
+        history.unshift(
+          idleMessage({ id: `idle_${turnNo}`, outcome }),
+          ...data,
+          ...(currentUser === null ? [] : [currentUser]),
+        );
+        inFlight = false;
+      }
+      const listed = [...history];
+      if (inFlight && currentUser !== null) listed.unshift(currentUser);
+      return ok(messageListResponse(listed));
+    }
+    return ok("{}");
+  }) as import("../src/driver/api-client.js").ApiExecFn;
+  return { exec, state };
+}
 
-  it("includes -s when sessionId provided", () => {
-    const oc: OpencodeConfig = {
-      command: "opencode run",
-      agent: "build",
-      agents: [],
-      model: null,
-      variant: null,
-      turn_timeout_ms: 60000,
-      stall_timeout_ms: 300000,
-      inactivity_timeout_ms: 600000,
-      auto_approve: false,
-    };
-    const cmd = buildOpencodeCommand(oc, "/ws", "prompt", "ses_abc");
-    expect(cmd).toContain("-s");
-    expect(cmd).toContain("ses_abc");
-    expect(cmd).toContain("--format");
-    expect(cmd).toContain("json");
-  });
-
-  it("omits -s when sessionId is null", () => {
-    const oc: OpencodeConfig = {
-      command: "opencode run",
-      agent: "build",
-      agents: [],
-      model: null,
-      variant: null,
-      turn_timeout_ms: 60000,
-      stall_timeout_ms: 300000,
-      inactivity_timeout_ms: 600000,
-      auto_approve: false,
-    };
-    const cmd = buildOpencodeCommand(oc, "/ws", "prompt", null);
-    expect(cmd).not.toContain("-s");
-    expect(cmd).toContain("--format");
-    expect(cmd).toContain("json");
-  });
-
-  it("includes --auto when auto_approve is true", () => {
-    const oc: OpencodeConfig = {
-      command: "opencode run",
-      agent: "build",
-      agents: [],
-      model: null,
-      variant: null,
-      turn_timeout_ms: 60000,
-      stall_timeout_ms: 300000,
-      inactivity_timeout_ms: 600000,
-      auto_approve: true,
-    };
-    const cmd = buildOpencodeCommand(oc, "/ws", "prompt");
-    expect(cmd).toContain("--auto");
-  });
-
-  it("omits --auto when auto_approve is false", () => {
-    const oc: OpencodeConfig = {
-      command: "opencode run",
-      agent: "build",
-      agents: [],
-      model: null,
-      variant: null,
-      turn_timeout_ms: 60000,
-      stall_timeout_ms: 300000,
-      inactivity_timeout_ms: 600000,
-      auto_approve: false,
-    };
-    const cmd = buildOpencodeCommand(oc, "/ws", "prompt");
-    expect(cmd).not.toContain("--auto");
-  });
-
-  it("omits --model and --variant when both are null", () => {
-    const oc: OpencodeConfig = {
-      command: "opencode run",
-      agent: "build",
-      agents: [],
-      model: null,
-      variant: null,
-      turn_timeout_ms: 60000,
-      stall_timeout_ms: 300000,
-      inactivity_timeout_ms: 600000,
-      auto_approve: false,
-    };
-    const cmd = buildOpencodeCommand(oc, "/ws/ABC-123", "do the work");
-    expect(cmd).not.toContain("--model");
-    expect(cmd).not.toContain("--variant");
-  });
-
-  it("appends --model only when model is set", () => {
-    const oc: OpencodeConfig = {
-      command: "opencode run",
-      agent: "build",
-      agents: [],
-      model: "anthropic/claude-sonnet-4-5",
-      variant: null,
-      turn_timeout_ms: 60000,
-      stall_timeout_ms: 300000,
-      inactivity_timeout_ms: 600000,
-      auto_approve: false,
-    };
-    const cmd = buildOpencodeCommand(oc, "/ws/ABC-123", "do the work");
-    expect(cmd).toEqual([
-      "opencode",
-      "run",
-      "--format",
-      "json",
-      "--dir",
-      "/ws/ABC-123",
-      "--agent",
-      "build",
-      "--model",
-      "anthropic/claude-sonnet-4-5",
-      "do the work",
-    ]);
-    expect(cmd).not.toContain("--variant");
-  });
-
-  it("appends --variant only when variant is set", () => {
-    const oc: OpencodeConfig = {
-      command: "opencode run",
-      agent: "build",
-      agents: [],
-      model: null,
-      variant: "high",
-      turn_timeout_ms: 60000,
-      stall_timeout_ms: 300000,
-      inactivity_timeout_ms: 600000,
-      auto_approve: false,
-    };
-    const cmd = buildOpencodeCommand(oc, "/ws/ABC-123", "do the work");
-    expect(cmd).toEqual([
-      "opencode",
-      "run",
-      "--format",
-      "json",
-      "--dir",
-      "/ws/ABC-123",
-      "--agent",
-      "build",
-      "--variant",
-      "high",
-      "do the work",
-    ]);
-    expect(cmd).not.toContain("--model");
-  });
-
-  it("appends both --model and --variant after --agent, before prompt", () => {
-    const oc: OpencodeConfig = {
-      command: "opencode run",
-      agent: "build",
-      agents: [],
-      model: "anthropic/claude-sonnet-4-5",
-      variant: "high",
-      turn_timeout_ms: 60000,
-      stall_timeout_ms: 300000,
-      inactivity_timeout_ms: 600000,
-      auto_approve: false,
-    };
-    const cmd = buildOpencodeCommand(oc, "/ws/ABC-123", "do the work");
-    expect(cmd).toEqual([
-      "opencode",
-      "run",
-      "--format",
-      "json",
-      "--dir",
-      "/ws/ABC-123",
-      "--agent",
-      "build",
-      "--model",
-      "anthropic/claude-sonnet-4-5",
-      "--variant",
-      "high",
-      "do the work",
-    ]);
-  });
-});
-
-describe("extractSessionAndUsage", () => {
-  it("sums all step_finish tokens", () => {
-    const stdout = [
-      JSON.stringify({ type: "step_start", sessionID: "ses_x" }),
-      JSON.stringify({
-        type: "step_finish",
-        sessionID: "ses_x",
-        part: { tokens: { input: 100, output: 10, total: 110 } },
-      }),
-      JSON.stringify({ type: "step_start", sessionID: "ses_x" }),
-      JSON.stringify({
-        type: "step_finish",
-        sessionID: "ses_x",
-        part: { tokens: { input: 150, output: 15, total: 165 } },
-      }),
-    ].join("\n");
-    const { session_id, usage } = extractSessionAndUsage(stdout);
-    expect(session_id).toBe("ses_x");
-    expect(usage.input_tokens).toBe(250);
-    expect(usage.output_tokens).toBe(25);
-    expect(usage.total_tokens).toBe(275);
-  });
-
-  it("sums all step_finish values across multiple steps", () => {
-    const stdout = [
-      JSON.stringify({ type: "step_start", sessionID: "ses_cum" }),
-      JSON.stringify({
-        type: "step_finish",
-        sessionID: "ses_cum",
-        part: { tokens: { input: 100, output: 10, total: 110 } },
-      }),
-      JSON.stringify({ type: "step_start", sessionID: "ses_cum" }),
-      JSON.stringify({
-        type: "step_finish",
-        sessionID: "ses_cum",
-        part: { tokens: { input: 150, output: 15, total: 165 } },
-      }),
-      JSON.stringify({ type: "step_start", sessionID: "ses_cum" }),
-      JSON.stringify({
-        type: "step_finish",
-        sessionID: "ses_cum",
-        part: { tokens: { input: 200, output: 20, total: 220 } },
-      }),
-    ].join("\n");
-    const { session_id, usage } = extractSessionAndUsage(stdout);
-    expect(session_id).toBe("ses_cum");
-    expect(usage.input_tokens).toBe(450);
-    expect(usage.output_tokens).toBe(45);
-    expect(usage.total_tokens).toBe(495);
-  });
-
-  it("returns single step_finish tokens directly", () => {
-    const stdout = JSON.stringify({
-      type: "step_finish",
-      sessionID: "ses_single",
-      part: { tokens: { input: 42, output: 7, total: 49 } },
-    });
-    const { session_id, usage } = extractSessionAndUsage(stdout);
-    expect(session_id).toBe("ses_single");
-    expect(usage.input_tokens).toBe(42);
-    expect(usage.output_tokens).toBe(7);
-    expect(usage.total_tokens).toBe(49);
-  });
-
-  it("extracts session_id from first event that has it", () => {
-    const stdout = JSON.stringify({ type: "text", sessionID: "ses_abc", part: { text: "hello" } });
-    const { session_id } = extractSessionAndUsage(stdout);
-    expect(session_id).toBe("ses_abc");
-  });
-
-  it("returns null session_id and zero usage for non-JSON output", () => {
-    const { session_id, usage } = extractSessionAndUsage("no json here\njust text");
-    expect(session_id).toBeNull();
-    expect(usage.total_tokens).toBe(0);
-  });
-
-  it("handles mixed event types", () => {
-    const stdout = [
-      "not json",
-      JSON.stringify({ type: "step_start", sessionID: "ses_mixed" }),
-      JSON.stringify({ type: "tool_use", sessionID: "ses_mixed", part: { tool: "read" } }),
-      JSON.stringify({ type: "text", sessionID: "ses_mixed", part: { text: "done" } }),
-      JSON.stringify({
-        type: "step_finish",
-        sessionID: "ses_mixed",
-        part: { tokens: { input: 200, output: 20, total: 220 } },
-      }),
-    ].join("\n");
-    const { session_id, usage } = extractSessionAndUsage(stdout);
-    expect(session_id).toBe("ses_mixed");
-    expect(usage.total_tokens).toBe(220);
-  });
-});
+function clockSleep() {
+  let clock = 0;
+  const sleep = (ms: number) => {
+    clock += ms;
+    return Promise.resolve();
+  };
+  return { sleep, now: () => clock };
+}
 
 describe("runAttempt", () => {
-  it("merges config.env into subprocess environment via default runner", async () => {
-    const result = await runDefaultSubprocess(
-      ["node", "-e", "process.env.TEST_INJECTED_VAR ? process.exit(0) : process.exit(1)"],
-      "/tmp",
-      5000,
-      0,
-      undefined,
-      { TEST_INJECTED_VAR: "injected-value" },
-    );
-    expect(result.exitCode).toBe(0);
-  });
-
-  it("escalates to group SIGKILL after grace when child ignores SIGTERM", async () => {
-    const start = Date.now();
-    const result = await runDefaultSubprocess(
-      ["node", "-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
-      "/tmp",
-      200,
-      0,
-      undefined,
-      undefined,
-      undefined,
-      150,
-    );
-    expect(result.timedOut).toBe(true);
-    expect(result.timedOutReason).toBe("wall_clock");
-    expect(Date.now() - start).toBeLessThan(5000);
-  });
-
-  it("group-kills grandchild processes on escalation", async () => {
-    const marker = join(tmpdir(), `tasking-gk-${process.pid}-${Date.now()}`);
-    const script = `
-      const { spawn } = require('child_process');
-      const fs = require('fs');
-      const g = spawn(process.execPath, ['-e', ${JSON.stringify(
-        `process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); fs.writeFileSync(${JSON.stringify(marker)}, String(process.pid));`,
-      )}]);
-      g.unref();
-      process.on('SIGTERM', () => {});
-      setInterval(() => {}, 1000);
-    `;
-    const result = await runDefaultSubprocess(
-      ["node", "-e", script],
-      "/tmp",
-      200,
-      0,
-      undefined,
-      undefined,
-      undefined,
-      150,
-    );
-    expect(result.timedOut).toBe(true);
-    const grandchildPid = Number(readFileSync(marker, "utf8"));
-    rmSync(marker, { force: true });
-    await new Promise((r) => setTimeout(r, 100));
-    expect(() => process.kill(grandchildPid, 0)).toThrow();
-  });
-
-  it("does not escalate when child exits gracefully within grace", async () => {
-    const result = await runDefaultSubprocess(
-      [
-        "node",
-        "-e",
-        "process.on('SIGTERM', () => setTimeout(() => process.exit(0), 30)); setInterval(() => {}, 1000);",
-      ],
-      "/tmp",
-      200,
-      0,
-      undefined,
-      undefined,
-      undefined,
-      5000,
-    );
-    expect(result.timedOut).toBe(true);
-    expect(result.timedOutReason).toBe("wall_clock");
-    expect(result.exitCode).toBe(0);
-  });
-
-  it("abort signal group-kills the whole process tree immediately", async () => {
-    const marker = join(tmpdir(), `tasking-abort-${process.pid}-${Date.now()}`);
-    const script = `
-      const { spawn } = require('child_process');
-      const fs = require('fs');
-      const g = spawn(process.execPath, ['-e', ${JSON.stringify(
-        `process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); fs.writeFileSync(${JSON.stringify(marker)}, String(process.pid));`,
-      )}]);
-      g.unref();
-      process.on('SIGTERM', () => {});
-      setInterval(() => {}, 1000);
-    `;
-    const ctl = new AbortController();
-    const pending = runDefaultSubprocess(
-      ["node", "-e", script],
-      "/tmp",
-      60000,
-      0,
-      ctl.signal,
-      undefined,
-      undefined,
-      10000,
-    );
-    const deadline = Date.now() + 5000;
-    while (!existsSync(marker) && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    const grandchildPid = Number(readFileSync(marker, "utf8"));
-    rmSync(marker, { force: true });
-    ctl.abort();
-    const result = await pending;
-    expect(result.exitCode).toBe(-1);
-    await new Promise((r) => setTimeout(r, 100));
-    expect(() => process.kill(grandchildPid, 0)).toThrow();
-  });
-
-  it("accumulates sessionAndUsage in one pass and caps retained stdout", async () => {
-    const lines = [
-      JSON.stringify({ type: "step_start", sessionID: "ses_onepass" }),
-      JSON.stringify({
-        type: "step_finish",
-        sessionID: "ses_onepass",
-        part: { tokens: { input: 100, output: 10, total: 110 } },
-      }),
-      JSON.stringify({
-        type: "step_finish",
-        sessionID: "ses_onepass",
-        part: { tokens: { input: 50, output: 5, total: 55 } },
-      }),
-    ].join("\n");
-    const filler = "x".repeat(70000);
-    const full = `${filler}\n${lines}\n`;
-    const result = await runDefaultSubprocess(
-      ["node", "-e", `process.stdout.write(${JSON.stringify(full)})`],
-      "/tmp",
-      5000,
-      0,
-    );
-    expect(result.sessionAndUsage?.session_id).toBe("ses_onepass");
-    expect(result.sessionAndUsage?.usage).toEqual({
-      input_tokens: 150,
-      output_tokens: 15,
-      total_tokens: 165,
-    });
-    expect(extractSessionAndUsage(full).usage).toEqual(result.sessionAndUsage?.usage);
-    expect(result.stdout.length).toBeLessThanOrEqual(65536);
-  });
-
   it("succeeds with one turn when no state checker", async () => {
     const root = tempRoot();
     try {
+      const { exec } = apiScript();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config: makeConfig(root),
         promptTemplate: "do {{ task.identifier }}",
         logger,
-        spawnRunner: async () => successResult(),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(result.usage.total_tokens).toBe(15);
+      expect(result.session_id).toBe("ses_test123");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("classifies turn timeout as timed_out", async () => {
+  it("logs the concrete opencode api command when launching a turn", async () => {
     const root = tempRoot();
     try {
-      const result = await runAttempt({
+      const { exec } = apiScript();
+      const infos: Array<[string, Record<string, unknown>]> = [];
+      const capLogger = Object.create(logger) as typeof logger;
+      capLogger.info = (msg: string, fields?: Record<string, unknown>) => {
+        infos.push([msg, fields ?? {}]);
+      };
+      await runAttempt({
         task: makeTask(),
         attempt: null,
         config: makeConfig(root),
+        promptTemplate: "do {{ task.identifier }}",
+        logger: capLogger,
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
+      });
+      const launch = infos.find(([msg]) => msg === "launching opencode v2 turn");
+      expect(launch).toBeDefined();
+      expect(String(launch?.[1].command)).toBe("opencode api session.prompt");
+      expect("model" in (launch?.[1] ?? {})).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies turn timeout as timed_out via interrupt ladder", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.opencode.turn_timeout_ms = 1;
+      const { exec, state } = apiScript({ outcome: null, tokens: null });
+      const clock = clockSleep();
+      const result = await runAttempt({
+        task: makeTask(),
+        attempt: null,
+        config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({ exitCode: -1, stdout: "", stderr: "", timedOut: true }),
+        apiExec: exec,
+        sleep: clock.sleep,
+        now: clock.now,
+        interruptGraceMs: 5,
       });
       expect(result.status).toBe("timed_out");
+      expect(result.error).toContain("turn_timeout");
+      expect(state.interrupts).toBeGreaterThan(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("classifies nonzero exit as failed", async () => {
+  it("classifies failed outcome as failed", async () => {
     const root = tempRoot();
     try {
+      const { exec } = apiScript({ outcome: "failed" });
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config: makeConfig(root),
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({ exitCode: 2, stdout: "", stderr: "err", timedOut: false }),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("failed");
-      expect(result.error).toContain("code 2");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -631,13 +342,15 @@ describe("runAttempt", () => {
     try {
       const config = makeConfig(root);
       config.hooks.before_run = "exit 1";
+      const { exec } = apiScript();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => successResult(),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("failed");
       expect(result.error).toContain("before_run");
@@ -651,7 +364,7 @@ describe("runAttempt", () => {
     try {
       const config = makeConfig(root);
       config.agent.max_turns = 2;
-      let calls = 0;
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
@@ -659,13 +372,11 @@ describe("runAttempt", () => {
         promptTemplate: "do it",
         logger,
         trackerStateChecker: async (t) => t,
-        spawnRunner: async () => {
-          calls++;
-          return successResult({ input: 1, output: 1, total: 2 });
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
-      expect(calls).toBe(2);
+      expect(state.prompts).toHaveLength(2);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -675,6 +386,7 @@ describe("runAttempt", () => {
     const root = tempRoot();
     try {
       let calls = 0;
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
@@ -685,65 +397,84 @@ describe("runAttempt", () => {
           calls++;
           return calls <= 1 ? makeTask() : null;
         },
-        spawnRunner: async () => successResult(),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(calls).toBe(2);
+      expect(state.prompts).toHaveLength(2);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("extracts usage and session_id from JSON event stream", async () => {
+  it("accumulates usage from polled messages", async () => {
     const root = tempRoot();
     try {
+      const { exec } = apiScript({
+        sessionId: "ses_abc",
+        tokens: { input: 100, output: 50, reasoning: 5 },
+      });
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config: makeConfig(root),
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({
-          exitCode: 0,
-          stdout: [
-            JSON.stringify({ type: "step_start", sessionID: "ses_abc" }),
-            JSON.stringify({
-              type: "step_finish",
-              sessionID: "ses_abc",
-              part: { tokens: { input: 100, output: 50, total: 150 }, reason: "stop" },
-            }),
-          ].join("\n"),
-          stderr: "",
-          timedOut: false,
-        }),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.usage.input_tokens).toBe(100);
-      expect(result.usage.total_tokens).toBe(150);
+      expect(result.usage.total_tokens).toBe(155);
       expect(result.session_id).toBe("ses_abc");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("falls back to process timing when no usage", async () => {
+  it("reports zero usage when no token data", async () => {
     const root = tempRoot();
     try {
+      const { exec } = apiScript({ tokens: null });
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config: makeConfig(root),
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({
-          exitCode: 0,
-          stdout: "no json here",
-          stderr: "",
-          timedOut: false,
-        }),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(result.usage.total_tokens).toBe(0);
       expect(result.ended_at).toBeGreaterThanOrEqual(result.started_at);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not re-emit earlier turns' messages across continuation turns", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 2;
+      const { exec } = apiScript({
+        messages: [{ content: [{ type: "text", text: "same history" }], tokens: null }],
+      });
+      const activity: ActivityEvent[] = [];
+      await runAttempt({
+        task: makeTask(),
+        attempt: null,
+        config,
+        promptTemplate: "do it",
+        logger,
+        trackerStateChecker: async (t) => t,
+        onActivity: (e) => activity.push(e),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
+      });
+      const texts = activity.filter((a) => a.type === "text");
+      expect(texts).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -767,7 +498,8 @@ describe("runAttempt", () => {
             events.push(e.event);
           },
         },
-        spawnRunner: async () => successResult({ input: 1, output: 1, total: 2 }),
+        apiExec: apiScript().exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(events).toContain("turn_started");
@@ -790,7 +522,8 @@ describe("runAttempt", () => {
         config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({ exitCode: 1, stdout: "", stderr: "err", timedOut: false }),
+        apiExec: apiScript({ outcome: "failed" }).exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("failed");
       expect(existsSync(sentinel)).toBe(true);
@@ -804,7 +537,7 @@ describe("runAttempt", () => {
     try {
       const config = makeConfig(root);
       config.agent.max_turns = 1;
-      const prompts: string[] = [];
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask({ identifier: "HEIH-7" }),
         attempt: 1,
@@ -812,16 +545,14 @@ describe("runAttempt", () => {
         promptTemplate: "original task prompt {{ task.identifier }}",
         logger,
         startTurn: 3,
-        spawnRunner: async (cmd) => {
-          prompts.push(cmd[cmd.length - 1] ?? "");
-          return successResult();
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
-      expect(prompts).toHaveLength(1);
-      expect(prompts[0]).toContain("Continue working on HEIH-7");
-      expect(prompts[0]).toContain("turn 3");
-      expect(prompts[0]).not.toContain("original task prompt");
+      expect(state.prompts).toHaveLength(1);
+      expect(state.prompts[0]).toContain("Continue working on HEIH-7");
+      expect(state.prompts[0]).toContain("turn 3");
+      expect(state.prompts[0]).not.toContain("original task prompt");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -840,7 +571,8 @@ describe("runAttempt", () => {
         logger,
         startTurn: 2,
         trackerStateChecker: async (t) => t,
-        spawnRunner: async () => successResult({ input: 1, output: 1, total: 2 }, "ses_turntest"),
+        apiExec: apiScript({ sessionId: "ses_turntest" }).exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       const wsPath = resolveWorkspacePath("ABC-123", root);
@@ -865,7 +597,14 @@ describe("runAttempt", () => {
         logger,
         baseTokens: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
         trackerStateChecker: async (t) => t,
-        spawnRunner: async () => successResult({ input: 10, output: 5, total: 15 }, "ses_toktest"),
+        apiExec: apiScript({
+          sessionId: "ses_toktest",
+          messagesPerTurn: [
+            [{ content: [], tokens: { input: 10, output: 5, reasoning: 0 } }],
+            [{ content: [], tokens: { input: 10, output: 5, reasoning: 0 } }],
+          ],
+        }).exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(result.usage).toEqual({ input_tokens: 20, output_tokens: 10, total_tokens: 30 });
@@ -891,7 +630,8 @@ describe("runAttempt", () => {
         promptTemplate: "do it",
         logger,
         baseTokens: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
-        spawnRunner: async () => successResult({ input: 10, output: 5, total: 15 }, "ses_oneshot"),
+        apiExec: apiScript({ sessionId: "ses_oneshot" }).exec,
+        sleep: () => Promise.resolve(),
       });
       const wsPath = resolveWorkspacePath("ABC-123", root);
       const sidecar = readSessionSidecar(wsPath);
@@ -905,27 +645,23 @@ describe("runAttempt", () => {
 });
 
 describe("agent resolution per turn", () => {
-  it("uses the task's agent label on turn 1", async () => {
+  it("uses the task's agent label on turn 1 (session.create body)", async () => {
     const root = tempRoot();
     try {
       const config = makeConfig(root);
       config.opencode.agents = ["Build", "Review"];
-      const cmds: string[][] = [];
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask({ labels: ["agent:review"] }),
         attempt: null,
         config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async (cmd) => {
-          cmds.push(cmd);
-          return successResult();
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
-      const idx = cmds[0]?.indexOf("--agent") ?? -1;
-      expect(idx).toBeGreaterThan(-1);
-      expect(cmds[0]?.[idx + 1]).toBe("Review");
+      expect(state.createBodies[0]?.agent).toBe("Review");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -937,8 +673,8 @@ describe("agent resolution per turn", () => {
       const config = makeConfig(root);
       config.opencode.agents = ["Build", "Review"];
       config.agent.max_turns = 2;
-      const cmds: string[][] = [];
       let check = 0;
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask({ labels: ["agent:review"] }),
         attempt: null,
@@ -949,28 +685,23 @@ describe("agent resolution per turn", () => {
           check++;
           return check === 1 ? makeTask({ labels: ["agent:build"] }) : null;
         },
-        spawnRunner: async (cmd) => {
-          cmds.push(cmd);
-          return successResult({ input: 1, output: 1, total: 2 });
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
-      expect(cmds).toHaveLength(2);
-      const a1 = cmds[0]?.[cmds[0].indexOf("--agent") + 1];
-      const a2 = cmds[1]?.[cmds[1].indexOf("--agent") + 1];
-      expect(a1).toBe("Review");
-      expect(a2).toBe("Build");
+      expect(state.createBodies[0]?.agent).toBe("Review");
+      expect(state.switchAgents).toEqual([{ agent: "Build" }]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("uses the default agent each turn when there is no agent label", async () => {
+  it("uses the default agent when there is no agent label", async () => {
     const root = tempRoot();
     try {
       const config = makeConfig(root);
       config.agent.max_turns = 2;
-      const cmds: string[][] = [];
+      const { exec, state } = apiScript();
       const result = await runAttempt({
         task: makeTask({ labels: ["bug"] }),
         attempt: null,
@@ -978,14 +709,12 @@ describe("agent resolution per turn", () => {
         promptTemplate: "do it",
         logger,
         trackerStateChecker: async (t) => t,
-        spawnRunner: async (cmd) => {
-          cmds.push(cmd);
-          return successResult({ input: 1, output: 1, total: 2 });
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
-      const a1 = cmds[0]?.[cmds[0].indexOf("--agent") + 1];
-      expect(a1).toBe("build");
+      expect(state.createBodies[0]?.agent).toBe("build");
+      expect(state.switchAgents).toHaveLength(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -998,14 +727,17 @@ describe("inactivity timeout", () => {
     try {
       const config = makeConfig(root);
       config.opencode.inactivity_timeout_ms = 0;
+      config.opencode.turn_timeout_ms = 0;
       config.agent.max_turns = 1;
+      const { exec } = apiScript();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => successResult(),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
     } finally {
@@ -1017,20 +749,19 @@ describe("inactivity timeout", () => {
     const root = tempRoot();
     try {
       const config = makeConfig(root);
-      config.agent.max_turns = 1;
+      config.opencode.inactivity_timeout_ms = 1;
+      const { exec } = apiScript({ outcome: null, tokens: null });
+      const clock = clockSleep();
       const result = await runAttempt({
         task: makeTask(),
         attempt: null,
         config,
         promptTemplate: "do it",
         logger,
-        spawnRunner: async () => ({
-          exitCode: -1,
-          stdout: "",
-          stderr: "",
-          timedOut: true,
-          timedOutReason: "inactivity",
-        }),
+        apiExec: exec,
+        sleep: clock.sleep,
+        now: clock.now,
+        interruptGraceMs: 5,
       });
       expect(result.status).toBe("timed_out");
       expect(result.error).toContain("inactivity_timeout");
@@ -1038,260 +769,7 @@ describe("inactivity timeout", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
-
-  it("classifies wall-clock timeout as turn_timeout", async () => {
-    const root = tempRoot();
-    try {
-      const config = makeConfig(root);
-      config.agent.max_turns = 1;
-      const result = await runAttempt({
-        task: makeTask(),
-        attempt: null,
-        config,
-        promptTemplate: "do it",
-        logger,
-        spawnRunner: async () => ({
-          exitCode: -1,
-          stdout: "",
-          stderr: "",
-          timedOut: true,
-          timedOutReason: "wall_clock",
-        }),
-      });
-      expect(result.status).toBe("timed_out");
-      expect(result.error).toContain("turn_timeout");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("classifies timedOut without reason as turn_timeout (backward compat)", async () => {
-    const root = tempRoot();
-    try {
-      const config = makeConfig(root);
-      config.agent.max_turns = 1;
-      const result = await runAttempt({
-        task: makeTask(),
-        attempt: null,
-        config,
-        promptTemplate: "do it",
-        logger,
-        spawnRunner: async () => ({
-          exitCode: -1,
-          stdout: "",
-          stderr: "",
-          timedOut: true,
-        }),
-      });
-      expect(result.status).toBe("timed_out");
-      expect(result.error).toContain("turn_timeout");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("passes inactivity_timeout_ms to spawnRunner", async () => {
-    const root = tempRoot();
-    try {
-      const config = makeConfig(root);
-      config.opencode.inactivity_timeout_ms = 123456;
-      config.agent.max_turns = 1;
-      let receivedInactivity = -1;
-      const result = await runAttempt({
-        task: makeTask(),
-        attempt: null,
-        config,
-        promptTemplate: "do it",
-        logger,
-        spawnRunner: async (_cmd, _cwd, _timeout, inactivityTimeout) => {
-          receivedInactivity = inactivityTimeout;
-          return successResult();
-        },
-      });
-      expect(result.status).toBe("succeeded");
-      expect(receivedInactivity).toBe(123456);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
 });
-
-describe("parseOpencodeLine", () => {
-  it("parses text event", () => {
-    const e = parseOpencodeLine(
-      JSON.stringify({ type: "text", sessionID: "ses_x", part: { text: "hello" } }),
-    );
-    expect(e).not.toBeNull();
-    expect(e?.type).toBe("text");
-    expect(e?.text).toBe("hello");
-    expect(e?.sessionId).toBe("ses_x");
-  });
-
-  it("parses tool_use event", () => {
-    const e = parseOpencodeLine(
-      JSON.stringify({ type: "tool_use", sessionID: "ses_x", part: { tool: "read" } }),
-    );
-    expect(e?.type).toBe("tool_use");
-    expect(e?.tool).toBe("read");
-  });
-
-  it("captures tool_use execution detail from part.state", () => {
-    const e = parseOpencodeLine(
-      JSON.stringify({
-        type: "tool_use",
-        sessionID: "ses_x",
-        part: {
-          tool: "bash",
-          state: {
-            status: "completed",
-            input: { command: "echo hi" },
-            output: "hi\n",
-            metadata: { exit: 0, truncated: false },
-            title: "echo hi",
-            time: { start: 1000, end: 1500 },
-          },
-        },
-      }),
-    );
-    expect(e?.type).toBe("tool_use");
-    expect(e?.tool).toBe("bash");
-    expect(e?.input).toEqual({ command: "echo hi" });
-    expect(e?.output).toBe("hi\n");
-    expect(e?.exit).toBe(0);
-    expect(e?.title).toBe("echo hi");
-    expect(e?.status).toBe("completed");
-    expect(e?.durationMs).toBe(500);
-    expect(e?.truncated).toBe(false);
-  });
-
-  it("captures non-zero exit code from state.metadata", () => {
-    const e = parseOpencodeLine(
-      JSON.stringify({
-        type: "tool_use",
-        sessionID: "ses_x",
-        part: {
-          tool: "bash",
-          state: { status: "completed", metadata: { exit: 127, truncated: false } },
-        },
-      }),
-    );
-    expect(e?.exit).toBe(127);
-  });
-
-  it("tolerates partial state on tool_use without throwing", () => {
-    const e = parseOpencodeLine(
-      JSON.stringify({
-        type: "tool_use",
-        sessionID: "ses_x",
-        part: { tool: "bash", state: { status: "pending" } },
-      }),
-    );
-    expect(e?.type).toBe("tool_use");
-    expect(e?.tool).toBe("bash");
-    expect(e?.status).toBe("pending");
-    expect(e?.title).toBeUndefined();
-    expect(e?.durationMs).toBeUndefined();
-  });
-
-  it("treats non-tool events without tool detail as before", () => {
-    const e = parseOpencodeLine(
-      JSON.stringify({
-        type: "tool_use",
-        sessionID: "ses_x",
-        part: { tool: "read" },
-      }),
-    );
-    expect(e?.tool).toBe("read");
-    expect(e?.input).toBeUndefined();
-    expect(e?.output).toBeUndefined();
-    expect(e?.exit).toBeUndefined();
-  });
-
-  it("parses step_finish tokens", () => {
-    const e = parseOpencodeLine(
-      JSON.stringify({
-        type: "step_finish",
-        sessionID: "ses_x",
-        part: { tokens: { input: 100, output: 10, total: 110 } },
-      }),
-    );
-    expect(e?.type).toBe("step_finish");
-    expect(e?.tokens).toEqual({ input: 100, output: 10, total: 110 });
-  });
-
-  it("parses step_start", () => {
-    const e = parseOpencodeLine(JSON.stringify({ type: "step_start", sessionID: "ses_x" }));
-    expect(e?.type).toBe("step_start");
-    expect(e?.sessionId).toBe("ses_x");
-  });
-
-  it("returns null for non-JSON line", () => {
-    expect(parseOpencodeLine("not json here")).toBeNull();
-    expect(parseOpencodeLine("")).toBeNull();
-  });
-
-  it("keeps unknown type without throwing", () => {
-    const e = parseOpencodeLine(
-      JSON.stringify({ type: "some_new_type", sessionID: "ses_x", part: { foo: "bar" } }),
-    );
-    expect(e?.type).toBe("some_new_type");
-    expect(e?.sessionId).toBe("ses_x");
-  });
-
-  it("returns null for JSON without type", () => {
-    expect(parseOpencodeLine(JSON.stringify({ sessionID: "ses_x" }))).toBeNull();
-  });
-});
-
-describe("runDefaultSubprocess onOpencodeEvent", () => {
-  it("streams parsed events in order, skipping non-JSON, joining split lines", async () => {
-    const script = `
-      const w = (s) => process.stdout.write(s);
-      w(JSON.stringify({ type: "step_start", sessionID: "ses_x" }) + "\\n");
-      w('{"type":"text","sessionID":"ses_x","part":{"text":"hel');
-      setTimeout(() => {
-        w('lo"}}\\n');
-        w('not json\\n');
-        w(JSON.stringify({ type: "tool_use", sessionID: "ses_x", part: { tool: "read" } }) + "\\n");
-        w(JSON.stringify({ type: "step_finish", sessionID: "ses_x", part: { tokens: { input: 1, output: 2, total: 3 } } }) + "\\n");
-        process.exit(0);
-      }, 20);
-    `;
-    const events: OpencodeEvent[] = [];
-    const result = await runDefaultSubprocess(
-      ["node", "-e", script],
-      "/tmp",
-      5000,
-      0,
-      undefined,
-      undefined,
-      (e) => events.push(e),
-    );
-    expect(events.map((e) => e.type)).toEqual(["step_start", "text", "tool_use", "step_finish"]);
-    expect(events[1]?.text).toBe("hello");
-    expect(events[2]?.tool).toBe("read");
-    expect(events[3]?.tokens).toEqual({ input: 1, output: 2, total: 3 });
-    const extracted = extractSessionAndUsage(result.stdout);
-    expect(extracted.session_id).toBe("ses_x");
-    expect(extracted.usage.total_tokens).toBe(3);
-  });
-
-  it("works without onOpencodeEvent (backward compatible)", async () => {
-    const result = await runDefaultSubprocess(
-      [
-        "node",
-        "-e",
-        'process.stdout.write(JSON.stringify({type:"text",sessionID:"ses_x",part:{text:"hi"}})+"\\n");process.exit(0)',
-      ],
-      "/tmp",
-      5000,
-      0,
-    );
-    expect(result.exitCode).toBe(0);
-    expect(extractSessionAndUsage(result.stdout).session_id).toBe("ses_x");
-  });
-});
-
 describe("runAttempt activity capture", () => {
   it("wires onActivity with turn and turn_started agent/model/variant", async () => {
     const root = tempRoot();
@@ -1300,6 +778,18 @@ describe("runAttempt activity capture", () => {
       config.opencode.model = "anthropic/claude-sonnet-4-5";
       config.opencode.variant = "high";
       config.agent.max_turns = 1;
+      const { exec } = apiScript({
+        tokens: null,
+        messages: [
+          {
+            content: [
+              { type: "text", text: "working" },
+              { type: "tool", tool: "read" },
+            ],
+            tokens: null,
+          },
+        ],
+      });
       const activity: ActivityEvent[] = [];
       const workerEvents: WorkerEvent[] = [];
       const result = await runAttempt({
@@ -1310,11 +800,8 @@ describe("runAttempt activity capture", () => {
         logger,
         events: { onEvent: (e) => workerEvents.push(e) },
         onActivity: (e) => activity.push(e),
-        spawnRunner: async (_cmd, _cwd, _t, _i, _s, onOpencodeEvent) => {
-          onOpencodeEvent?.({ type: "text", text: "working", sessionId: "ses_x" });
-          onOpencodeEvent?.({ type: "tool_use", tool: "read", sessionId: "ses_x" });
-          return successResult();
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       expect(activity.map((a) => a.type)).toEqual(["text", "tool_use"]);
@@ -1335,6 +822,26 @@ describe("runAttempt activity capture", () => {
     try {
       const config = makeConfig(root);
       config.agent.max_turns = 1;
+      const { exec } = apiScript({
+        messages: [
+          {
+            content: [
+              {
+                type: "tool",
+                tool: "bash",
+                state: {
+                  status: "completed",
+                  input: { command: "false" },
+                  output: "",
+                  metadata: { exit: 1, truncated: false },
+                  time: { created: 1000, ran: 1050, completed: 1300 },
+                },
+              },
+            ],
+            tokens: null,
+          },
+        ],
+      });
       const activity: ActivityEvent[] = [];
       const result = await runAttempt({
         task: makeTask(),
@@ -1343,20 +850,8 @@ describe("runAttempt activity capture", () => {
         promptTemplate: "do it",
         logger,
         onActivity: (e) => activity.push(e),
-        spawnRunner: async (_cmd, _cwd, _t, _i, _s, onOpencodeEvent) => {
-          onOpencodeEvent?.({
-            type: "tool_use",
-            tool: "bash",
-            input: { command: "false" },
-            output: "",
-            exit: 1,
-            title: "false",
-            status: "completed",
-            durationMs: 300,
-            sessionId: "ses_x",
-          });
-          return successResult();
-        },
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       expect(result.status).toBe("succeeded");
       const tool = activity.find((a) => a.type === "tool_use");
@@ -1364,9 +859,8 @@ describe("runAttempt activity capture", () => {
       expect(tool?.input).toEqual({ command: "false" });
       expect(tool?.output).toBe("");
       expect(tool?.exit).toBe(1);
-      expect(tool?.title).toBe("false");
       expect(tool?.status).toBe("completed");
-      expect(tool?.durationMs).toBe(300);
+      expect(tool?.durationMs).toBe(250);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1386,7 +880,8 @@ describe("runAttempt activity capture", () => {
         promptTemplate: "do it",
         logger,
         events: { onEvent: (e) => workerEvents.push(e) },
-        spawnRunner: async () => successResult(),
+        apiExec: apiScript().exec,
+        sleep: () => Promise.resolve(),
       });
       const started = workerEvents.find((e) => e.event === "turn_started");
       expect(started?.model).toBeNull();
@@ -1396,62 +891,22 @@ describe("runAttempt activity capture", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
-
-  it("captures real opencode stdout into onActivity via the default runner", async () => {
-    const root = tempRoot();
-    const scriptPath = join(tmpdir(), `tasking-int-activity-${Date.now()}.mjs`);
-    writeFileSync(
-      scriptPath,
-      [
-        "console.log(JSON.stringify({type:'step_start',sessionID:'ses_real'}));",
-        "console.log(JSON.stringify({type:'text',sessionID:'ses_real',part:{text:'working hard'}}));",
-        "console.log(JSON.stringify({type:'tool_use',sessionID:'ses_real',part:{tool:'read'}}));",
-        "console.log(JSON.stringify({type:'step_finish',sessionID:'ses_real',part:{tokens:{input:5,output:7,total:12}}}));",
-        "process.exit(0);",
-      ].join("\n"),
-      "utf8",
-    );
-    try {
-      const config = makeConfig(root);
-      config.opencode.command = `node ${scriptPath}`;
-      config.opencode.model = "anthropic/claude-sonnet-4-5";
-      config.agent.max_turns = 1;
-      const activity: ActivityEvent[] = [];
-      const workerEvents: WorkerEvent[] = [];
-      const result = await runAttempt({
-        task: makeTask(),
-        attempt: null,
-        config,
-        promptTemplate: "do it",
-        logger,
-        events: { onEvent: (e) => workerEvents.push(e) },
-        onActivity: (e) => activity.push(e),
-      });
-      expect(result.status).toBe("succeeded");
-      expect(result.session_id).toBe("ses_real");
-      const types = activity.map((a) => a.type);
-      expect(types).toContain("text");
-      expect(types).toContain("tool_use");
-      expect(types).toContain("step_finish");
-      const textEvt = activity.find((a) => a.type === "text");
-      expect(textEvt?.text).toBe("working hard");
-      expect(textEvt?.turn).toBe(1);
-      const started = workerEvents.find((e) => e.event === "turn_started");
-      expect(started?.model).toBe("anthropic/claude-sonnet-4-5");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-      rmSync(scriptPath, { force: true });
-    }
-  });
 });
 
 describe("step_usage events", () => {
-  it("emits step_usage for each step_finish token report and turn_completed carries no usage", async () => {
+  it("emits step_usage for each token-bearing message and turn_completed carries no usage", async () => {
     const root = tempRoot();
     try {
       const config = makeConfig(root);
       config.agent.max_turns = 1;
+      const { exec } = apiScript({
+        messages: [
+          { content: [], tokens: { input: 100, output: 50, reasoning: 0 } },
+          { content: [], tokens: { input: 10, output: 5, reasoning: 0 } },
+        ],
+      });
       const workerEvents: WorkerEvent[] = [];
+      const activity: ActivityEvent[] = [];
       await runAttempt({
         task: makeTask(),
         attempt: null,
@@ -1459,19 +914,9 @@ describe("step_usage events", () => {
         promptTemplate: "do it",
         logger,
         events: { onEvent: (e) => workerEvents.push(e) },
-        spawnRunner: async (_cmd, _cwd, _t, _i, _s, onOpencodeEvent) => {
-          onOpencodeEvent?.({
-            type: "step_finish",
-            tokens: { input: 100, output: 50, total: 150 },
-            sessionId: "ses_x",
-          });
-          onOpencodeEvent?.({
-            type: "step_finish",
-            tokens: { input: 10, output: 5, total: 15 },
-            sessionId: "ses_x",
-          });
-          return successResult();
-        },
+        onActivity: (e) => activity.push(e),
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
       });
       const stepUsages = workerEvents.filter((e) => e.event === "step_usage");
       expect(stepUsages).toHaveLength(2);
@@ -1487,6 +932,8 @@ describe("step_usage events", () => {
       });
       const completed = workerEvents.find((e) => e.event === "turn_completed");
       expect(completed?.usage).toBeUndefined();
+      const usageActivities = activity.filter((a) => a.type === "step_usage");
+      expect(usageActivities[0]?.tokens).toEqual({ input: 100, output: 50, total: 150 });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

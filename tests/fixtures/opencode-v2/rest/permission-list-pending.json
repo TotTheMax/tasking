@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "id": "per_14400a870001ziL78s1yM5EcUx",
+      "sessionID": "ses_ebbff62bcffeUnTka3kVCTz0H8",
+      "action": "shell",
+      "resources": ["echo fixture-capture"],
+      "save": ["echo *"],
+      "source": {
+        "type": "tool",
+        "messageID": "msg_144009e9a001zn2oNnow9dwu1T",
+        "id": "call_00_o3z433fnsxxyewwjg5tiibmt"
+      }
+    }
+  ]
+}
