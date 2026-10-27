@@ -130,6 +130,19 @@ opencode:
   # 可选。模型变体 (provider 特定推理档位，如 high/max/minimal)，映射 `Model.Ref.variant`。默认 null（不配置）。与 model 彼此独立。
   variant: null
 
+  # 会话级权限姿态。true（默认）= 建会话时下发全放 ruleset，工作区/全局的 ask 规则被覆盖，
+  # 不产生审批卡（Jira 路径默认无人值守）；需要审批卡时必须显式设 false。
+  # auto_approve: true
+
+  # 审批等待预算（毫秒），到点自动拒绝并盖章；仅 auto_approve: false 时生效。默认 1800000 = 30 分钟。
+  # permission_timeout_ms: 1800000
+
+  # 进度/审批/终态的轮询间隔（毫秒），见 docs/adr/0037。默认 2000。
+  # poll_interval_ms: 2000
+
+  # 指定 opencode 服务端地址（如 http://127.0.0.1:49374）；null = 使用默认共享服务。
+  # server_url: null
+
   # 单 turn 超时 (毫秒)。默认 3600000 = 1 小时。必须 > 0。
   # 硬墙钟超时：无论活动状态如何，到点必杀。
   turn_timeout_ms: 3600000

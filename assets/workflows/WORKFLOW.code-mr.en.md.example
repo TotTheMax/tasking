@@ -132,6 +132,22 @@ opencode:
   # Optional. Model variant (provider-specific reasoning effort such as high/max/minimal), maps to `Model.Ref.variant`. Default null (unset). Independent of model.
   variant: null
 
+  # Session-level permission posture. true (default) = the session is created with an
+  # allow-all ruleset that overrides workspace/global ask rules, so no approval cards
+  # are produced (the Jira path is unattended by default); set false explicitly to get
+  # Feishu approval cards.
+  # auto_approve: true
+
+  # Approval wait budget (ms); auto-rejects and stamps the card on expiry. Only
+  # effective with auto_approve: false. Default 1800000 = 30 minutes.
+  # permission_timeout_ms: 1800000
+
+  # Polling interval (ms) for progress/approvals/completion — see docs/adr/0037. Default 2000.
+  # poll_interval_ms: 2000
+
+  # Explicit opencode server URL (e.g. http://127.0.0.1:49374); null = default shared service.
+  # server_url: null
+
   # Per-turn timeout (ms). Default 3600000 = 1 hour. Must be > 0.
   # Hard wall-clock timeout: kills the turn when time is up regardless of activity.
   turn_timeout_ms: 3600000

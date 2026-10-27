@@ -129,5 +129,5 @@ tasking's scheduling model and shipped agent skills draw on [openai/symphony](ht
 
 - **opencode v2 required**: tasking 0.7 requires `opencode >=2.0 <3` and refuses to start on v1 or v3+ (upgrade with `opencode upgrade --major`). opencode v1 support is frozen on the `support/v1` branch (0.6.x).
 - **`opencode.command` default changed** from `opencode run` to `opencode`; edit existing `WORKFLOW.md` files accordingly.
-- **`auto_approve: false` semantics changed**: `ask` permissions now pend for a Feishu approval card instead of being auto-rejected (and the `--auto`/`--dir`/`--variant` flags are gone).
+- **`auto_approve: false` semantics changed**: `ask` permissions now pend for a Feishu approval card instead of being auto-rejected (and the `--auto`/`--dir`/`--variant` flags are gone). Defaults are unchanged — the Jira path stays `true` (unattended; cards only appear with `auto_approve: false`), direct sessions stay `false` (posture follows the target directory).
 - **Progress is polled** (default every 2s) rather than streamed; token totals are `input + output + reasoning` (v2 has no `total` field).

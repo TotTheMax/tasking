@@ -1324,6 +1324,80 @@ describe("runInit --workflow", () => {
     }
   });
 
+  const POSTURE_KEYS = [
+    "# auto_approve:",
+    "# permission_timeout_ms:",
+    "# poll_interval_ms:",
+    "# server_url:",
+  ];
+
+  const frontMatterOf = (content: string): string => {
+    const lines = content.split(/\r?\n/);
+    const end = lines.findIndex((line, i) => i > 0 && /^---\s*$/.test(line));
+    return lines.slice(1, end === -1 ? undefined : end).join("\n");
+  };
+
+  const opencodeSectionOf = (content: string): string => {
+    const fm = frontMatterOf(content).split("\n");
+    const start = fm.findIndex((l) => /^opencode:\s*$/.test(l));
+    expect(start, "template has an opencode: section").toBeGreaterThanOrEqual(0);
+    const lines: string[] = [];
+    for (const line of fm.slice(start + 1)) {
+      if (/^[a-z_]+:/.test(line)) break;
+      lines.push(line);
+    }
+    return lines.join("\n");
+  };
+
+  for (const name of ["minimal", "code-mr", "feishu-direct", "grill-openspec"]) {
+    for (const suffix of ["", ".en"]) {
+      it(`WORKFLOW.${name}${suffix} surfaces the posture keys as comments (and only comments)`, () => {
+        const path = join(
+          process.cwd(),
+          "assets",
+          "workflows",
+          `WORKFLOW.${name}${suffix}.md.example`,
+        );
+        const section = opencodeSectionOf(readFileSync(path, "utf8"));
+        for (const key of POSTURE_KEYS) {
+          expect(section, `${name}${suffix} missing ${key}`).toContain(key);
+        }
+        expect(section).not.toMatch(/^\s*auto_approve:/m);
+        expect(section).not.toMatch(/^\s*permission_timeout_ms:/m);
+        expect(section).not.toMatch(/^\s*poll_interval_ms:/m);
+        expect(section).not.toMatch(/^\s*server_url:/m);
+      });
+    }
+  }
+
+  it("every template still resolves the four posture keys to DEFAULTS", async () => {
+    const { resolveConfig } = await import("../src/config/resolver.js");
+    const { parse } = await import("yaml");
+    for (const name of ["minimal", "code-mr", "feishu-direct", "grill-openspec"]) {
+      for (const suffix of ["", ".en"]) {
+        const path = join(
+          process.cwd(),
+          "assets",
+          "workflows",
+          `WORKFLOW.${name}${suffix}.md.example`,
+        );
+        const content = readFileSync(path, "utf8");
+        const fm = parse(frontMatterOf(content)) as Record<string, unknown>;
+        const cfg = resolveConfig(
+          { ...fm, workspace: { root: "/tmp/tasking-wf" } } as never,
+          "/tmp",
+          "p",
+        );
+        expect(cfg.opencode.auto_approve, `${name}${suffix} auto_approve`).toBe(true);
+        expect(cfg.opencode.permission_timeout_ms, `${name}${suffix} permission_timeout_ms`).toBe(
+          1800000,
+        );
+        expect(cfg.opencode.poll_interval_ms, `${name}${suffix} poll_interval_ms`).toBe(2000);
+        expect(cfg.opencode.server_url, `${name}${suffix} server_url`).toBeNull();
+      }
+    }
+  });
+
   it("markerless WORKFLOW.md drift-reports against the minimal template", async () => {
     const dir = tempDir();
     try {
