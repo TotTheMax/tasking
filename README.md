@@ -45,11 +45,11 @@ For guided quickstarts, see the [Chinese guide](./docs/zh/getting-started.md) or
 
 | Command | Description |
 |---------|-------------|
-| `tasking init [workflow-path]` | Scaffold a starter `WORKFLOW.md` |
+| `tasking init [workflow-path]` | Scaffold a starter `WORKFLOW.md` (interactive prompts cover credentials, Feishu setup, and the opencode model; `--model <provider/model>` pre-answers the model question) |
 | `tasking start [path] [--port N]` | Start the daemon (loads `./WORKFLOW.md` by default) |
 | `tasking status` | Print a runtime snapshot (running, retrying, totals) |
 | `tasking logs` | Print recent structured logs |
-| `tasking doctor [workflow-path]` | Read-only whole-chain health check (WORKFLOW.md, Feishu, Jira, opencode) |
+| `tasking doctor [workflow-path]` | Read-only whole-chain health check (WORKFLOW.md, Feishu, Jira, opencode, model resolution) |
 | `tasking --version` | Print the installed version (top-level flag, also `-v`) |
 
 ## `WORKFLOW.md` contract

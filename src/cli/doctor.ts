@@ -14,6 +14,9 @@ import type { FeishuConfig, TrackerConfig } from "../config/config-types.js";
 import { loadDotenvIfPresent } from "../config/dotenv.js";
 import { ConfigManager } from "../config/manager.js";
 import { getMcpServerScriptPath } from "../mcp/inject.js";
+import type { OpencodeModelsProbe } from "../driver/opencode-models.js";
+import { formatResolvedModel } from "../driver/session-ops.js";
+import { probeOpencodeModels } from "../driver/opencode-models.js";
 import {
   type OpencodeAuthProbe,
   type OpencodeServiceProbe,
@@ -26,7 +29,7 @@ import { setLocale, translate } from "../translate/locale.js";
 import { readTaskingVersion } from "./version.js";
 import { resolveWorkflowPathOrReport } from "./workflow-path.js";
 
-type DoctorStatus = "pass" | "fail" | "skip" | "info";
+type DoctorStatus = "pass" | "fail" | "skip" | "info" | "warn";
 
 interface DoctorItem {
   name: string;
@@ -39,6 +42,7 @@ export interface DoctorDeps {
   opencodeVersion?: () => string | null;
   opencodeService?: () => OpencodeServiceProbe;
   opencodeAuth?: () => OpencodeAuthProbe;
+  opencodeModels?: () => Promise<OpencodeModelsProbe>;
   mcpScriptPath?: () => string;
 }
 
@@ -47,7 +51,51 @@ const ICONS: Record<DoctorStatus, string> = {
   fail: "✗",
   skip: "−",
   info: "·",
+  warn: "⚠",
 };
+
+function modelResolutionItem(
+  configured: string | null,
+  probe: OpencodeModelsProbe,
+  command: string,
+): DoctorItem {
+  const listHint = translate(`完整列表可跑 ${command} api model.list`);
+  if (probe.status === "unreachable") {
+    return {
+      name: "模型解析",
+      status: "info",
+      detail: `探测不可达（${probe.error ?? translate("未知原因")}），跳过；${listHint}`,
+    };
+  }
+  if (configured !== null) {
+    if (probe.available === undefined) {
+      return {
+        name: "模型解析",
+        status: "info",
+        detail: `已配置 ${configured}，可用列表探测失败，跳过校验；${listHint}`,
+      };
+    }
+    const inList = probe.available.some((m) =>
+      configured.includes("/") ? `${m.providerID}/${m.id}` === configured : m.id === configured,
+    );
+    if (inList) {
+      return { name: "模型解析", status: "pass", detail: `已配置 ${configured}（在可用模型列表）` };
+    }
+    return {
+      name: "模型解析",
+      status: "fail",
+      detail: `已配置 ${configured}，但不在可用模型列表——任务将在此模型上失败；${listHint}`,
+    };
+  }
+  const resolved = probe.defaultModel ? formatResolvedModel(probe.defaultModel) : null;
+  return {
+    name: "模型解析",
+    status: "warn",
+    detail: resolved
+      ? `未配置——服务端当前解析为 ${resolved}（随目录更新可能变化）；${listHint}`
+      : `未配置且服务端未解析出默认模型；${listHint}`,
+  };
+}
 
 function probeToItem(prefix: string, item: ProbeItem): DoctorItem {
   const status: DoctorStatus =
@@ -65,6 +113,7 @@ export async function runDoctor(
   output.write(`tasking ${readTaskingVersion()}\n`);
   const opencodeVersion = deps.opencodeVersion ?? probeOpencodeVersion;
   const items: DoctorItem[] = [];
+  let modelTarget: { configured: string | null; command: string; root: string } | undefined;
 
   const resolvedPath = resolveWorkflowPathOrReport(cwd, workflowPath, (message) =>
     output.write(`${message}\n`),
@@ -86,6 +135,11 @@ export async function runDoctor(
       loadDotenvIfPresent(dirname(wfPath));
       const cfg = ConfigManager.fromFile(wfPath).current;
       setLocale(cfg.interface_language);
+      modelTarget = {
+        configured: cfg.opencode.model ?? null,
+        command: cfg.opencode.command,
+        root: cfg.workspace.root,
+      };
       items.push({
         name: wfLabel,
         status: "pass",
@@ -236,6 +290,14 @@ export async function runDoctor(
         status: auth.ok ? "pass" : "fail",
         detail: auth.ok ? auth.detail : `${auth.detail}——模型调用将失败`,
       });
+      if (modelTarget !== undefined) {
+        const target = modelTarget;
+        const probe = await (
+          deps.opencodeModels ??
+          (() => probeOpencodeModels(target.command, target.root ?? cwd))
+        )();
+        items.push(modelResolutionItem(target.configured, probe, target.command));
+      }
     }
   }
 
@@ -247,8 +309,11 @@ export async function runDoctor(
   }
   const passed = items.filter((i) => i.status === "pass").length;
   const failed = items.filter((i) => i.status === "fail").length;
+  const warned = items.filter((i) => i.status === "warn").length;
   const skipped = items.filter((i) => i.status === "skip").length;
-  const summary = translate(`汇总: ${passed} 通过 / ${failed} 失败 / ${skipped} 跳过`);
+  const summary = translate(
+    `汇总: ${passed} 通过 / ${failed} 失败 / ${warned} 警告 / ${skipped} 跳过`,
+  );
   output.write(`\n${summary}\n`);
   return failed > 0 ? 1 : 0;
 }

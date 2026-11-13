@@ -57,6 +57,7 @@ tasking init
 3. **Feishu app_id / app_secret**：填入后 init **当场验证**（换 token 测试；失败会用人话报原因并让你重输 secret）
 4. **选择 intake 群**：验证通过后列出机器人所在的群，回车选第一个
 5. **常用项目名（可跳过）**：填了再填目录绝对路径——生成 `/chat <项目名> <消息>` 直接可用，且 `path_roots` 收敛到该目录；直接回车跳过则用 `/chat /绝对路径 <消息>`，完成提示会警告 path 模式不限制目录
+6. **opencode 模型（可跳过）**：搜索选择可用模型（写入 `opencode.model`）、手动输入 `provider/model`，或回车跟随服务端默认——选项会实时显示「不配置时实际会用哪个」及漂移提示；也可事后用 `--model <provider/model>` 预答
 
 完成后直接看到下一步命令。
 

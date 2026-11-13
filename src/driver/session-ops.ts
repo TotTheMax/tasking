@@ -30,11 +30,36 @@ export interface SessionTokens {
   cache: { read: number; write: number };
 }
 
+export interface ResolvedModel {
+  id: string;
+  providerID?: string;
+  variant?: string;
+}
+
+function parseResolvedModel(value: unknown): ResolvedModel | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.id !== "string" || record.id === "") return undefined;
+  const model: ResolvedModel = { id: record.id };
+  if (typeof record.providerID === "string") model.providerID = record.providerID;
+  if (typeof record.variant === "string") model.variant = record.variant;
+  return model;
+}
+
+export function formatResolvedModel(model: ResolvedModel): string {
+  return model.providerID ? `${model.providerID}/${model.id}` : model.id;
+}
+
+export function modelDriftMessage(previous: string, next: string): string {
+  return `model changed mid-session: ${previous} → ${next}`;
+}
+
 export interface SessionInfo {
   id: string;
   outcome: string | null;
   tokens?: SessionTokens;
   updatedAt?: number | null;
+  model?: ResolvedModel;
 }
 
 export interface PendingPermission {
@@ -93,6 +118,7 @@ export async function createSession(
     id: String(payload.id ?? ""),
     outcome: (payload.outcome as string | null) ?? null,
     ...(tokens ? { tokens } : {}),
+    ...(payload.model !== undefined ? { model: parseResolvedModel(payload.model) } : {}),
   };
 }
 
@@ -149,6 +175,7 @@ export async function getSession(
     outcome: (payload.outcome as string | null) ?? null,
     ...(tokens ? { tokens } : {}),
     updatedAt,
+    ...(payload.model !== undefined ? { model: parseResolvedModel(payload.model) } : {}),
   };
 }
 

@@ -252,13 +252,14 @@ TUI 显示:
 1. **WORKFLOW.md 解析** — front matter 能否解析、tracker 是什么;
 2. **飞书**(仅 `feishu.enabled: true`)— 凭据换 token → 三个 scope 探针(列群/读群消息/传文件)→ intake 群可达(机器人所在群列表含 `intake_chat_id`);
 3. **Jira**(仅 `tracker.kind: jira`)— 连接测试(同 init 的 Connection Test 逻辑,只取 serverInfo)+ **Jira MCP 脚本**存在性(缺失报 ✗ 并提示 `npm run build`,否则任务 agent 拿不到 Jira 工具);
-4. **opencode** — 是否在 `PATH`。
+4. **opencode** — 是否在 `PATH`、版本门禁、服务探活、认证探测;
+5. **模型解析** — 已配置 `opencode.model` 时校验其仍在可用列表(失效 ✗);未配置时探测 `model.default` 显示实际会用的模型并 ⚠ 提示漂移风险(完整列表可跑 `opencode api model.list`);探测不可达则 · 跳过。
 
 ```bash
 tasking doctor [workflow-path]
 ```
 
-中文输出,逐项 `✓/✗/−/·` 与补救提示,末尾汇总表。退出码:`0` 全部通过;`1` 任一失败(可脚本化,换机/重装后自检一跑便知)。位置参数 `[workflow-path]` 缺省 `./WORKFLOW.md`,与 `start`/`init` 语义一致(传目录视为错误),且 `.env` 从该文件所在目录加载;不执行任何写操作;scope 缺失的补救指引(控制台深链等)见[飞书应用开通](./feishu-app-setup.md)。`tasking init` 的飞书采集流程内嵌同款体检(凭据验证通过后自动跑,缺权限只警告不阻断),doctor 用于事后随时复检。
+中文输出,逐项 `✓/✗/−/·/⚠` 与补救提示,末尾汇总表。退出码:`0` 全部通过;`1` 任一失败(可脚本化,换机/重装后自检一跑便知)。位置参数 `[workflow-path]` 缺省 `./WORKFLOW.md`,与 `start`/`init` 语义一致(传目录视为错误),且 `.env` 从该文件所在目录加载;不执行任何写操作;scope 缺失的补救指引(控制台深链等)见[飞书应用开通](./feishu-app-setup.md)。`tasking init` 的飞书采集流程内嵌同款体检(凭据验证通过后自动跑,缺权限只警告不阻断),doctor 用于事后随时复检。
 
 ## 凭据配置
 

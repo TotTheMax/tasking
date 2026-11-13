@@ -12,7 +12,7 @@ const COMMANDS: CommandHelp[] = [
     name: "init",
     description: "Generate a WORKFLOW.md and install tasking skills",
     usage:
-      "tasking init [workflow-path] [--force] [--non-interactive] [--workflow <name>] [--lang <zh|en>] [--update | --restore]",
+      "tasking init [workflow-path] [--force] [--non-interactive] [--workflow <name>] [--lang <zh|en>] [--model <provider/model>] [--update | --restore]",
     args: ["workflow-path   Path to WORKFLOW.md (default: ./WORKFLOW.md)"],
     options: [
       { flags: "--force", description: "Overwrite an existing WORKFLOW.md" },
@@ -29,6 +29,11 @@ const COMMANDS: CommandHelp[] = [
         flags: "--lang <zh|en>",
         description:
           "Template language for WORKFLOW.md comments/guidance AND the interface_language seed (en writes interface_language: en; zh omits it): zh | en (default: zh; interactive init prompts when omitted; --update uses it to select the drift-report template)",
+      },
+      {
+        flags: "--model <provider/model>",
+        description:
+          "Pre-answer the interactive model question and write opencode.model (format provider/model, must contain /; validated for shape only)",
       },
       {
         flags: "--update",

@@ -1426,4 +1426,55 @@ describe("activity + model writeback", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("refreshes entry.model from model_resolved events", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 1;
+      const task = makeTask({ id: "1", state: "In Progress" });
+      const tracker = mockTracker([task]);
+      const seen: Array<string | null | undefined> = [];
+      const holder: { sched?: Scheduler } = {};
+      const runFn = (async (opts: {
+        events?: { onEvent?: (e: Record<string, unknown>) => void };
+      }) => {
+        const entry = () => holder.sched?.state.running.get(task.id);
+        opts.events?.onEvent?.({
+          event: "turn_started",
+          timestamp: Date.now(),
+          message: "turn 1 of 1",
+          model: null,
+        });
+        seen.push(entry()?.model);
+        opts.events?.onEvent?.({
+          event: "model_resolved",
+          timestamp: Date.now(),
+          model: "zhipuai-coding-plan/glm-5.3",
+        });
+        seen.push(entry()?.model);
+        opts.events?.onEvent?.({
+          event: "turn_completed",
+          timestamp: Date.now(),
+          model: "opencode/big-pickle",
+        });
+        seen.push(entry()?.model);
+        return {
+          status: "succeeded",
+          error: null,
+          usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+          session_id: null,
+          started_at: Date.now(),
+          ended_at: Date.now(),
+        };
+      }) as never;
+      const sched = new Scheduler({ tracker, config: () => config, logger, runAttemptFn: runFn });
+      holder.sched = sched;
+      await sched.tick();
+      expect(seen).toEqual([null, "zhipuai-coding-plan/glm-5.3", "opencode/big-pickle"]);
+      sched.stop();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

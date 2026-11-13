@@ -1,0 +1,2254 @@
+{
+  "data": [
+    {
+      "id": "gemini-4-hydrogen",
+      "modelID": "gemini-4-hydrogen",
+      "providerID": "opencode",
+      "type": "chat",
+      "family": "gemini",
+      "name": "Gemini 4 Hydrogen",
+      "package": "@opencode/ai/providers/google",
+      "settings": {
+        "baseURL": "https://opencode.ai/inference/google/v1beta"
+      },
+      "headers": {
+        "x-opencode-org-id": "wrk_01M0EGZN1DBD8QFAGTDVWKD7JV"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "video", "audio", "pdf"],
+        "output": ["text"],
+        "temperature": false
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "thinkingConfig": {
+              "includeThoughts": true,
+              "thinkingLevel": "low"
+            }
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "thinkingConfig": {
+              "includeThoughts": true,
+              "thinkingLevel": "medium"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "thinkingConfig": {
+              "includeThoughts": true,
+              "thinkingLevel": "high"
+            }
+          }
+        },
+        {
+          "id": "xhigh",
+          "settings": {
+            "thinkingConfig": {
+              "includeThoughts": true,
+              "thinkingLevel": "xhigh"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1794441600000
+      },
+      "cost": [
+        {
+          "input": 1.5,
+          "output": 7.5,
+          "cache": {
+            "read": 0.075,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 65536
+      }
+    },
+    {
+      "id": "google/gemini-4-hydrogen",
+      "modelID": "google/gemini-4-hydrogen",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "gemini",
+      "name": "Gemini 4 Hydrogen",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "video", "audio", "pdf"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoning": {
+              "effort": "medium"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        },
+        {
+          "id": "xhigh",
+          "settings": {
+            "reasoning": {
+              "effort": "xhigh"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1794441600000
+      },
+      "cost": [
+        {
+          "input": 1.5,
+          "output": 7.5,
+          "cache": {
+            "read": 0.075,
+            "write": 0.083333
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 943718
+      }
+    },
+    {
+      "id": "gemini-4-carbon",
+      "modelID": "gemini-4-carbon",
+      "providerID": "github-copilot",
+      "type": "chat",
+      "family": "gemini",
+      "name": "Gemini 4 Carbon",
+      "package": "aisdk:@ai-sdk/github-copilot",
+      "settings": {
+        "baseURL": "https://api.githubcopilot.com",
+        "provider": "github-copilot"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "pdf"],
+        "output": ["text"],
+        "temperature": false
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "reasoningEffort": "low"
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoningEffort": "medium"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoningEffort": "high"
+          }
+        }
+      ],
+      "time": {
+        "released": 1794268800000
+      },
+      "cost": [
+        {
+          "input": 2,
+          "output": 10,
+          "cache": {
+            "read": 0.1,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 65536
+      }
+    },
+    {
+      "id": "gemini-4-carbon",
+      "modelID": "gemini-4-carbon",
+      "providerID": "opencode",
+      "type": "chat",
+      "family": "gemini",
+      "name": "Gemini 4 Carbon",
+      "package": "@opencode/ai/providers/google",
+      "settings": {
+        "baseURL": "https://opencode.ai/inference/google/v1beta"
+      },
+      "headers": {
+        "x-opencode-org-id": "wrk_01M0EGZN1DBD8QFAGTDVWKD7JV"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "video", "audio", "pdf"],
+        "output": ["text"],
+        "temperature": false
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "thinkingConfig": {
+              "includeThoughts": true,
+              "thinkingLevel": "low"
+            }
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "thinkingConfig": {
+              "includeThoughts": true,
+              "thinkingLevel": "medium"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "thinkingConfig": {
+              "includeThoughts": true,
+              "thinkingLevel": "high"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1794268800000
+      },
+      "cost": [
+        {
+          "input": 2,
+          "output": 10,
+          "cache": {
+            "read": 0.1,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 65536
+      }
+    },
+    {
+      "id": "nex-agi/nex-n2.6",
+      "modelID": "nex-agi/nex-n2.6",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "agi",
+      "name": "Nex-N2.6",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "medium",
+          "settings": {
+            "reasoning": {
+              "effort": "medium"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1794268800000
+      },
+      "cost": [
+        {
+          "input": 0.12,
+          "output": 0.4,
+          "cache": {
+            "read": 0.024,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 262144,
+        "output": 235929
+      }
+    },
+    {
+      "id": "baidu/ernie-light-dt-1.0-intl",
+      "modelID": "baidu/ernie-light-dt-1.0-intl",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "ernie",
+      "name": "ERNIE-Light-DT-1.0",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "reasoning": {
+              "effort": "none"
+            }
+          }
+        },
+        {
+          "id": "low",
+          "settings": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoning": {
+              "effort": "max"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1794268800000
+      },
+      "cost": [
+        {
+          "input": 1.13,
+          "output": 3.94,
+          "cache": {
+            "read": 0.113,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1024000,
+        "output": 131072
+      }
+    },
+    {
+      "id": "baidu/ernie-5.5-flash-preview:free",
+      "modelID": "baidu/ernie-5.5-flash-preview:free",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "ernie",
+      "name": "ERNIE-5.5-Flash-Preview (free)",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1794268800000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1024000,
+        "output": 921600
+      }
+    },
+    {
+      "id": "google/gemini-4-carbon",
+      "modelID": "google/gemini-4-carbon",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "gemini",
+      "name": "Gemini 4 Carbon",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "video", "audio", "pdf"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoning": {
+              "effort": "medium"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1794268800000
+      },
+      "cost": [
+        {
+          "input": 2,
+          "output": 10,
+          "cache": {
+            "read": 0.1,
+            "write": 0.1875
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 943718
+      }
+    },
+    {
+      "id": "claude-fable-5.2",
+      "modelID": "claude-fable-5.2",
+      "providerID": "github-copilot",
+      "type": "chat",
+      "family": "claude-fable",
+      "name": "Claude Fable 5.2",
+      "package": "@opencode/ai/providers/anthropic",
+      "settings": {
+        "baseURL": "https://api.githubcopilot.com/v1"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "pdf"],
+        "output": ["text"],
+        "temperature": false
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "low"
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "medium"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "high"
+          }
+        },
+        {
+          "id": "xhigh",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "xhigh"
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "max"
+          }
+        }
+      ],
+      "time": {
+        "released": 1794182400000
+      },
+      "cost": [
+        {
+          "input": 8,
+          "output": 40,
+          "cache": {
+            "read": 0.2,
+            "write": 10
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1000000,
+        "output": 128000
+      }
+    },
+    {
+      "id": "muse-ember-1.0",
+      "modelID": "muse-ember-1.0",
+      "providerID": "opencode",
+      "type": "chat",
+      "family": "muse",
+      "name": "Muse Ember 1.0",
+      "package": "@opencode/ai/providers/openai/responses",
+      "settings": {
+        "baseURL": "https://opencode.ai/inference/openai/v1"
+      },
+      "headers": {
+        "x-opencode-org-id": "wrk_01M0EGZN1DBD8QFAGTDVWKD7JV"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "video", "pdf"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "minimal",
+          "settings": {
+            "reasoningEffort": "minimal",
+            "reasoningSummary": "auto",
+            "include": ["reasoning.encrypted_content"]
+          }
+        },
+        {
+          "id": "low",
+          "settings": {
+            "reasoningEffort": "low",
+            "reasoningSummary": "auto",
+            "include": ["reasoning.encrypted_content"]
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoningEffort": "medium",
+            "reasoningSummary": "auto",
+            "include": ["reasoning.encrypted_content"]
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoningEffort": "high",
+            "reasoningSummary": "auto",
+            "include": ["reasoning.encrypted_content"]
+          }
+        },
+        {
+          "id": "xhigh",
+          "settings": {
+            "reasoningEffort": "xhigh",
+            "reasoningSummary": "auto",
+            "include": ["reasoning.encrypted_content"]
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoningEffort": "max",
+            "reasoningSummary": "auto",
+            "include": ["reasoning.encrypted_content"]
+          }
+        }
+      ],
+      "time": {
+        "released": 1794182400000
+      },
+      "cost": [
+        {
+          "input": 0.1,
+          "output": 0.5,
+          "cache": {
+            "read": 0.004,
+            "write": 0
+          }
+        },
+        {
+          "tier": {
+            "type": "context",
+            "size": 200000
+          },
+          "input": 0.3,
+          "output": 1.5,
+          "cache": {
+            "read": 0.012,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 270000
+      }
+    },
+    {
+      "id": "claude-fable-5-2",
+      "modelID": "claude-fable-5-2",
+      "providerID": "opencode",
+      "type": "chat",
+      "family": "claude-fable",
+      "name": "Claude Fable 5.2",
+      "package": "@opencode/ai/providers/anthropic",
+      "settings": {
+        "baseURL": "https://opencode.ai/inference/anthropic/v1"
+      },
+      "headers": {
+        "x-opencode-org-id": "wrk_01M0EGZN1DBD8QFAGTDVWKD7JV"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "pdf"],
+        "output": ["text"],
+        "temperature": false
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "low"
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "medium"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "high"
+          }
+        },
+        {
+          "id": "xhigh",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "xhigh"
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "thinking": {
+              "type": "adaptive",
+              "display": "summarized"
+            },
+            "effort": "max"
+          }
+        }
+      ],
+      "time": {
+        "released": 1794182400000
+      },
+      "cost": [
+        {
+          "input": 8,
+          "output": 40,
+          "cache": {
+            "read": 0.2,
+            "write": 10
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1000000,
+        "output": 128000
+      }
+    },
+    {
+      "id": "anthropic/claude-fable-5.2",
+      "modelID": "anthropic/claude-fable-5.2",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "claude-fable",
+      "name": "Claude Fable 5.2",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "pdf"],
+        "output": ["text"],
+        "temperature": false
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoning": {
+              "effort": "medium"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        },
+        {
+          "id": "xhigh",
+          "settings": {
+            "reasoning": {
+              "effort": "xhigh"
+            }
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoning": {
+              "effort": "max"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1794182400000
+      },
+      "cost": [
+        {
+          "input": 8,
+          "output": 40,
+          "cache": {
+            "read": 0.2,
+            "write": 10
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1000000,
+        "output": 128000
+      }
+    },
+    {
+      "id": "meta/muse-ember",
+      "modelID": "meta/muse-ember",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "muse",
+      "name": "Muse Ember",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "video", "pdf", "audio"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "minimal",
+          "settings": {
+            "reasoning": {
+              "effort": "minimal"
+            }
+          }
+        },
+        {
+          "id": "low",
+          "settings": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoning": {
+              "effort": "medium"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        },
+        {
+          "id": "xhigh",
+          "settings": {
+            "reasoning": {
+              "effort": "xhigh"
+            }
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoning": {
+              "effort": "max"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1794182400000
+      },
+      "cost": [
+        {
+          "input": 0.1,
+          "output": 0.5,
+          "cache": {
+            "read": 0.004,
+            "write": 0.125
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 943718
+      }
+    },
+    {
+      "id": "iceman-free",
+      "modelID": "iceman-free",
+      "providerID": "opencode",
+      "type": "chat",
+      "name": "Iceman Free",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://opencode.ai/inference/openai/v1",
+        "provider": "opencode"
+      },
+      "headers": {
+        "x-opencode-org-id": "wrk_01M0EGZN1DBD8QFAGTDVWKD7JV"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text"],
+        "output": ["text"]
+      },
+      "variants": [],
+      "time": {
+        "released": 1793923200000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 262144,
+        "output": 131072
+      }
+    },
+    {
+      "id": "liquid/lfm-3-1.7b",
+      "modelID": "liquid/lfm-3-1.7b",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "liquid",
+      "name": "LFM3-1.7B",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [],
+      "time": {
+        "released": 1793923200000
+      },
+      "cost": [
+        {
+          "input": 0.08,
+          "output": 0.2,
+          "cache": {
+            "read": 0.02,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 262144,
+        "output": 8192
+      }
+    },
+    {
+      "id": "liquid/lfm-3-1.7b:free",
+      "modelID": "liquid/lfm-3-1.7b:free",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "liquid",
+      "name": "LFM3-1.7B (free)",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [],
+      "time": {
+        "released": 1793923200000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 262144,
+        "output": 8192
+      }
+    },
+    {
+      "id": "inkling-2-small-free",
+      "modelID": "inkling-2-small-free",
+      "providerID": "opencode",
+      "type": "chat",
+      "family": "ling",
+      "name": "Inkling 2 Small Free",
+      "compatibility": {
+        "reasoningField": "reasoning_content"
+      },
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://opencode.ai/inference/openai/v1",
+        "provider": "opencode"
+      },
+      "headers": {
+        "x-opencode-org-id": "wrk_01M0EGZN1DBD8QFAGTDVWKD7JV"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "reasoningEffort": "none"
+          }
+        },
+        {
+          "id": "minimal",
+          "settings": {
+            "reasoningEffort": "minimal"
+          }
+        },
+        {
+          "id": "low",
+          "settings": {
+            "reasoningEffort": "low"
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoningEffort": "medium"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoningEffort": "high"
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoningEffort": "max"
+          }
+        }
+      ],
+      "time": {
+        "released": 1793836800000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 131072
+      }
+    },
+    {
+      "id": "kt/midm-k-3.0-pro",
+      "modelID": "kt/midm-k-3.0-pro",
+      "providerID": "openrouter",
+      "type": "chat",
+      "name": "Mi:dm K 3.0 Pro",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": false,
+        "input": ["text"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "reasoning": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "id": "thinking",
+          "settings": {
+            "reasoning": {
+              "enabled": true
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1793836800000
+      },
+      "cost": [
+        {
+          "input": 0.2,
+          "output": 0.8,
+          "cache": {
+            "read": 0.04,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 261795,
+        "output": 235615
+      }
+    },
+    {
+      "id": "thinkingmachines/inkling-2-small",
+      "modelID": "thinkingmachines/inkling-2-small",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "ling",
+      "name": "Inkling 2 Small",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "minimal",
+          "settings": {
+            "reasoning": {
+              "effort": "minimal"
+            }
+          }
+        },
+        {
+          "id": "low",
+          "settings": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoning": {
+              "effort": "medium"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoning": {
+              "effort": "max"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1793836800000
+      },
+      "cost": [
+        {
+          "input": 0.3,
+          "output": 1,
+          "cache": {
+            "read": 0.03,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 943718
+      }
+    },
+    {
+      "id": "thinkingmachines/inkling-2-small:free",
+      "modelID": "thinkingmachines/inkling-2-small:free",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "ling",
+      "name": "Inkling 2 Small (free)",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "minimal",
+          "settings": {
+            "reasoning": {
+              "effort": "minimal"
+            }
+          }
+        },
+        {
+          "id": "low",
+          "settings": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoning": {
+              "effort": "medium"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoning": {
+              "effort": "max"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1793836800000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 131072
+      }
+    },
+    {
+      "id": "qwen3.7-plus",
+      "modelID": "qwen3.7-plus",
+      "providerID": "alibaba-coding-plan-cn",
+      "type": "chat",
+      "family": "qwen",
+      "name": "Qwen3.7 Plus",
+      "package": "@opencode/ai/providers/alibaba/chat",
+      "settings": {
+        "baseURL": "https://coding.dashscope.aliyuncs.com/v1"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "video"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "enableThinking": false
+          }
+        },
+        {
+          "id": "thinking",
+          "settings": {
+            "enableThinking": true
+          }
+        }
+      ],
+      "time": {
+        "released": 1780358400000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1000000,
+        "output": 64000
+      }
+    },
+    {
+      "id": "deepseek-v4.1-flash-1017",
+      "modelID": "deepseek-v4.1-flash-1017",
+      "providerID": "alibaba-token-plan-cn",
+      "type": "chat",
+      "family": "deepseek-flash",
+      "name": "DeepSeek V4.1 Flash 1017",
+      "compatibility": {
+        "reasoningField": "reasoning_content"
+      },
+      "package": "@opencode/ai/providers/alibaba/chat",
+      "settings": {
+        "baseURL": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "enableThinking": false
+          }
+        },
+        {
+          "id": "low",
+          "settings": {
+            "enableThinking": true,
+            "reasoningEffort": "low"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "enableThinking": true,
+            "reasoningEffort": "high"
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "enableThinking": true,
+            "reasoningEffort": "max"
+          }
+        }
+      ],
+      "time": {
+        "released": 1792195200000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1000000,
+        "output": 384000
+      }
+    },
+    {
+      "id": "hy4",
+      "modelID": "hy4",
+      "providerID": "opencode-go",
+      "type": "chat",
+      "family": "Hy",
+      "name": "Hy4",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://opencode.ai/inference/go/openai/v1",
+        "provider": "opencode-go"
+      },
+      "headers": {
+        "x-opencode-org-id": "wrk_01M0EGZN1DBD8QFAGTDVWKD7JV"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "reasoningEffort": "none"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoningEffort": "high"
+          }
+        }
+      ],
+      "time": {
+        "released": 1793750400000
+      },
+      "cost": [
+        {
+          "input": 0.834,
+          "output": 2.501,
+          "cache": {
+            "read": 0.042,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "input": 983010,
+        "output": 65536
+      }
+    },
+    {
+      "id": "zai-org/GLM-5.3-Flash",
+      "modelID": "zai-org/GLM-5.3-Flash",
+      "providerID": "siliconflow-cn",
+      "type": "chat",
+      "family": "glm-flash",
+      "name": "GLM-5.3-Flash",
+      "compatibility": {
+        "reasoningField": "reasoning_content"
+      },
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://api.siliconflow.cn/v1",
+        "provider": "siliconflow-cn"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "reasoningEffort": "low"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoningEffort": "high"
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoningEffort": "max"
+          }
+        }
+      ],
+      "time": {
+        "released": 1787702400000
+      },
+      "cost": [
+        {
+          "input": 0.11994783,
+          "output": 0.41981742,
+          "cache": {
+            "read": 0.034485,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 131072
+      }
+    },
+    {
+      "id": "glm-5.3-flashx",
+      "modelID": "glm-5.3-flashx",
+      "providerID": "zhipuai",
+      "type": "chat",
+      "family": "glm-flash",
+      "name": "GLM-5.3-FlashX",
+      "compatibility": {
+        "reasoningField": "reasoning_content",
+        "maxTokensField": "max_tokens"
+      },
+      "package": "@opencode/ai/providers/zai/chat",
+      "settings": {
+        "baseURL": "https://open.bigmodel.cn/api/paas/v4"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "video", "pdf"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "thinking": {
+              "type": "enabled",
+              "clear_thinking": false
+            },
+            "reasoningEffort": "low"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "thinking": {
+              "type": "enabled",
+              "clear_thinking": false
+            },
+            "reasoningEffort": "high"
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "thinking": {
+              "type": "enabled",
+              "clear_thinking": false
+            },
+            "reasoningEffort": "max"
+          }
+        }
+      ],
+      "time": {
+        "released": 1789689600000
+      },
+      "cost": [
+        {
+          "input": 0.29879,
+          "output": 1.04577,
+          "cache": {
+            "read": 0.08516,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1000000,
+        "output": 131072
+      }
+    },
+    {
+      "id": "glm-5.3-flash",
+      "modelID": "glm-5.3-flash",
+      "providerID": "zhipuai-coding-plan",
+      "type": "chat",
+      "family": "glm-flash",
+      "name": "GLM-5.3-Flash",
+      "compatibility": {
+        "reasoningField": "reasoning_content",
+        "maxTokensField": "max_tokens"
+      },
+      "package": "@opencode/ai/providers/zai-coding-plan/chat",
+      "settings": {
+        "baseURL": "https://open.bigmodel.cn/api/coding/paas/v4"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "video", "pdf"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "thinking": {
+              "type": "enabled",
+              "clear_thinking": false
+            },
+            "reasoningEffort": "low"
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "thinking": {
+              "type": "enabled",
+              "clear_thinking": false
+            },
+            "reasoningEffort": "high"
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "thinking": {
+              "type": "enabled",
+              "clear_thinking": false
+            },
+            "reasoningEffort": "max"
+          }
+        }
+      ],
+      "time": {
+        "released": 1787702400000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1000000,
+        "output": 131072
+      }
+    },
+    {
+      "id": "tencent/hy4",
+      "modelID": "tencent/hy4",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "Hy",
+      "name": "Hy4",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "reasoning": {
+              "effort": "none"
+            }
+          }
+        },
+        {
+          "id": "low",
+          "settings": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1793750400000
+      },
+      "cost": [
+        {
+          "input": 0.417,
+          "output": 1.2505,
+          "cache": {
+            "read": 0.021,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "input": 983010,
+        "output": 65536
+      }
+    },
+    {
+      "id": "ricursiveai/ripple-65b-preview",
+      "modelID": "ricursiveai/ripple-65b-preview",
+      "providerID": "openrouter",
+      "type": "chat",
+      "name": "Ripple 65B Preview",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "reasoning": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "id": "thinking",
+          "settings": {
+            "reasoning": {
+              "enabled": true
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1793750400000
+      },
+      "cost": [
+        {
+          "input": 0.2,
+          "output": 0.6,
+          "cache": {
+            "read": 0.05,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 131072
+      }
+    },
+    {
+      "id": "motif-technologies/motif-3",
+      "modelID": "motif-technologies/motif-3",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "motif",
+      "name": "Motif 3",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": false,
+        "input": ["text"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "reasoning": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "id": "thinking",
+          "settings": {
+            "reasoning": {
+              "enabled": true
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1793577600000
+      },
+      "cost": [
+        {
+          "input": 0.3,
+          "output": 1.2,
+          "cache": {
+            "read": 0.06,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 262144,
+        "output": 235929
+      }
+    },
+    {
+      "id": "z-ai/glm-5.3-flashx-legal",
+      "modelID": "z-ai/glm-5.3-flashx-legal",
+      "providerID": "openrouter",
+      "type": "chat",
+      "family": "glm",
+      "name": "GLM 5.3 FlashX Legal",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image", "video"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "low",
+          "settings": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoning": {
+              "effort": "max"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1793577600000
+      },
+      "cost": [
+        {
+          "input": 0.37,
+          "output": 1.25,
+          "cache": {
+            "read": 0.075,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 131072
+      }
+    },
+    {
+      "id": "particle-ai/particle-1:free",
+      "modelID": "particle-ai/particle-1:free",
+      "providerID": "openrouter",
+      "type": "chat",
+      "name": "Particle-1 (free)",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "reasoning": {
+              "effort": "none"
+            }
+          }
+        },
+        {
+          "id": "minimal",
+          "settings": {
+            "reasoning": {
+              "effort": "minimal"
+            }
+          }
+        },
+        {
+          "id": "low",
+          "settings": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoning": {
+              "effort": "medium"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        },
+        {
+          "id": "xhigh",
+          "settings": {
+            "reasoning": {
+              "effort": "xhigh"
+            }
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoning": {
+              "effort": "max"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1793145600000
+      },
+      "cost": [
+        {
+          "input": 0,
+          "output": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 131072
+      }
+    },
+    {
+      "id": "particle-ai/particle-1",
+      "modelID": "particle-ai/particle-1",
+      "providerID": "openrouter",
+      "type": "chat",
+      "name": "Particle-1",
+      "package": "@opencode/ai/providers/openrouter",
+      "settings": {
+        "baseURL": "https://openrouter.ai/api/v1"
+      },
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai/",
+        "X-Title": "opencode"
+      },
+      "capabilities": {
+        "tools": true,
+        "input": ["text", "image"],
+        "output": ["text"],
+        "temperature": true
+      },
+      "variants": [
+        {
+          "id": "none",
+          "settings": {
+            "reasoning": {
+              "effort": "none"
+            }
+          }
+        },
+        {
+          "id": "minimal",
+          "settings": {
+            "reasoning": {
+              "effort": "minimal"
+            }
+          }
+        },
+        {
+          "id": "low",
+          "settings": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        },
+        {
+          "id": "medium",
+          "settings": {
+            "reasoning": {
+              "effort": "medium"
+            }
+          }
+        },
+        {
+          "id": "high",
+          "settings": {
+            "reasoning": {
+              "effort": "high"
+            }
+          }
+        },
+        {
+          "id": "xhigh",
+          "settings": {
+            "reasoning": {
+              "effort": "xhigh"
+            }
+          }
+        },
+        {
+          "id": "max",
+          "settings": {
+            "reasoning": {
+              "effort": "max"
+            }
+          }
+        }
+      ],
+      "time": {
+        "released": 1793145600000
+      },
+      "cost": [
+        {
+          "input": 0.05,
+          "output": 0.5,
+          "cache": {
+            "read": 0.003,
+            "write": 0
+          }
+        }
+      ],
+      "status": "active",
+      "enabled": true,
+      "limit": {
+        "context": 1048576,
+        "output": 131072
+      }
+    }
+  ]
+}

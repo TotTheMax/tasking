@@ -32,5 +32,7 @@
 | `interrupt.json` | `session.interrupt`：`{interrupted:true}` |
 | `session-update.json` | `session.update` 空响应（204 类），落盘为 `null` |
 | `session-remove.json` | `session.remove` 空响应，落盘为 `null` |
+| `model-default.json` | `model.default` 响应：`data` 为单个 `Model.Info`（含 `id/providerID/variants/cost/time/enabled` 等），服务端为该目录解析的默认模型 |
+| `model-list.json` | `model.list` 响应：`data` 为 `Model.Info[]`，按发布时间倒序。captured 后裁剪：原始载荷 560 条/444KB，保留代表性子集 32 条（最新发布 top20 + 各 provider 代表 + 带 variants + 免费），**条目字段形状未改**；envelope `location` 剥除与其余 rest fixture 一致 |
 
 抓取方式：临时工作区（含 `ask` 规则）建会话 → 提交 shell 任务 → 逐项 `opencode api …` 落盘（含待审批、完成、中断、更新、删除）；脚本见 `openspec/changes/opencode-v2-adaptation/capture-live-v2.sh` 的同类做法。

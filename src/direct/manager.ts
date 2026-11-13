@@ -13,7 +13,13 @@ import type { DirectConfig, EffectiveConfig } from "../config/config-types.js";
 import { type ApiExecFn, defaultApiExec, describeApiCommand } from "../driver/api-client.js";
 import { ApprovalCoordinator, type ApprovalRequest } from "../driver/approval.js";
 import type { PendingPermission, PermissionDecision } from "../driver/session-ops.js";
-import { ALLOW_ALL_RULES, replyPermission, setSessionPermissions } from "../driver/session-ops.js";
+import {
+  ALLOW_ALL_RULES,
+  formatResolvedModel,
+  modelDriftMessage,
+  replyPermission,
+  setSessionPermissions,
+} from "../driver/session-ops.js";
 import type { TurnDriverEvent } from "../driver/turn-driver.js";
 import type { ActivityEvent } from "../observability/activity-store.js";
 import type { Logger } from "../observability/logger.js";
@@ -115,6 +121,8 @@ interface SessionRuntime {
   postureOpen: boolean;
   appliedAgent: string | null;
   appliedModel: string | null;
+  lastResolvedModel: string | undefined;
+  lastResolvedModelSession: string | undefined;
   contextTokens: number;
   waitingApproval: boolean;
   waitingSince: number | null;
@@ -1336,6 +1344,8 @@ export class DirectSessionManager {
         postureOpen: false,
         appliedAgent: null,
         appliedModel: null,
+        lastResolvedModel: undefined,
+        lastResolvedModelSession: undefined,
         contextTokens: 0,
         waitingApproval: false,
         waitingSince: null,
@@ -2005,6 +2015,26 @@ export class DirectSessionManager {
     if (isFirstTurn || result.modelSwitched !== false) {
       rt.appliedModel = effectiveModel;
     }
+    const resolvedModelKey = result.model ? formatResolvedModel(result.model) : null;
+    if (resolvedModelKey !== null) {
+      if (
+        rt.lastResolvedModelSession === result.sessionId &&
+        rt.lastResolvedModel !== undefined &&
+        rt.lastResolvedModel !== resolvedModelKey
+      ) {
+        this.deps.logger.warn(modelDriftMessage(rt.lastResolvedModel, resolvedModelKey), {
+          root_id: session.root_id,
+          session_id: result.sessionId,
+        });
+      }
+      rt.lastResolvedModel = resolvedModelKey;
+      rt.lastResolvedModelSession = result.sessionId;
+    }
+    this.deps.logger.info("direct turn finished", {
+      root_id: session.root_id,
+      status: result.status,
+      resolved_model: resolvedModelKey,
+    });
 
     const usage = result.usage;
     if (usage) {

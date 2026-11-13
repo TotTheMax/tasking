@@ -15,6 +15,7 @@ import type { ActivityEvent } from "../src/observability/activity-store.js";
 import { TaskingError } from "../src/shared/errors.js";
 import { translateCard } from "../src/translate/card.js";
 import { setLocale, translate } from "../src/translate/locale.js";
+import { modelRef } from "./helpers/opencode-fixtures.js";
 
 let workdir: string;
 let dbPath: string;
@@ -187,7 +188,12 @@ class FakeRunner {
     });
   };
 
-  finish(index: number, events: TurnDriverEvent[], exitCode = 0): void {
+  finish(
+    index: number,
+    events: TurnDriverEvent[],
+    exitCode = 0,
+    model?: Record<string, unknown>,
+  ): void {
     const call = this.calls[index];
     for (const evt of events) call?.onEvent?.(evt);
     const status: DirectTurnOutcome["status"] =
@@ -199,6 +205,7 @@ class FakeRunner {
       usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
       error: status === "succeeded" ? null : `exit ${exitCode}`,
       postureOpened: this.calls[index]?.request.autoApprove ?? false,
+      ...(model ? { model } : {}),
     });
   }
 
@@ -318,6 +325,47 @@ describe("DirectSessionManager", () => {
     } finally {
       rmSync(target, { recursive: true, force: true });
     }
+  });
+
+  it("logs the resolved model per turn and warns once on mid-session change", async () => {
+    const lines: string[] = [];
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: directConfig,
+      logger: fakeLogger(lines),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_rootm", text: "/chat tasking 第一问" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("第一答")], 0, modelRef("glm-5.3", "zhipuai-coding-plan"));
+    await mgr.whenIdle();
+
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_fm1", root_id: "om_rootm", text: "第二问", create_time: "1700000001" }),
+    );
+    await runner.waitForCall(2);
+    runner.finish(1, [textEvent("第二答")], 0, modelRef("big-pickle", "opencode"));
+    await mgr.whenIdle();
+
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_fm2", root_id: "om_rootm", text: "第三问", create_time: "1700000002" }),
+    );
+    await runner.waitForCall(3);
+    runner.finish(2, [textEvent("第三答")], 0, modelRef("big-pickle", "opencode"));
+    await mgr.whenIdle();
+
+    const finished = lines.filter((l) => l.startsWith("direct turn finished"));
+    expect(finished.some((l) => l.includes("zhipuai-coding-plan/glm-5.3"))).toBe(true);
+    expect(finished.some((l) => l.includes("opencode/big-pickle"))).toBe(true);
+    const warns = lines.filter((l) => l.includes("model changed mid-session"));
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toContain(
+      "model changed mid-session: zhipuai-coding-plan/glm-5.3 → opencode/big-pickle",
+    );
+    expect(warns[0]).toContain("om_rootm");
   });
 
   it("continues an idle session in-thread with -s and merges queued follow-ups", async () => {

@@ -139,7 +139,7 @@ worker 的 opencode v2 驱动配置（tasking 0.7 起要求 `opencode >=2.0 <3`�
 | `command` | string(shell) | `opencode` | 是(派发) | opencode 可执行命令;按空白拆分为命令 + 参数（0.7 起不再包含 `run`） |
 | `agent` | string | `build` | 否 | 会话 agent，即 opencode agent profile;作为 per-task 兜底默认 |
 | `agents` | string[] | `[]` | 否 | 已知 opencode agent profile 的咨询性目录;非空时供 `/agent` 命令展示并对未知名友好提示,空则不校验(任何 `agent:<name>` 标签直通)。不作为硬白名单 |
-| `model` | string\|null | `null` | 否 | `provider/model` 格式;映射会话的 `Model.Ref`。`null` 或空串时用服务端默认模型 |
+| `model` | string\|null | `null` | 否 | `provider/model` 格式;映射会话的 `Model.Ref`。`null` 或空串时走服务端解析链:opencode 配置默认 → 最新可用模型——目录更新/配置变更可能使同一会话相邻 turn 换模型(模型漂移,日志会告警);`tasking init` 的模型问题与 `tasking doctor` 的「模型解析」检查项会显式提示实际解析值,生产环境建议显式配置 |
 | `variant` | string\|null | `null` | 否 | provider 特定推理档位(如 `high`/`max`/`minimal`),映射 `Model.Ref.variant`。与 `model` 彼此独立 |
 | `turn_timeout_ms` | integer | `3600000`(1 小时) | 否 | 单次 turn 的执行墙钟超时（**等待审批期间暂停**）；超时走中断梯子并标记 `timed_out`(`turn_timeout`) |
 | `stall_timeout_ms` | integer | `7200000`(2 小时) | 否 | 停滞检测阈值(scheduler 层);`<= 0` 禁用。等待审批期间不判停滞 |

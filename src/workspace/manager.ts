@@ -173,6 +173,7 @@ export interface SessionSidecar {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  resolvedModel?: string;
 }
 
 export interface SidecarTokens {
@@ -186,8 +187,19 @@ export function writeSessionSidecar(
   sessionId: string,
   turnCount = 0,
   tokens?: SidecarTokens,
+  resolvedModel?: string,
 ): void {
   const sidecarPath = join(workspacePath, SIDECAR_FILENAME);
+  let lastResolvedModel: string | undefined;
+  try {
+    const existing = JSON.parse(readFileSync(sidecarPath, "utf8")) as Record<string, unknown>;
+    if (existing.session_id === sessionId && typeof existing.resolved_model === "string") {
+      lastResolvedModel = existing.resolved_model;
+    }
+  } catch {
+    void 0;
+  }
+  const model = resolvedModel ?? lastResolvedModel;
   const data = JSON.stringify({
     session_id: sessionId,
     turn_count: turnCount,
@@ -198,6 +210,7 @@ export function writeSessionSidecar(
           total_tokens: tokens.total_tokens,
         }
       : {}),
+    ...(model ? { resolved_model: model } : {}),
     updated_at: Date.now(),
   });
   writeFileSync(sidecarPath, data, "utf8");
@@ -217,6 +230,7 @@ export function readSessionSidecar(workspacePath: string): SessionSidecar | null
       inputTokens: num(data.input_tokens),
       outputTokens: num(data.output_tokens),
       totalTokens: num(data.total_tokens),
+      ...(typeof data.resolved_model === "string" ? { resolvedModel: data.resolved_model } : {}),
     };
   } catch {
     return null;

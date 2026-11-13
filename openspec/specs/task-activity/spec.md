@@ -5,59 +5,22 @@ TBD - created by archiving change tui-task-activity-view. Update Purpose after a
 ## Requirements
 ### Requirement: opencode 事件增量捕获
 
-`runDefaultSubprocess` SHALL 在 opencode stdout 数据到达时增量解析完整 JSON 行（带行缓冲跨 chunk 拼接，按 `\n` 切分，余数留待下一 chunk），对每条可解析的 opencode 事件经可选 `onOpencodeEvent` 回调上报结构化 `OpencodeEvent`。SHALL 识别事件类型 `text`（`part.text` → `text`）/ `tool_use`（`part.tool` → `tool`）/ `step_start` / `step_finish`（`part.tokens` → `tokens`）；未知类型 SHALL 保留 `type` 字段原样上报不崩溃。非 JSON 行 SHALL 安全跳过。现有 stdout 字符串缓冲与 `extractSessionAndUsage` 行为 SHALL 不变。
+驱动器轮询层 SHALL 在 `session.message.list` 的 diff 中识别新增/变更的 assistant 消息，并把其 `content[]` 条目转换为结构化活动事件：`type:"text"`（text 条目 → `text`）与 `type:"tool"`（tool 条目 → `tool`，工具名从条目取）。未知条目类型 SHALL 保留原样上报不崩溃。对 `type:"tool"` 条目，SHALL 同时提取执行详情：`state.input` → `input`（参数对象，如 shell 的 `command`）、`state.metadata.exit` → `exit`（退出码）、`state.metadata.truncated` → `truncated`、`state.time.created/ran/completed` → `durationMs`（completed-reated 耗时毫秒）。`state` 或其任一字段缺失时 SHALL 优雅降级——仅保留既有字段上报，不抛错。转换后的事件经 `onActivity` 上报，消费侧（ActivityStore、卡片、TUI）接口不变。
 
-对 `tool_use` 事件，SHALL 在 `part.state` 存在时同时提取执行详情：`state.input` → `input`（参数对象，如 bash 的 `command`、write 的 `filePath`）、`state.output` → `output`（stdout）、`state.metadata.exit` → `exit`（退出码）、`state.metadata.truncated` → `truncated`（是否被 opencode 截断）、`state.title` → `title`（友好摘要）、`state.status` → `status`、`state.time.start/end` → `durationMs`（耗时毫秒）。`part.state` 或其任一字段缺失时 SHALL 优雅降级——仅保留既有字段（`tool` 等）上报，不抛错。执行详情与既有字段一同经 `onOpencodeEvent`/`onActivity` 上报。
+#### Scenario: text 消息被捕获
 
-#### Scenario: text 事件被捕获
+- **WHEN** 轮询 diff 发现一条 assistant 消息含 `content:[{type:"text", text:"hello"}]`
+- **THEN** `onActivity` 收到 `{ type:"text", text:"hello" }`
 
-- **WHEN** opencode stdout 输出 `{"type":"text","sessionID":"ses_x","part":{"text":"hello"}}`
-- **THEN** `onOpencodeEvent` 收到 `{ type:"text", text:"hello", sessionId:"ses_x" }`
+#### Scenario: 工具条目详情被捕获
 
-#### Scenario: tool_use 事件被捕获
+- **WHEN** 轮询 diff 发现 tool 条目 `state:{input:{command:"echo x"}, metadata:{exit:0}, time:{created:t1, completed:t2}}`
+- **THEN** 活动事件含 `tool`、`input.command="echo x"`、`exit=0`、`durationMs=t2-t1`
 
-- **WHEN** opencode stdout 输出 `{"type":"tool_use","sessionID":"ses_x","part":{"tool":"read"}}`
-- **THEN** `onOpencodeEvent` 收到 `{ type:"tool_use", tool:"read", sessionId:"ses_x" }`
+#### Scenario: 未知条目类型不崩溃
 
-#### Scenario: tool_use 执行详情被捕获
-
-- **WHEN** opencode stdout 输出 `{"type":"tool_use","sessionID":"ses_x","part":{"tool":"bash","state":{"status":"completed","input":{"command":"echo hi"},"output":"hi\n","metadata":{"exit":0,"truncated":false},"title":"echo hi","time":{"start":1000,"end":1500}}}}`
-- **THEN** `onOpencodeEvent` 收到 `{ type:"tool_use", tool:"bash", input:{command:"echo hi"}, output:"hi\n", exit:0, title:"echo hi", status:"completed", durationMs:500, sessionId:"ses_x" }`
-
-#### Scenario: tool_use 非零退出码被捕获
-
-- **WHEN** tool_use 事件 `state.metadata.exit` 为 `127`
-- **THEN** 上报事件的 `exit` 为 `127`（不依赖 `state.status`，因其即使失败也常为 `"completed"`）
-
-#### Scenario: tool_use state 缺失时降级
-
-- **WHEN** opencode stdout 输出 `{"type":"tool_use","sessionID":"ses_x","part":{"tool":"read"}}`（无 `state`）
-- **THEN** 收到 `{ type:"tool_use", tool:"read", sessionId:"ses_x" }`，不携带详情字段，不抛错
-
-#### Scenario: step_finish tokens 被捕获
-
-- **WHEN** opencode stdout 输出 `{"type":"step_finish","sessionID":"ses_x","part":{"tokens":{"input":100,"output":10,"total":110}}}`
-- **THEN** `onOpencodeEvent` 收到 `{ type:"step_finish", tokens:{input:100,output:10,total:110}, sessionId:"ses_x" }`
-
-#### Scenario: 跨 chunk 的行被正确拼接
-
-- **WHEN** 一个 JSON 事件被分成两个 stdout chunk 到达（如 `{"type":"text","part":{"text":"hel` 然后 `lo"}}\n`）
-- **THEN** `onOpencodeEvent` 收到完整解析后的事件，不被分片切断
-
-#### Scenario: 非 JSON 行被跳过
-
-- **WHEN** opencode stdout 含非 JSON 行（如 `not json here`）
-- **THEN** 该行被跳过，不调用 `onOpencodeEvent`，不影响后续 JSON 行解析
-
-#### Scenario: 未知事件类型不崩溃
-
-- **WHEN** opencode stdout 输出 `{"type":"some_new_type","sessionID":"ses_x","part":{...}}`
-- **THEN** `onOpencodeEvent` 收到 `{ type:"some_new_type", sessionId:"ses_x" }`（其他可选字段缺省），不抛错
-
-#### Scenario: 既有 sessionID 与 tokens 提取不变
-
-- **WHEN** 对同一 stdout 运行 `extractSessionAndUsage`
-- **THEN** 返回的 `session_id` 与 `usage` 与引入捕获前完全一致（零回归）
+- **WHEN** 消息含未知的 `content` 条目类型
+- **THEN** 该条目以原 type 上报或被跳过，不抛错
 
 ### Requirement: 活动数据存储
 
@@ -167,11 +130,11 @@ TUI SHALL 在 `detail-running` 模式支持 `a` 键进入新 `activity` 模式�
 
 ### Requirement: 逐步 token 用量实时累计
 
-worker SHALL 在解析到 `step_finish` 事件且含 `part.tokens` 时，除上报活动事件外，SHALL 经 `events.onEvent` 上报 `step_usage` 事件（`usage` 为 `{ input_tokens, output_tokens, total_tokens }`）。scheduler SHALL 将 `step_usage` 的 usage 累计到该 task 的 `RunningEntry`，使进行中的 turn 内 per-task token 实时更新。`turn_completed` 事件 SHALL 不再携带 `usage`，避免与 `step_usage` 重复计数。
+worker SHALL 在轮询发现携带 `tokens` 的消息/会话用量时，经 `events.onEvent` 上报 `step_usage` 事件（`usage` 为 `{ input_tokens, output_tokens, total_tokens }`，total 为 input+output+reasoning 合计口径）。scheduler SHALL 将 `step_usage` 的 usage 累计到该 task 的 `RunningEntry`，使进行中的 turn 内 per-task token 实时更新。`turn_completed` 事件 SHALL 不携带 `usage`，避免重复计数。
 
 #### Scenario: turn 内实时累计
 
-- **WHEN** 一个 turn 内收到两个 `step_usage`（usage 分别为 `{100,10,110}`、`{50,5,55}`）
+- **WHEN** 一个 turn 内轮询发现两个携带 tokens 的消息（usage 分别为 `{100,10,110}`、`{50,5,55}`）
 - **THEN** 该 task 的 `RunningEntry` 累计为 `{150,15,165}`，且发生在 turn 结束前即可读取
 
 #### Scenario: turn_completed 不再计 usage
@@ -181,7 +144,7 @@ worker SHALL 在解析到 `step_finish` 事件且含 `part.tokens` 时，除上�
 
 ### Requirement: 会话级 token 持久化
 
-session sidecar SHALL 存储累计 token（`input_tokens` / `output_tokens` / `total_tokens`，可选字段，向后兼容旧 sidecar）。worker SHALL 在每次 turn 完成写入 sidecar 时携带「恢复基线 + 本次 attempt 累计」的会话累计值。scheduler 派发时 SHALL 从 sidecar 恢复 token 到新建的 `RunningEntry`，使重试与 daemon 重启后 per-task token 显示会话生命周期累计值而非清零。
+session sidecar SHALL 存储累计 token（`input_tokens` / `output_tokens` / `total_tokens`，可选字段）。worker SHALL 在每次 turn 完成写入 sidecar 时携带「恢复基线 + 本次 attempt 累计」的会话累计值。scheduler 派发时 SHALL 从 sidecar 恢复 token 到新建的 `RunningEntry`，使重试与 daemon 重启后 per-task token 显示会话生命周期累计值而非清零。
 
 #### Scenario: 重启后恢复 token
 

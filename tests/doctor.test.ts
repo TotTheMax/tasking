@@ -73,6 +73,132 @@ const svcRunning = () => ({ status: "running" as const, url: "http://127.0.0.1:4
 const svcStopped = () => ({ status: "stopped" as const });
 const authOk = () => ({ ok: true, detail: "zhipuai-coding-plan" });
 
+const directFrontmatter = (extra: string[] = []) =>
+  [
+    "tracker:",
+    "  kind: none",
+    "feishu:",
+    "  enabled: true",
+    "  app_id: cli_abc",
+    "  app_secret: sec",
+    "  intake_chat_id: oc_exist",
+    ...extra,
+  ].join("\n");
+
+const modelsProbe =
+  (probe: {
+    defaultModel?: { id: string; providerID?: string } | null;
+    available?: Array<{ providerID: string; id: string }>;
+  }) =>
+  () =>
+    Promise.resolve({ status: "ok" as const, ...probe });
+
+const modelsUnavailable = () =>
+  Promise.resolve({ status: "unreachable" as const, error: "spawn timeout" });
+
+describe("tasking doctor 模型解析", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  function tempDir(): string {
+    const d = mkdtempSync(join(tmpdir(), "tasking-doctor-model-"));
+    dirs.push(d);
+    return d;
+  }
+
+  it("passes when the configured model is in the available list", async () => {
+    const dir = tempDir();
+    writeWorkflow(dir, directFrontmatter(["opencode:", "  model: zhipuai-coding-plan/glm-5.3"]));
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      fetchImpl: feishuFetch(),
+      opencodeVersion: ocOk,
+      opencodeService: svcRunning,
+      opencodeAuth: authOk,
+      opencodeModels: modelsProbe({
+        available: [{ providerID: "zhipuai-coding-plan", id: "glm-5.3" }],
+      }),
+    });
+    expect(code).toBe(0);
+    expect(content()).toContain("模型解析");
+    expect(content()).toContain("已配置 zhipuai-coding-plan/glm-5.3");
+  });
+
+  it("fails when the configured model is not in the available list", async () => {
+    const dir = tempDir();
+    writeWorkflow(dir, directFrontmatter(["opencode:", "  model: zhipuai-coding-plan/gone-9"]));
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      fetchImpl: feishuFetch(),
+      opencodeVersion: ocOk,
+      opencodeService: svcRunning,
+      opencodeAuth: authOk,
+      opencodeModels: modelsProbe({
+        available: [{ providerID: "zhipuai-coding-plan", id: "glm-5.3" }],
+      }),
+    });
+    expect(code).toBe(1);
+    expect(content()).toContain("不在可用模型列表");
+    expect(content()).toContain("api model.list");
+  });
+
+  it("warns with the server default when unconfigured (exit 0)", async () => {
+    const dir = tempDir();
+    writeWorkflow(dir, directFrontmatter());
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      fetchImpl: feishuFetch(),
+      opencodeVersion: ocOk,
+      opencodeService: svcRunning,
+      opencodeAuth: authOk,
+      opencodeModels: modelsProbe({
+        defaultModel: { id: "deepseek-v4.1-flash", providerID: "opencode-go" },
+        available: [{ providerID: "opencode-go", id: "deepseek-v4.1-flash" }],
+      }),
+    });
+    expect(code).toBe(0);
+    expect(content()).toContain("未配置");
+    expect(content()).toContain("opencode-go/deepseek-v4.1-flash");
+  });
+
+  it("degrades to info when the catalog leg failed but a model is configured (exit 0)", async () => {
+    const dir = tempDir();
+    writeWorkflow(dir, directFrontmatter(["opencode:", "  model: zhipuai-coding-plan/glm-5.3"]));
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      fetchImpl: feishuFetch(),
+      opencodeVersion: ocOk,
+      opencodeService: svcRunning,
+      opencodeAuth: authOk,
+      opencodeModels: () =>
+        Promise.resolve({
+          status: "ok" as const,
+          defaultModel: { id: "glm-5.3", providerID: "zhipuai-coding-plan" },
+        }),
+    });
+    expect(code).toBe(0);
+    expect(content()).toContain("跳过校验");
+  });
+
+  it("degrades to info when the probe is unreachable (exit 0)", async () => {
+    const dir = tempDir();
+    writeWorkflow(dir, directFrontmatter());
+    const { stream, content } = mockOutput();
+    const code = await runDoctor(dir, stream, {
+      fetchImpl: feishuFetch(),
+      opencodeVersion: ocOk,
+      opencodeService: svcRunning,
+      opencodeAuth: authOk,
+      opencodeModels: modelsUnavailable,
+    });
+    expect(code).toBe(0);
+    expect(content()).toContain("模型解析");
+    expect(content()).toContain("跳过");
+  });
+});
+
 describe("tasking doctor", () => {
   const dirs: string[] = [];
   afterEach(() => {
@@ -343,7 +469,7 @@ describe("tasking doctor", () => {
     expect(code).toBe(1);
     const out = content();
     expect(out).not.toMatch(/[\u4e00-\u9fff]/);
-    expect(out).toContain("Summary: 1 passed / 1 failed / 2 skipped");
+    expect(out).toContain("Summary: 1 passed / 1 failed / 0 warned / 2 skipped");
     expect(out).toContain("not enabled (feishu.enabled: false)");
   });
 });

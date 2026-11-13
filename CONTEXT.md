@@ -87,6 +87,20 @@ A Jira comment with a marked header batching the agent's open decision questions
 **Mid-run escalation**:
 The agent pausing mid-phase on a truly blocking decision by posting a grill comment and transitioning to review, resuming after the human answers.
 
+### Model resolution (模型解析)
+
+**Configured model (配置模型)**:
+The model declared by `opencode.model` in WORKFLOW.md; null means unset and the resolution rules decide.
+_Avoid_: 默认模型
+
+**Resolved model (解析模型)**:
+The model the opencode server actually selected for a turn; when unset, resolved from the opencode config default, then the newest available model.
+_Avoid_: 实际模型、当前模型
+
+**Model drift (模型漂移)**:
+The resolved model differing between adjacent turns of one opencode session.
+_Avoid_: 漂移
+
 ### Init & update
 
 **Workflow path (工作流路径)**:

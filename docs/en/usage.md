@@ -252,13 +252,14 @@ A read-only, whole-chain health check: one command reports every problem. Checks
 1. **WORKFLOW.md parsing** — front matter parses, what the tracker is;
 2. **Feishu** (only when `feishu.enabled: true`) — credential token exchange → three scope probes (list chats / read chat messages / upload file) → intake chat reachability (the bot's chat list contains `intake_chat_id`);
 3. **Jira** (only when `tracker.kind: jira`) — connection test (same logic as init's Connection Test, serverInfo only) plus a **Jira MCP script** existence check (missing → ✗ with an `npm run build` hint; without it task agents get no Jira tools);
-4. **opencode** — present on `PATH`.
+4. **opencode** — present on `PATH`, version gate, service probe, auth probe;
+5. **Model resolution** — when `opencode.model` is configured, verifies it is still in the available list (stale → ✗); when unset, probes `model.default`, shows the model that would actually be used, and ⚠ warns about drift (full list via `opencode api model.list`); unreachable probes degrade to · skip.
 
 ```bash
 tasking doctor [workflow-path]
 ```
 
-Chinese output with per-item `✓/✗/−/·` marks and remediation hints, plus a summary table at the end. Exit codes: `0` all pass; `1` any failure (scriptable — a single run after a machine switch/reinstall tells you the state). The positional `[workflow-path]` defaults to `./WORKFLOW.md` with the same semantics as `start`/`init` (a directory argument is an error), and `.env` loads from that file's directory; it performs no writes; for scope-remediation pointers (console deep links etc.) see [Feishu App Setup](./feishu-app-setup.md). `tasking init` embeds the same health check in its Feishu collection flow (runs automatically after credential validation; missing scopes warn without blocking) — doctor is for re-checking at any time.
+Chinese output with per-item `✓/✗/−/·/⚠` marks and remediation hints, plus a summary table at the end. Exit codes: `0` all pass; `1` any failure (scriptable — a single run after a machine switch/reinstall tells you the state). The positional `[workflow-path]` defaults to `./WORKFLOW.md` with the same semantics as `start`/`init` (a directory argument is an error), and `.env` loads from that file's directory; it performs no writes; for scope-remediation pointers (console deep links etc.) see [Feishu App Setup](./feishu-app-setup.md). `tasking init` embeds the same health check in its Feishu collection flow (runs automatically after credential validation; missing scopes warn without blocking) — doctor is for re-checking at any time.
 
 ## Credential configuration
 

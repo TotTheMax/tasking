@@ -6,6 +6,29 @@ export interface PatternRule {
 }
 
 export const EXACT: Record<string, string> = {
+  模型解析: "Model resolution",
+  未知原因: "unknown cause",
+  "（免费）": " (free)",
+  "opencode 模型": "opencode model",
+  "正在获取 opencode 可用模型（首次可能需要 10 秒左右）…":
+    "Fetching available opencode models (first run may take ~10 seconds)…",
+  "提示：模型格式是 provider/model，例如 zhipuai-coding-plan/glm-5.3":
+    "Tip: models use the provider/model format, e.g. zhipuai-coding-plan/glm-5.3",
+  "提示：不配置时 opencode 会用服务端默认模型，目录更新后可能变化":
+    "Tip: when unset, opencode uses the server default, which may change as the catalog updates",
+  "提示：选择会写入 WORKFLOW.md 的 opencode.model，之后随时可改":
+    "Tip: your choice is written to opencode.model in WORKFLOW.md and can be changed later",
+  "没有匹配的模型——可手动输入 provider/model": "No matching models — enter provider/model manually",
+  "没有匹配的模型——可换关键词重搜，或手动输入 provider/model":
+    "No matching models — try another keyword, or enter provider/model manually",
+  "跟随服务端默认（由 opencode 服务端决定）":
+    "Follow the server default (decided by the opencode server)",
+  "选择 opencode 模型": "Choose the opencode model",
+  "手动输入 provider/model": "Enter provider/model manually",
+  "输入模型（provider/model，回车跳过）": "Model (provider/model, Enter to skip)",
+  "格式应为 provider/model（含 /）": "Expected provider/model format (must contain /)",
+  "模型搜索关键词（如 glm / claude / free，回车列出推荐）":
+    "Model search keyword (e.g. glm / claude / free; Enter lists recommendations)",
   "\n  --fresh 仅在 feishu.enabled 时生效（飞书桥未启用，忽略该选项）。\n\n":
     "\n  --fresh only takes effect with feishu.enabled (Feishu bridge disabled; option ignored).\n\n",
   "\n  tasking 启动校验失败:\n": "\n  tasking startup validation failed:\n",
@@ -744,9 +767,57 @@ export const PATTERNS: PatternRule[] = [
   },
   {
     re: new RegExp(
-      `^${normalizeTemplate("汇总: ${passed} 通过 / ${failed} 失败 / ${skipped} 跳过")}$`,
+      `^${normalizeTemplate(
+        "汇总: ${passed} 通过 / ${failed} 失败 / ${warned} 警告 / ${skipped} 跳过",
+      )}$`,
     ),
-    en: "Summary: $1 passed / $2 failed / $3 skipped",
+    en: "Summary: $1 passed / $2 failed / $3 warned / $4 skipped",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate("已配置 ${configured}（在可用模型列表）")}$`),
+    en: "Configured $1 (present in the available model list)",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("已配置 ${configured}，但不在可用模型列表——任务将在此模型上失败；${listHint}")}$`,
+    ),
+    en: "Configured $1, but not in the available model list — tasks will fail on this model; $2",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("已配置 ${configured}，可用列表探测失败，跳过校验；${listHint}")}$`,
+    ),
+    en: "Configured $1; the available-model probe failed, skipping validation; $2",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("未配置——服务端当前解析为 ${resolved}（随目录更新可能变化）；${listHint}")}$`,
+    ),
+    en: "Not configured — the server currently resolves to $1 (may change as the catalog updates); $2",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate("未配置且服务端未解析出默认模型；${listHint}")}$`),
+    en: "Not configured and the server resolved no default model; $1",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate("探测不可达（${error}），跳过；${listHint}")}$`),
+    en: "Probe unreachable ($1), skipped; $2",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate("完整列表可跑 ${command} api model.list")}$`),
+    en: "Full list: $1 api model.list",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("跟随服务端默认（当前解析为 ${resolvedDefault}，随目录更新可能变化）")}$`,
+    ),
+    en: "Follow the server default (currently resolves to $1; may change as the catalog updates)",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("--model 需要 provider/model 格式（含 /），收到 ${received}")}$`,
+    ),
+    en: "--model expects the provider/model format (must contain /), got $1",
   },
   {
     re: new RegExp(

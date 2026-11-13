@@ -32,6 +32,7 @@ TBD - created by archiving change feishu-setup-ux. Update Purpose after archive.
 #### Scenario: lark 深链走海外域名
 - **WHEN** `feishu.edition: lark` 下以 `cli_xxx` 生成应用根深链
 - **THEN** 退回链为 `https://open.larksuite.com/app/cli_xxx`
+
 ### Requirement: 运行时错误诊断与降噪
 飞书 API 调用失败时，系统 SHALL 将已知错误映射为人话提示并附对应深链：403 → 版本未发布/未审批或权限缺失（版本页深链）、230027 → 缺 `im:message.group_msg`（权限页深链）、99991672 → 缺 `im:resource`（权限页深链）。同一错误签名（方法+状态）在 daemon 一次运行内 SHALL 只完整提示一次，后续同类失败 SHALL 仅输出单行简短记录。
 
@@ -44,7 +45,7 @@ TBD - created by archiving change feishu-setup-ux. Update Purpose after archive.
 - **THEN** 日志仅单行记录，不重复人话提示与深链
 
 ### Requirement: doctor 全链路只读体检
-`tasking doctor [workflow-path]` SHALL 对 workflow path（缺省当前目录 `./WORKFLOW.md`）依序执行只读检查：WORKFLOW.md 解析、飞书（token、三探针、intake 群可达）、Jira 连接（仅当配置了 Jira）、opencode 在 PATH。dotenv SHALL 从 `dirname(workflow path)` 加载（对齐 `start`）。输出 SHALL 为中文、逐项 ✓/✗/− 与补救提示，末尾汇总表；全部通过退出码 `0`，任一失败退出码 `1`。doctor SHALL 不执行任何写操作。
+`tasking doctor [workflow-path]` SHALL 对 workflow path（缺省当前目录 `./WORKFLOW.md`）依序执行只读检查：WORKFLOW.md 解析、飞书（token、三探针、intake 群可达）、Jira 连接（仅当配置了 Jira）、opencode 检查（PATH 存在 + 版本门禁 + 服务探活 + 认证探测，规则见 opencode-v2-driver 的"版本门禁"）。dotenv SHALL 从 `dirname(workflow path)` 加载（对齐 `start`）。输出 SHALL 为中文、逐项 ✓/✗/− 与补救提示，末尾汇总表；全部通过退出码 `0`，任一失败退出码 `1`。doctor SHALL 不执行任何写操作。
 
 #### Scenario: 全部通过
 - **WHEN** 配置与外部依赖全部正常时运行 `tasking doctor`
@@ -58,6 +59,19 @@ TBD - created by archiving change feishu-setup-ux. Update Purpose after archive.
 - **WHEN** opencode 不在 PATH 时运行 `tasking doctor`
 - **THEN** opencode 项标 ✗ 并附安装指引，退出码 `1`
 
+#### Scenario: opencode 大版本不符
+- **WHEN** opencode 版本为 1.x 或 3.x+ 时运行 `tasking doctor`
+- **THEN** opencode 项标 ✗ 并附 `opencode upgrade --major` 指引，退出码 `1`
+
+#### Scenario: 未验证小版本警告
+- **WHEN** opencode 版本为 2.x 但超出 VALIDATED 区间
+- **THEN** opencode 项标 ✓ 附警告文案，退出码 `0`
+
+#### Scenario: 服务/认证探活失败
+- **WHEN** 共享服务不可达或模型认证不可用
+- **THEN** opencode 项标 ✗ 并说明缺哪一环（服务/认证），退出码 `1`
+
 #### Scenario: 对自定义路径体检并从其目录加载 dotenv
 - **WHEN** 运行 `tasking doctor configs/my-flow.md` 且 `configs/.env` 存在
 - **THEN** doctor 解析并体检 `configs/my-flow.md`，dotenv 从 `configs/` 加载
+

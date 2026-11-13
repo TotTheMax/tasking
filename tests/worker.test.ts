@@ -19,6 +19,7 @@ import {
   idleMessage,
   interruptResponse,
   messageListResponse,
+  modelRef,
   permissionListResponse,
   sessionCreateResponse,
   sessionGetResponse,
@@ -109,6 +110,8 @@ interface ApiScriptOptions {
   sessionId?: string;
   tokens?: { input: number; output: number; reasoning: number } | null;
   outcome?: string | null;
+  model?: Record<string, unknown>;
+  modelsPerTurn?: Array<Record<string, unknown> | null>;
   messages?: Array<{
     content?: Array<Record<string, unknown>>;
     tokens?: { input: number; output: number; reasoning: number } | null;
@@ -163,12 +166,18 @@ function apiScript(opts: ApiScriptOptions = {}) {
     if (op === "session.get") {
       const stage = !inFlight ? 0 : Math.min(pollsInFlight + 1, 2);
       const stamp = 1000 * stage + history.length;
+      const turnNo = Math.max(state.prompts.length, 1);
+      const turnModel =
+        opts.modelsPerTurn !== undefined
+          ? (opts.modelsPerTurn[Math.min(turnNo - 1, opts.modelsPerTurn.length - 1)] ?? null)
+          : (opts.model ?? null);
       if (!inFlight) {
         return ok(
           sessionGetResponse({
             id: sessionId,
             outcome: lastOutcome,
             time: { created: 1, updated: stamp },
+            ...(turnModel ? { model: turnModel } : {}),
           }),
         );
       }
@@ -179,6 +188,7 @@ function apiScript(opts: ApiScriptOptions = {}) {
             id: sessionId,
             outcome: null,
             time: { created: 1, updated: stamp + 5000 },
+            ...(turnModel ? { model: turnModel } : {}),
           }),
         );
       }
@@ -188,6 +198,7 @@ function apiScript(opts: ApiScriptOptions = {}) {
           id: sessionId,
           outcome,
           time: { created: 1, updated: stamp + 9000 },
+          ...(turnModel ? { model: turnModel } : {}),
         }),
       );
     }
@@ -287,6 +298,110 @@ describe("runAttempt", () => {
       expect(launch).toBeDefined();
       expect(String(launch?.[1].command)).toBe("opencode api session.prompt");
       expect("model" in (launch?.[1] ?? {})).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("emits model_resolved and logs the resolved model for each turn", async () => {
+    const root = tempRoot();
+    try {
+      const { exec } = apiScript({ model: modelRef("glm-5.3", "zhipuai-coding-plan", "default") });
+      const infos: Array<[string, Record<string, unknown>]> = [];
+      const capLogger = Object.create(logger) as typeof logger;
+      capLogger.info = (msg: string, fields?: Record<string, unknown>) => {
+        infos.push([msg, fields ?? {}]);
+      };
+      const events: WorkerEvent[] = [];
+      const result = await runAttempt({
+        task: makeTask(),
+        attempt: null,
+        config: makeConfig(root),
+        promptTemplate: "do it",
+        logger: capLogger,
+        apiExec: exec,
+        sleep: () => Promise.resolve(),
+        events: { onEvent: (e) => events.push(e) },
+      });
+      expect(result.status).toBe("succeeded");
+      const resolved = events.filter((e) => e.event === "model_resolved");
+      expect(resolved.map((e) => e.model)).toContain("zhipuai-coding-plan/glm-5.3");
+      const finished = infos.find(([msg]) => msg === "opencode v2 turn finished");
+      expect(finished?.[1].resolved_model).toBe("zhipuai-coding-plan/glm-5.3");
+      const completed = events.find((e) => e.event === "turn_completed");
+      expect(completed?.model).toBe("zhipuai-coding-plan/glm-5.3");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("warns once when the resolved model changes between turns", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 2;
+      const warns: Array<[string, Record<string, unknown>]> = [];
+      const capLogger = Object.create(logger) as typeof logger;
+      capLogger.warn = (msg: string, fields?: Record<string, unknown>) => {
+        warns.push([msg, fields ?? {}]);
+      };
+      const messages = [{ content: [], tokens: { input: 10, output: 5, reasoning: 0 } }];
+      const result = await runAttempt({
+        task: makeTask(),
+        attempt: null,
+        config,
+        promptTemplate: "do it",
+        logger: capLogger,
+        trackerStateChecker: async (t) => t,
+        apiExec: apiScript({
+          modelsPerTurn: [
+            modelRef("glm-5.3", "zhipuai-coding-plan"),
+            modelRef("big-pickle", "opencode"),
+          ],
+          messagesPerTurn: [messages, messages],
+        }).exec,
+        sleep: () => Promise.resolve(),
+      });
+      expect(result.status).toBe("succeeded");
+      expect(warns).toHaveLength(1);
+      expect(warns[0]?.[0]).toBe(
+        "model changed mid-session: zhipuai-coding-plan/glm-5.3 → opencode/big-pickle",
+      );
+      expect(warns[0]?.[1].session_id).toBe("ses_test123");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not warn when the resolved model is stable across turns", async () => {
+    const root = tempRoot();
+    try {
+      const config = makeConfig(root);
+      config.agent.max_turns = 2;
+      const warns: Array<[string, Record<string, unknown>]> = [];
+      const capLogger = Object.create(logger) as typeof logger;
+      capLogger.warn = (msg: string, fields?: Record<string, unknown>) => {
+        warns.push([msg, fields ?? {}]);
+      };
+      const messages = [{ content: [], tokens: { input: 10, output: 5, reasoning: 0 } }];
+      const result = await runAttempt({
+        task: makeTask(),
+        attempt: null,
+        config,
+        promptTemplate: "do it",
+        logger: capLogger,
+        trackerStateChecker: async (t) => t,
+        apiExec: apiScript({
+          modelsPerTurn: [
+            modelRef("glm-5.3", "zhipuai-coding-plan"),
+            modelRef("glm-5.3", "zhipuai-coding-plan"),
+          ],
+          messagesPerTurn: [messages, messages],
+        }).exec,
+        sleep: () => Promise.resolve(),
+      });
+      expect(result.status).toBe("succeeded");
+      expect(warns).toHaveLength(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

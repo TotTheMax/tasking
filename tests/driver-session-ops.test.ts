@@ -18,6 +18,7 @@ import {
   assistantMessage,
   interruptResponse,
   messageListResponse,
+  modelRef,
   permission,
   permissionListResponse,
   sessionCreateResponse,
@@ -45,6 +46,34 @@ function recorder(responses: string[]): { exec: ApiExecFn; captured: Captured } 
 }
 
 const base = { command: "opencode" };
+
+describe("resolved model read-back", () => {
+  it("createSession returns the model resolved by the server", async () => {
+    const { exec } = recorder([
+      sessionCreateResponse({ model: modelRef("glm-5.3", "zhipuai-coding-plan", "default") }),
+    ]);
+    const session = await createSession(exec, { ...base, directory: "/w", autoApprove: false });
+    expect(session.model).toEqual({
+      id: "glm-5.3",
+      providerID: "zhipuai-coding-plan",
+      variant: "default",
+    });
+  });
+
+  it("getSession returns the model resolved by the server", async () => {
+    const { exec } = recorder([
+      sessionGetResponse({ model: modelRef("glm-5.3", "zhipuai-coding-plan") }),
+    ]);
+    const session = await getSession(exec, base, "ses_1");
+    expect(session.model).toEqual({ id: "glm-5.3", providerID: "zhipuai-coding-plan" });
+  });
+
+  it("tolerates a missing model field", async () => {
+    const { exec } = recorder([sessionGetResponse({ id: "ses_1", outcome: "succeeded", model: undefined })]);
+    const session = await getSession(exec, base, "ses_1");
+    expect(session.model).toBeUndefined();
+  });
+});
 
 describe("createSession", () => {
   it("sends location, model ref, agent and permissive ruleset", async () => {

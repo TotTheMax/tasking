@@ -57,6 +57,7 @@ The question flow (the default path only needs the three Feishu values plus an o
 3. **Feishu app_id / app_secret**: init **validates on the spot** (token exchange; failures print a human-readable reason and let you re-enter the secret)
 4. **Pick the intake group**: after validation the bot's chats are listed; enter picks the first
 5. **Common project name (skippable)**: if filled, also enter its absolute directory — `/chat <project> <message>` works immediately and `path_roots` tightens to that directory; skipping keeps `/chat /abs/path <message>` and the completion hint warns that path mode is unrestricted
+6. **opencode model (skippable)**: search and pick an available model (written to `opencode.model`), enter `provider/model` manually, or press Enter to follow the server default — the option shows in real time which model would actually be used when unset, plus a drift note; `--model <provider/model>` pre-answers it
 
 The completion hint prints your next command.
 

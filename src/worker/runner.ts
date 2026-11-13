@@ -7,7 +7,11 @@ import type {
 } from "../config/config-types.js";
 import type { WorkspaceConfig } from "../config/config-types.js";
 import { type ApiExecFn, defaultApiExec, describeApiCommand } from "../driver/api-client.js";
-import { switchSessionAgent } from "../driver/session-ops.js";
+import {
+  formatResolvedModel,
+  modelDriftMessage,
+  switchSessionAgent,
+} from "../driver/session-ops.js";
 import { type TurnDriverEvent, runTurn } from "../driver/turn-driver.js";
 import { getMcpServerScriptPath, injectMcpConfig } from "../mcp/inject.js";
 import type { ActivityEvent } from "../observability/activity-store.js";
@@ -142,6 +146,8 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
   let turn = opts.startTurn ?? 1;
   let lastStatus: AttemptStatus = "succeeded";
   let lastError: string | null = null;
+  let lastResolvedModel: string | undefined;
+  let lastResolvedModelSession: string | undefined;
   let currentTask = task;
   let sessionId: string | null = opts.sessionId ?? null;
   let knownAgent: string | null = null;
@@ -276,6 +282,14 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
               writeSessionSidecar(workspace.path, sid, 0);
             }
           },
+          onResolvedModel: (model) => {
+            opts.events?.onEvent?.({
+              event: "model_resolved",
+              timestamp: Date.now(),
+              session_id: sessionId ?? undefined,
+              model: formatResolvedModel(model),
+            });
+          },
           seenMessages,
           onEvent,
           onPendingPermissions: opts.onPendingPermissions,
@@ -291,19 +305,48 @@ export async function runAttempt(opts: RunAttemptOptions): Promise<AttemptResult
       usage.input_tokens += result.usage.input_tokens;
       usage.output_tokens += result.usage.output_tokens;
       usage.total_tokens += result.usage.total_tokens;
+      const resolvedModelKey = result.model ? formatResolvedModel(result.model) : null;
       if (result.sessionId) {
         sessionId = result.sessionId;
-        writeSessionSidecar(workspace.path, sessionId, turn, {
-          input_tokens: baseTokens.input_tokens + usage.input_tokens,
-          output_tokens: baseTokens.output_tokens + usage.output_tokens,
-          total_tokens: baseTokens.total_tokens + usage.total_tokens,
-        });
+        writeSessionSidecar(
+          workspace.path,
+          sessionId,
+          turn,
+          {
+            input_tokens: baseTokens.input_tokens + usage.input_tokens,
+            output_tokens: baseTokens.output_tokens + usage.output_tokens,
+            total_tokens: baseTokens.total_tokens + usage.total_tokens,
+          },
+          resolvedModelKey ?? undefined,
+        );
       }
+
+      if (resolvedModelKey !== null) {
+        if (
+          lastResolvedModelSession === result.sessionId &&
+          lastResolvedModel !== undefined &&
+          lastResolvedModel !== resolvedModelKey
+        ) {
+          logger.warn(modelDriftMessage(lastResolvedModel, resolvedModelKey), {
+            task_identifier: task.identifier,
+            session_id: result.sessionId,
+          });
+        }
+        lastResolvedModel = resolvedModelKey;
+        lastResolvedModelSession = result.sessionId;
+      }
+      logger.info("opencode v2 turn finished", {
+        task_identifier: task.identifier,
+        turn,
+        status: result.status,
+        resolved_model: resolvedModelKey,
+      });
 
       opts.events?.onEvent?.({
         event: "turn_completed",
         timestamp: Date.now(),
         session_id: sessionId ?? undefined,
+        ...(resolvedModelKey !== null ? { model: resolvedModelKey } : {}),
       });
 
       if (result.status === "timed_out") {

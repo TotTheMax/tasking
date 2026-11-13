@@ -34,10 +34,13 @@ import { JiraTracker } from "../adapters/jira/tracker.js";
 import { DEFAULTS, type FeishuEdition, type TrackerConfig } from "../config/config-types.js";
 import { parseWorkflowContent } from "../config/loader.js";
 import { expandHome } from "../config/resolver.js";
+import type { OpencodeModelsProbe } from "../driver/opencode-models.js";
+import { probeOpencodeModels, unavailableModelsProbe } from "../driver/opencode-models.js";
 import { toTaskingError } from "../shared/errors.js";
 import type { WorkflowDefinition } from "../shared/types.js";
 import { setLocale, translate } from "../translate/locale.js";
 import { translatingWritable } from "../translate/output.js";
+import { selectModelSetting } from "./model-picker.js";
 import { type PromptInterface, createPromptInterface } from "./prompts.js";
 import { type Style, createStyle } from "./style.js";
 import { type ResolvedWorkflowPath, resolveWorkflowPathOrReport } from "./workflow-path.js";
@@ -230,6 +233,7 @@ export interface InitOptions {
   nonInteractive?: boolean;
   workflow?: string;
   lang?: string;
+  model?: string;
   update?: boolean;
   restore?: boolean;
   workflowPath?: string;
@@ -237,6 +241,7 @@ export interface InitOptions {
   output?: Writable;
   fetchImpl?: typeof fetch;
   promptInterface?: PromptInterface;
+  modelProbe?: () => Promise<OpencodeModelsProbe>;
 }
 
 interface CollectedCredentials {
@@ -312,12 +317,20 @@ export async function runInit(cwd: string, opts: InitOptions): Promise<number> {
   const isTTY = opts.input
     ? Boolean((opts.input as { isTTY?: boolean }).isTTY)
     : Boolean(process.stdin.isTTY);
+  if (opts.model !== undefined && !opts.model.includes("/")) {
+    const errOutput = translatingWritable(opts.output ?? process.stderr);
+    errOutput.write(
+      `${translate(`--model 需要 provider/model 格式（含 /），收到 ${opts.model}`)}\n`,
+    );
+    return 1;
+  }
+
   const interactive = (!opts.nonInteractive && isTTY) || Boolean(opts.promptInterface);
 
   if (!interactive) {
     setLocale(lang === "en" ? "en" : "zh");
     const output = translatingWritable(opts.output ?? process.stdout);
-    return runNonInteractiveInit(wfPath, output, workflow, lang);
+    return runNonInteractiveInit(wfPath, output, workflow, lang, opts.model ?? null);
   }
 
   const input = opts.input ?? process.stdin;
@@ -330,6 +343,8 @@ export async function runInit(cwd: string, opts: InitOptions): Promise<number> {
     opts.promptInterface,
     opts.workflow,
     opts.lang,
+    opts.model,
+    opts.modelProbe,
   );
 }
 
@@ -345,9 +360,10 @@ function runNonInteractiveInit(
   output: Writable,
   workflow: WorkflowVariant,
   lang: TemplateLanguage,
+  model: string | null = null,
 ): number {
   const style = createStyle(false);
-  const content = generateWorkflowContent(null, workflow, null, lang);
+  const content = generateWorkflowContent(null, workflow, null, lang, null, model);
   const backupPath = backupExistingWorkflow(wfPath);
   writeFileSync(wfPath, content, "utf8");
 
@@ -757,6 +773,8 @@ async function runInteractiveInit(
   promptOverride: PromptInterface | undefined,
   workflowRaw: string | undefined,
   langRaw: string | undefined,
+  modelPre: string | undefined,
+  modelProbe: (() => Promise<OpencodeModelsProbe>) | undefined,
 ): Promise<number> {
   const useColor = Boolean((output as { isTTY?: boolean }).isTTY);
   const style = createStyle(useColor);
@@ -807,9 +825,21 @@ async function runInteractiveInit(
     autoStates = await promptStateAutofill(conn.statuses, prompts, output, style, lang);
     feishuSetup = await collectFeishuConfig(prompts, output, style, issueTypes, fetchImpl, lang);
   }
+
+  let model: string | null = null;
+  if (modelPre !== undefined) {
+    model = modelPre;
+  } else {
+    const probe =
+      modelProbe ??
+      (promptOverride !== undefined
+        ? unavailableModelsProbe
+        : () => probeOpencodeModels("opencode", dirname(wfPath)));
+    model = await selectModelSetting(prompts, output, style, probe);
+  }
   prompts.close();
 
-  const content = generateWorkflowContent(creds, workflow, feishuSetup, lang, autoStates);
+  const content = generateWorkflowContent(creds, workflow, feishuSetup, lang, autoStates, model);
   const backupPath = backupExistingWorkflow(wfPath);
   writeFileSync(wfPath, content, "utf8");
 
@@ -1677,6 +1707,7 @@ export function generateWorkflowContent(
   feishu: CollectedFeishu | null = null,
   lang: TemplateLanguage = "zh",
   states: AutoStates | null = null,
+  model: string | null = null,
 ): string {
   const template = readFileSync(resolveExampleFile(workflow, lang), "utf8");
   let content = template;
@@ -1730,7 +1761,11 @@ export function generateWorkflowContent(
       `$1review_state: ${yamlScalar(states.review_state)}`,
     );
   }
-  return applyTemplateTrimming(content, workflow, feishu !== null, lang);
+  const trimmed = applyTemplateTrimming(content, workflow, feishu !== null, lang);
+  if (model === null) return trimmed;
+  return trimmed
+    .replace(/^([ \t]*)# (opencode:)$/m, "$1$2")
+    .replace(/^([ \t]*)#[ \t]*model: .*$/m, `$1model: ${model}`);
 }
 
 function copySkill(wfDir: string, output: Writable, workflow: WorkflowVariant): void {

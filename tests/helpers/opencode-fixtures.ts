@@ -27,6 +27,8 @@ const TEMPLATES = {
   permissionList: load<Record<string, unknown>>("permission-list-pending"),
   sessionActive: load<Record<string, unknown>>("session-active"),
   interrupt: load<Record<string, unknown>>("interrupt"),
+  modelList: load<Record<string, unknown>>("model-list"),
+  modelDefault: load<Record<string, unknown>>("model-default"),
 };
 
 function clone<T>(value: T): T {
@@ -43,6 +45,29 @@ export function sessionCreateResponse(overrides: Record<string, unknown> = {}): 
 
 export function sessionGetResponse(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({ data: { ...dataOf(TEMPLATES.sessionGet), ...overrides } });
+}
+
+export function modelDefaultResponse(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({ data: { ...dataOf(TEMPLATES.modelDefault), ...overrides } });
+}
+
+export function modelListResponse(entryOverrides: Array<Record<string, unknown>> = []): string {
+  const entries = clone(TEMPLATES.modelList).data as Array<Record<string, unknown>>;
+  const patched = entries.map((entry, index) =>
+    entryOverrides[index] ? { ...entry, ...entryOverrides[index] } : entry,
+  );
+  return JSON.stringify({ data: patched });
+}
+
+/** A provider/model reference in the captured Model.Info shape. */
+export function modelRef(
+  id: string,
+  providerID: string,
+  variant?: string,
+): Record<string, unknown> {
+  const ref: Record<string, unknown> = { id, providerID };
+  if (variant !== undefined) ref.variant = variant;
+  return ref;
 }
 
 /** A real assistant message envelope; pass content entries built by the helpers below. */

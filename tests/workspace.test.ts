@@ -351,6 +351,79 @@ describe("resolveWorkspacePath", () => {
   });
 });
 
+describe("session sidecar resolved model", () => {
+  it("records the resolved model when provided", async () => {
+    const root = tempRoot();
+    try {
+      const ws = await createWorkspace({
+        identifier: "SC-M1",
+        workspace: { root },
+        hooks: baseHooks,
+        logger,
+      });
+      writeSessionSidecar(ws.path, "ses_m1", 1, undefined, "zhipuai-coding-plan/glm-5.3");
+      expect(readSessionSidecar(ws.path)?.resolvedModel).toBe("zhipuai-coding-plan/glm-5.3");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the last resolved model across writes for the same session", async () => {
+    const root = tempRoot();
+    try {
+      const ws = await createWorkspace({
+        identifier: "SC-M2",
+        workspace: { root },
+        hooks: baseHooks,
+        logger,
+      });
+      writeSessionSidecar(ws.path, "ses_m2", 1, undefined, "opencode/big-pickle");
+      writeSessionSidecar(ws.path, "ses_m2", 2, {
+        input_tokens: 1,
+        output_tokens: 1,
+        total_tokens: 2,
+      });
+      expect(readSessionSidecar(ws.path)?.resolvedModel).toBe("opencode/big-pickle");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("drops the resolved model when the session changes", async () => {
+    const root = tempRoot();
+    try {
+      const ws = await createWorkspace({
+        identifier: "SC-M3",
+        workspace: { root },
+        hooks: baseHooks,
+        logger,
+      });
+      writeSessionSidecar(ws.path, "ses_m3", 1, undefined, "opencode/big-pickle");
+      writeSessionSidecar(ws.path, "ses_m3_new", 1);
+      expect(readSessionSidecar(ws.path)?.resolvedModel).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads legacy files without the field", () => {
+    const root = tempRoot();
+    try {
+      const path = join(root, ".tasking-session.json");
+      writeFileSync(
+        path,
+        JSON.stringify({ session_id: "ses_old", turn_count: 3, updated_at: 1 }),
+        "utf8",
+      );
+      const sidecar = readSessionSidecar(root);
+      expect(sidecar?.sessionId).toBe("ses_old");
+      expect(sidecar?.resolvedModel).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("session sidecar", () => {
   it("writes and reads session ID", async () => {
     const root = tempRoot();

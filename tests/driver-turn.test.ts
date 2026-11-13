@@ -16,6 +16,7 @@ import {
   interruptResponse,
   messageListFailedResponse,
   messageListResponse,
+  modelRef,
   permissionListResponse,
   sessionCreateResponse,
   sessionGetResponse,
@@ -304,6 +305,53 @@ describe("runTurn", () => {
     });
     expect(result.status).toBe("succeeded");
     expect(result.contextTokens).toBe(123010);
+  });
+
+  it("returns the resolved model observed during the turn", async () => {
+    const msg1 = messageListResponse([
+      assistantMessage({
+        id: "msg_m1",
+        content: [{ type: "text", text: "OK" }],
+        tokens: { input: 10, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+        time: { created: 1, streamed: 1, completed: 1 },
+      }),
+      userMessage({ id: "msg_user_m1" }),
+    ]);
+    const { exec } = scriptExec([
+      {
+        operation: "session.get",
+        respond: sessionGetResponse({
+          id: "ses_m",
+          outcome: null,
+          model: modelRef("glm-5.3", "zhipuai-coding-plan", "default"),
+        }),
+      },
+      {
+        operation: "session.get",
+        respond: sessionGetResponse({
+          id: "ses_m",
+          outcome: "succeeded",
+          model: modelRef("big-pickle", "opencode"),
+        }),
+      },
+      { operation: "session.permission.list", respond: permissionListResponse([]) },
+      { operation: "session.message.list", respond: messageListResponse([]) },
+      { operation: "session.message.list", respond: msg1 },
+      { operation: "session.prompt", respond: '{"data":{"id":"msg_user_m1"}}' },
+    ]);
+    const result = await runTurn({
+      exec,
+      base: { command: "opencode" },
+      directory: "/w",
+      prompt: "hi",
+      sessionId: "ses_m",
+      createOptions: { autoApprove: false },
+      pollIntervalMs: 1,
+      permissionTimeoutMs: 60000,
+      sleep: idleSleep,
+    });
+    expect(result.status).toBe("succeeded");
+    expect(result.model).toEqual({ id: "big-pickle", providerID: "opencode" });
   });
 
   it("creates session, prompts, polls to success with usage and events", async () => {

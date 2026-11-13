@@ -2,6 +2,7 @@ import { ApiError, type ApiExecFn, execApi } from "./api-client.js";
 import {
   type PendingPermission,
   type PermissionDecision,
+  type ResolvedModel,
   type SessionMessage,
   type SessionOpBase,
   createSession,
@@ -297,6 +298,7 @@ export interface TurnDriverOptions {
   onPendingPermissions?: (pending: PendingPermission[]) => void | Promise<void>;
   onPermissionReply?: (requestID: string, decision: PermissionDecision) => void;
   onWaitingForApproval?: (waiting: boolean) => void;
+  onResolvedModel?: (model: ResolvedModel) => void;
   signal?: AbortSignal;
 }
 
@@ -306,6 +308,7 @@ export interface TurnResult {
   usage: TurnUsage;
   error: string | null;
   contextTokens?: number;
+  model?: ResolvedModel;
 }
 
 export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
@@ -319,6 +322,18 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
   let baselineIds: Set<string> | null = null;
   let previousIds: Set<string> | null = null;
   let promptMessageID: string | null = null;
+  let resolvedModel: ResolvedModel | undefined;
+  const noteModel = (candidate: ResolvedModel | undefined): void => {
+    if (!candidate) return;
+    const same =
+      resolvedModel !== undefined &&
+      resolvedModel.id === candidate.id &&
+      resolvedModel.providerID === candidate.providerID &&
+      resolvedModel.variant === candidate.variant;
+    if (same) return;
+    resolvedModel = candidate;
+    opts.onResolvedModel?.(candidate);
+  };
   try {
     if (sessionId === null) {
       const session = await createSession(opts.exec, {
@@ -332,11 +347,14 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
         title: opts.createOptions.title,
       });
       sessionId = session.id;
+      noteModel(session.model);
       opts.onSessionCreated?.(sessionId);
     }
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        staleOutcome = (await getSession(opts.exec, opts.base, sessionId)).outcome;
+        const baseline = await getSession(opts.exec, opts.base, sessionId);
+        staleOutcome = baseline.outcome;
+        noteModel(baseline.model);
         baselineIds = new Set(
           (await listSessionMessages(opts.exec, opts.base, sessionId)).map((m) => m.id),
         );
@@ -355,6 +373,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
       sessionId: sessionId ?? "",
       usage,
       error: e instanceof Error ? e.message : String(e),
+      ...(resolvedModel ? { model: resolvedModel } : {}),
     };
   }
 
@@ -394,7 +413,14 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
         void 0;
       }
     }
-    return { status: "timed_out", sessionId, usage, error: reason, contextTokens };
+    return {
+      status: "timed_out",
+      sessionId,
+      usage,
+      error: reason,
+      contextTokens,
+      ...(resolvedModel ? { model: resolvedModel } : {}),
+    };
   };
 
   for (;;) {
@@ -413,6 +439,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
     try {
       const session = await getSession(opts.exec, opts.base, sessionId);
       outcome = session.outcome;
+      noteModel(session.model);
       let pending: PendingPermission[] = [];
       try {
         pending = await listPendingPermissions(opts.exec, opts.base, sessionId);
@@ -516,7 +543,14 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
       terminal = "failed";
     }
     if (registered && produced && !streaming && terminal === "succeeded") {
-      return { status: "succeeded", sessionId, usage, error: null, contextTokens };
+      return {
+        status: "succeeded",
+        sessionId,
+        usage,
+        error: null,
+        contextTokens,
+        ...(resolvedModel ? { model: resolvedModel } : {}),
+      };
     }
     if (registered && produced && !streaming && terminal === "failed") {
       const fallback =
@@ -527,10 +561,18 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
         usage,
         error: turnErrorMessage(latestMessages) ?? fallback,
         contextTokens,
+        ...(resolvedModel ? { model: resolvedModel } : {}),
       };
     }
     if (registered && produced && !streaming && terminal === "interrupted") {
-      return { status: "interrupted", sessionId, usage, error: "interrupted", contextTokens };
+      return {
+        status: "interrupted",
+        sessionId,
+        usage,
+        error: "interrupted",
+        contextTokens,
+        ...(resolvedModel ? { model: resolvedModel } : {}),
+      };
     }
     const nowTs = now();
     const waiting = waitStartedAt !== null;

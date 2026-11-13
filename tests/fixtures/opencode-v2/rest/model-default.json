@@ -1,0 +1,66 @@
+{
+  "data": {
+    "id": "deepseek-v4.1-flash",
+    "modelID": "deepseek-v4.1-flash",
+    "providerID": "opencode-go",
+    "type": "chat",
+    "family": "deepseek-flash",
+    "name": "DeepSeek V4.1 Flash 1017",
+    "compatibility": {
+      "reasoningField": "reasoning_content"
+    },
+    "package": "@opencode/ai/providers/openai-compatible",
+    "settings": {
+      "baseURL": "https://opencode.ai/inference/go/openai/v1",
+      "provider": "opencode-go"
+    },
+    "headers": {
+      "x-opencode-org-id": "wrk_01M0EGZN1DBD8QFAGTDVWKD7JV"
+    },
+    "capabilities": {
+      "tools": true,
+      "input": ["text", "image"],
+      "output": ["text"],
+      "temperature": true
+    },
+    "variants": [
+      {
+        "id": "low",
+        "settings": {
+          "reasoningEffort": "low"
+        }
+      },
+      {
+        "id": "high",
+        "settings": {
+          "reasoningEffort": "high"
+        }
+      },
+      {
+        "id": "max",
+        "settings": {
+          "reasoningEffort": "max"
+        }
+      }
+    ],
+    "time": {
+      "released": 1792195200000
+    },
+    "cost": [
+      {
+        "input": 0.15,
+        "output": 0.6,
+        "cache": {
+          "read": 0.003,
+          "write": 0
+        }
+      }
+    ],
+    "status": "active",
+    "enabled": true,
+    "limit": {
+      "context": 1000000,
+      "output": 384000
+    }
+  }
+}

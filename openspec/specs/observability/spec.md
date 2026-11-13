@@ -40,11 +40,11 @@ daemon SHALL 暴露同步运行时快照(供 `tasking status` 与任何 HTTP das
 - **THEN** 暴露 `timeout` 错误模式
 
 ### Requirement: token 与运行时记账正确性
-daemon SHALL 从 `opencode run --format json` 的 JSON 事件流中提取 token 用量,SHALL 遍历所有 `step_finish` 事件累加 `part.tokens` 字段(input、output、total),并 SHALL 跨已结束会话累积聚合 token 总量与运行时秒数,并 SHALL 在快照时加上活动会话的流逝时间。来自 worker 输出的绝对总量 SHALL 以 delta 跟踪以避免重复计数。运行时总量 SHALL 在快照时作为实时聚合上报。
+daemon SHALL 从轮询数据提取 token 用量（消息级与会话级 tokens，合计口径为 input+output+reasoning，cache 不计入合计）,并 SHALL 跨已结束会话累积聚合 token 总量与运行时秒数,并 SHALL 在快照时加上活动会话的流逝时间。来自轮询的绝对总量 SHALL 以 delta 跟踪以避免重复计数。运行时总量 SHALL 在快照时作为实时聚合上报。
 
-#### Scenario: 从 JSON 事件流提取 token
-- **WHEN** `opencode run --format json` 发出 `step_finish` 事件
-- **THEN** 累加其 `part.tokens` 字段至聚合总量
+#### Scenario: 从轮询数据提取 token
+- **WHEN** 轮询发现携带 tokens 的消息或会话终态
+- **THEN** 按合计口径累加至聚合总量
 
 #### Scenario: 跨会话累积聚合
 - **WHEN** 某会话结束

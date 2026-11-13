@@ -4125,3 +4125,379 @@ describe("runInit --update en baseline", () => {
     }
   });
 });
+
+describe("init model selection", () => {
+  interface ModelAnswers {
+    keyword?: string | string[];
+    select?: string;
+    manual?: string[];
+  }
+
+  function withModelAnswers(
+    inner: PromptInterface,
+    answers: ModelAnswers,
+    captured: { selectOptions?: Array<Array<{ value: string; label: string }>>; asked: string[] },
+  ): PromptInterface {
+    let manualIdx = 0;
+    let keywordIdx = 0;
+    return {
+      ask(question: string): Promise<string> {
+        captured.asked.push(question);
+        if (question.includes("搜索关键词")) {
+          if (Array.isArray(answers.keyword)) {
+            const value = answers.keyword[keywordIdx] ?? "";
+            keywordIdx++;
+            return Promise.resolve(value);
+          }
+          return Promise.resolve(answers.keyword ?? "");
+        }
+        if (question.includes("provider/model")) {
+          const value = answers.manual?.[manualIdx] ?? "";
+          manualIdx++;
+          return Promise.resolve(value);
+        }
+        return inner.ask(question);
+      },
+      askSelect<T extends string>(
+        question: string,
+        options: ReadonlyArray<{ value: T; label: string }>,
+      ): Promise<T> {
+        captured.asked.push(question);
+        if (question.includes("opencode 模型")) {
+          captured.selectOptions?.push(
+            options.map((o) => ({ value: String(o.value), label: o.label })),
+          );
+          return Promise.resolve((answers.select ?? "__follow__") as T);
+        }
+        return inner.askSelect(question, options as never);
+      },
+      close(): void {
+        inner.close();
+      },
+    };
+  }
+
+  const catalogProbe = () =>
+    Promise.resolve({
+      status: "ok" as const,
+      defaultModel: { id: "deepseek-v4.1-flash", providerID: "opencode-go" },
+      available: [
+        {
+          providerID: "zhipuai-coding-plan",
+          id: "glm-5.3",
+          name: "GLM 5.3",
+          releasedMs: 300,
+          free: false,
+        },
+        {
+          providerID: "opencode",
+          id: "big-pickle",
+          name: "Big Pickle",
+          releasedMs: 900,
+          free: true,
+        },
+        { providerID: "opencode", id: "deepseek-v4.1-flash-free", releasedMs: 100, free: true },
+      ],
+    });
+
+  function jiraBase() {
+    return makeMockPrompts({
+      endpoint: "http://jira.example.com/rest/api/2",
+      token: "token",
+      auth_mode: "bearer",
+      project_key: "HEIH",
+    });
+  }
+
+  it("follow-the-server-default writes model: null and shows the resolved value", async () => {
+    const dir = tempDir();
+    try {
+      const captured: {
+        selectOptions: Array<Array<{ value: string; label: string }>>;
+        asked: string[];
+      } = {
+        selectOptions: [],
+        asked: [],
+      };
+      const prompts = withModelAnswers(jiraBase(), { select: "__follow__" }, captured);
+      const { stream } = mockOutput();
+      const code = await runInit(dir, {
+        force: true,
+        output: stream,
+        fetchImpl: mockFetchFailure(),
+        promptInterface: prompts,
+        modelProbe: catalogProbe,
+      });
+      expect(code).toBe(0);
+      const content = readFileSync(join(dir, "WORKFLOW.md"), "utf8");
+      expect(content).not.toMatch(/^ {2}model: \S/m);
+      expect(captured.selectOptions[0]?.[0]?.label).toContain("opencode-go/deepseek-v4.1-flash");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes the picked search match and labels free models", async () => {
+    const dir = tempDir();
+    try {
+      const captured: {
+        selectOptions: Array<Array<{ value: string; label: string }>>;
+        asked: string[];
+      } = {
+        selectOptions: [],
+        asked: [],
+      };
+      const prompts = withModelAnswers(
+        jiraBase(),
+        { keyword: "glm", select: "zhipuai-coding-plan/glm-5.3" },
+        captured,
+      );
+      const { stream } = mockOutput();
+      const code = await runInit(dir, {
+        force: true,
+        output: stream,
+        fetchImpl: mockFetchFailure(),
+        promptInterface: prompts,
+        modelProbe: catalogProbe,
+      });
+      expect(code).toBe(0);
+      expect(readFileSync(join(dir, "WORKFLOW.md"), "utf8")).toMatch(
+        /^ {2}model: zhipuai-coding-plan\/glm-5\.3$/m,
+      );
+      const labels = captured.selectOptions[0]?.map((o) => o.label) ?? [];
+      expect(labels).toContain("zhipuai-coding-plan/glm-5.3");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("matches by subsequence (glm53 hits glm-5.3) and lists top-by-release on empty keyword", async () => {
+    const dir = tempDir();
+    try {
+      const captured: {
+        selectOptions: Array<Array<{ value: string; label: string }>>;
+        asked: string[];
+      } = {
+        selectOptions: [],
+        asked: [],
+      };
+      const prompts = withModelAnswers(jiraBase(), { keyword: "glm53" }, captured);
+      await runInit(dir, {
+        force: true,
+        output: mockOutput().stream,
+        fetchImpl: mockFetchFailure(),
+        promptInterface: prompts,
+        modelProbe: catalogProbe,
+      });
+      const fuzzy = captured.selectOptions[0]?.map((o) => o.value) ?? [];
+      expect(fuzzy).toContain("zhipuai-coding-plan/glm-5.3");
+      expect(fuzzy).not.toContain("opencode/big-pickle");
+
+      const captured2: {
+        selectOptions: Array<Array<{ value: string; label: string }>>;
+        asked: string[];
+      } = {
+        selectOptions: [],
+        asked: [],
+      };
+      const prompts2 = withModelAnswers(jiraBase(), { keyword: "" }, captured2);
+      await runInit(dir, {
+        force: true,
+        output: mockOutput().stream,
+        fetchImpl: mockFetchFailure(),
+        promptInterface: prompts2,
+        modelProbe: catalogProbe,
+      });
+      const top = captured2.selectOptions[0]?.map((o) => o.value) ?? [];
+      expect(top.indexOf("opencode/big-pickle")).toBe(1);
+      const topLabels = captured2.selectOptions[0]?.map((o) => o.label) ?? [];
+      expect(topLabels.some((l) => l.includes("（免费）"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("re-searches after an empty match instead of dropping straight to manual input", async () => {
+    const dir = tempDir();
+    try {
+      const captured: { selectOptions: Array<Array<{ value: string; label: string }>>; asked: string[] } = {
+        selectOptions: [],
+        asked: [],
+      };
+      const prompts = withModelAnswers(
+        jiraBase(),
+        { keyword: ["zzz", "glm"], select: "zhipuai-coding-plan/glm-5.3" },
+        captured,
+      );
+      const { stream, content } = mockOutput();
+      const code = await runInit(dir, {
+        force: true,
+        output: stream,
+        fetchImpl: mockFetchFailure(),
+        promptInterface: prompts,
+        modelProbe: catalogProbe,
+      });
+      expect(code).toBe(0);
+      expect(content()).toContain("可换关键词重搜");
+      expect(captured.asked.filter((q) => q.includes("搜索关键词")).length).toBeGreaterThanOrEqual(2);
+      expect(captured.selectOptions[0]?.map((o) => o.value)).toContain(
+        "zhipuai-coding-plan/glm-5.3",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("still offers follow-the-default when the catalog leg failed but a default resolved", async () => {
+    const dir = tempDir();
+    try {
+      const captured: { selectOptions: Array<Array<{ value: string; label: string }>>; asked: string[] } = {
+        selectOptions: [],
+        asked: [],
+      };
+      const prompts = withModelAnswers(jiraBase(), {}, captured);
+      await runInit(dir, {
+        force: true,
+        output: mockOutput().stream,
+        fetchImpl: mockFetchFailure(),
+        promptInterface: prompts,
+        modelProbe: () =>
+          Promise.resolve({
+            status: "ok" as const,
+            defaultModel: { id: "deepseek-v4.1-flash", providerID: "opencode-go" },
+          }),
+      });
+      const values = captured.selectOptions[0]?.map((o) => o.value) ?? [];
+      expect(values[0]).toBe("__follow__");
+      expect(values).toContain("__manual__");
+      expect(captured.selectOptions[0]?.[0]?.label).toContain("opencode-go/deepseek-v4.1-flash");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("degrades to manual input when the probe is unreachable, validating format", async () => {
+    const dir = tempDir();
+    try {
+      const prompts = withModelAnswers(
+        jiraBase(),
+        { manual: ["bare-name", "zhipuai-coding-plan/glm-5.3"] },
+        { asked: [] },
+      );
+      const { stream, content } = mockOutput();
+      const code = await runInit(dir, {
+        force: true,
+        output: stream,
+        fetchImpl: mockFetchFailure(),
+        promptInterface: prompts,
+        modelProbe: () => Promise.resolve({ status: "unreachable", error: "boom" }),
+      });
+      expect(code).toBe(0);
+      expect(content()).toContain("provider/model");
+      expect(readFileSync(join(dir, "WORKFLOW.md"), "utf8")).toMatch(
+        /^ {2}model: zhipuai-coding-plan\/glm-5\.3$/m,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("non-interactive init skips the model question and keeps model: null", async () => {
+    const dir = tempDir();
+    try {
+      const code = await runInit(dir, { force: false, nonInteractive: true });
+      expect(code).toBe(0);
+      expect(readFileSync(join(dir, "WORKFLOW.md"), "utf8")).not.toMatch(/^ {2}model: \S/m);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("--model pre-answers the question and is written directly", async () => {
+    const dir = tempDir();
+    try {
+      const captured: {
+        selectOptions: Array<Array<{ value: string; label: string }>>;
+        asked: string[];
+      } = {
+        selectOptions: [],
+        asked: [],
+      };
+      const prompts = withModelAnswers(jiraBase(), {}, captured);
+      const code = await runInit(dir, {
+        force: true,
+        output: mockOutput().stream,
+        fetchImpl: mockFetchFailure(),
+        promptInterface: prompts,
+        model: "zhipuai-coding-plan/glm-5.3",
+      });
+      expect(code).toBe(0);
+      expect(captured.asked.some((q) => q.includes("搜索关键词"))).toBe(false);
+      expect(readFileSync(join(dir, "WORKFLOW.md"), "utf8")).toMatch(
+        /^ {2}model: zhipuai-coding-plan\/glm-5\.3$/m,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("--model with a bare name fails fast without writing WORKFLOW.md", async () => {
+    const dir = tempDir();
+    try {
+      const { stream, content } = mockOutput();
+      const code = await runInit(dir, {
+        force: false,
+        nonInteractive: true,
+        model: "glm-5.3",
+        output: stream,
+      });
+      expect(code).toBe(1);
+      expect(content()).toContain("provider/model");
+      expect(existsSync(join(dir, "WORKFLOW.md"))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("--model works in non-interactive mode", async () => {
+    const dir = tempDir();
+    try {
+      const code = await runInit(dir, {
+        force: false,
+        nonInteractive: true,
+        model: "zhipuai-coding-plan/glm-5.3",
+      });
+      expect(code).toBe(0);
+      expect(readFileSync(join(dir, "WORKFLOW.md"), "utf8")).toMatch(
+        /^ {2}model: zhipuai-coding-plan\/glm-5\.3$/m,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("--update never touches an existing opencode.model", async () => {
+    const dir = tempDir();
+    try {
+      const before = [
+        "---",
+        "tracker:",
+        "  kind: none",
+        "opencode:",
+        "  model: zhipuai-coding-plan/glm-5.3",
+        "---",
+        "",
+        "# workflow",
+        "",
+      ].join("\n");
+      writeFileSync(join(dir, "WORKFLOW.md"), before, "utf8");
+      const { stream } = mockOutput();
+      const code = await runInit(dir, { update: true, output: stream });
+      expect(code).toBe(0);
+      const after = readFileSync(join(dir, "WORKFLOW.md"), "utf8");
+      expect(after).toContain("model: zhipuai-coding-plan/glm-5.3");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

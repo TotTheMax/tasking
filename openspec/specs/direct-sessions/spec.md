@@ -53,20 +53,20 @@ Feishu intake 群 `/chat` 直连 opencode 会话：绕过 Jira，在固定目录
 - **THEN** 该会话的 turn 等待有空位后执行，且不占用 Jira dispatch 的并发额度
 
 ### Requirement: 每 turn 子进程执行复用 worker 原语
-直连 turn SHALL 通过 `runDefaultSubprocess` 执行一条由 `opencode.command` 派生的命令：`--format json`、显式 `--dir <固定目录>`（永远显式传递）、`opencode.agent` 非空时附 `--agent <agent>`、`opencode.model` 非空时附 `--model <model>`、`opencode.variant` 非空时附 `--variant <variant>`、`feishu.direct.auto_approve`（全局默认 false，可按项目覆盖）为 true 时附 `--auto`、续跑附 `-s <session_id>`。直连 turn SHALL NOT 传 `--title`：opencode session 的标题交由 opencode 原生按内容自动生成（与原生行为一致），而非 tasking 固定的 `feishu:<rootId>` 标记。超时/不活动升级与 JSON 事件解析语义 SHALL 与 worker 层一致（复用 `opencode.turn_timeout_ms` / `opencode.inactivity_timeout_ms`）。直连路径 SHALL 不执行 workspace 创建、hooks、MCP 注入或 Liquid 模板渲染。
+直连 turn SHALL 经 opencode-v2-driver 驱动（与 worker 层同一驱动器实例语义）：首 turn `session.create`（`location.directory`=固定目录、model/variant 映射、直连 `auto_approve` 生效时全放 ruleset）→ `session.prompt`；后续轮对同一 session 继续 prompt。超时/不活跃/审批等待语义 SHALL 与 worker 层一致（复用 `opencode.turn_timeout_ms` / `opencode.inactivity_timeout_ms` / `opencode.permission_timeout_ms`）。直连路径 SHALL 不执行 workspace 创建、hooks、MCP 注入或 Liquid 模板渲染，SHALL NOT 写入目标目录任何 `.opencode/` 配置。
 
-#### Scenario: 首 turn 命令形状
+#### Scenario: 首 turn 命令语义
 - **WHEN** 新会话首 turn 以消息 `跑测试` 在 `/repos/tasking` 执行（auto_approve=false）
-- **THEN** 子进程命令包含 `--format json`、`--dir /repos/tasking`、`跑测试`，且不包含 `--auto`、`-s` 与 `--title`
+- **THEN** `session.create` 携带 location.directory=`/repos/tasking`，`session.prompt` 投递 `跑测试`，会话不带全放 ruleset
 
 #### Scenario: 继承 tasking 的 agent/model/variant
 - **WHEN** `opencode.agent=review`、`opencode.model=deepseek/deepseek-v4-flash`、`opencode.variant=high`
-- **THEN** 直连命令包含 `--agent review`、`--model deepseek/deepseek-v4-flash`、`--variant high`，且消息仍为最后一个位置参数
-- **AND** 任一字段为空/null 时对应标志不追加
+- **THEN** 创建参数携带 agent=review 与 model ref `{id:"deepseek-v4-flash", providerID:"deepseek", variant:"high"}`
+- **AND** 任一字段为空/null 时对应参数省略
 
-#### Scenario: 续跑 turn 命令形状
+#### Scenario: 续跑 turn 同一 session
 - **WHEN** 既有会话以 session_id `ses_x` 续跑
-- **THEN** 子进程命令包含 `-s ses_x` 与显式 `--dir`
+- **THEN** 对 `ses_x` 继续 `session.prompt`
 
 ### Requirement: 每 turn 一条总结消息（verbosity 可选）
 用户消息入队时系统 SHALL 立即给出可见反馈；turn 结束后系统 SHALL 在话题内发送恰好一条结果：最后一刻 assistant 文本 + 一行统计（耗时、工具调用次数、token 用量）。`summary` 与 `quiet` 下结果 SHALL 为文本消息（quiet 省略统计行、仅正文 + 权限拒绝提示），超长时截断。`feishu.direct.verbosity: detailed`（**默认**）下系统 SHALL 为该 turn 创建并原地更新一张轮次卡片（见"每 turn 一张轮次卡片"），结果 SHALL 以**结果卡片**投递：完整 assistant 文本按 markdown 渲染（标题/粗体/表格/代码块）+ 统计行；结果超出卡片预算时 SHALL 改为把完整文本作为 `.md` 文件附件发到话题，附件不可用则降级为长文本，仍装不下则提示去 TUI 活动视图。任何 verbosity 下系统 SHALL NOT 再为单个工具调用单独发送文本消息；detailed 下轮次卡片 SHALL NOT 复述最终 assistant 文本（它由结果卡片承载），只保留中间步骤文本。轮次卡片的折叠面板需飞书/Lark 客户端 ≥ V7.9 渲染；更低版本显示「请升级」占位符（ SHALL NOT 崩溃或影响结果投递），该版本要求 SHALL 写入模板注释与双语文档，`verbosity: summary` 是显式回退。
@@ -88,15 +88,15 @@ Feishu intake 群 `/chat` 直连 opencode 会话：绕过 Jira，在固定目录
 - **THEN** 系统在话题内报告中断原因，会话转入可继续追问状态
 
 ### Requirement: 权限姿态由目标项目配置治理，auto 可指定
-直连 turn 默认 SHALL 不传 `--auto`；此时权限姿态完全由目标目录自身的 opencode permission 配置决定，`ask` 项被 opencode 安全自动拒绝并体现在总结中。`feishu.direct.auto_approve: true`（可被 projects 条目中的同名键按项目覆盖）时系统 SHALL 传 `--auto`。系统 SHALL 不写入、不修改目标目录的任何 `.opencode/` 配置。
+直连 turn 默认 SHALL 不带全放 ruleset；此时权限姿态完全由目标目录自身的 opencode permission 配置决定，`ask` 项 SHALL 挂起等待审批卡（见 permission-approval 能力）。`feishu.direct.auto_approve: true`（可被 projects 条目中的同名键按项目覆盖）时系统 SHALL 在会话创建时携带全放 ruleset。系统 SHALL 不写入、不修改目标目录的任何 `.opencode/` 配置。
 
 #### Scenario: 默认不裸奔
 - **WHEN** 未配置 auto_approve（或为 false）
-- **THEN** 直连 turn 命令不含 `--auto`
+- **THEN** 会话不带全放 ruleset，目录 ask 规则触发审批卡
 
 #### Scenario: 项目级覆盖
 - **WHEN** projects 中该项目条目设 `auto_approve: true` 而全局为 false
-- **THEN** 该项目的直连 turn 命令含 `--auto`，其他项目仍不含
+- **THEN** 该项目的会话带全放 ruleset，其他项目仍不带
 
 ### Requirement: /done 与 /stop 生命周期命令
 直连话题内 `/done` SHALL 将会话标记为 done 并回复累计统计（turn 数、token 总量）；之后话题内消息 SHALL 收到一次性终结提示后静默。`/done` SHALL 同时删除该 opencode 磁盘会话（`opencode session delete <session_id>`）、清空其 `direct:<root_id>` ActivityStore 缓冲并清理内存 runtime/totals；`direct_sessions` 行 SHALL 保留（以便终结提示仍生效）。`/done` SHALL 同时把该会话最近的轮次卡片收尾为"已结束"（去掉全部按钮）。`/stop` SHALL 中断当前正在执行的 turn（通过 AbortSignal 终止子进程）、回复已中断说明，并将会话转回 idle；无 turn 在跑时 `/stop` SHALL 回复无运行中任务，且 SHALL NOT 删除会话。`/stop` SHALL 同时把正在运行那轮的卡片收尾为"已中断"。
@@ -173,7 +173,7 @@ TUI SHALL 以独立区块列出活跃（`running`/`idle`）直连会话，数据
 - **THEN** 直连不激活，`/chat` 按未知命令处理
 
 ### Requirement: 每 turn 一张轮次卡片
-`verbosity: detailed` 时，每个 turn SHALL 创建一张独立的交互卡片（卡片 JSON 2.0、`config.update_multi: true`），作为该轮的可见反馈与过程面；卡片 SHALL 在占用目标目录与并发额度**之前**创建，使排队期间也有可见状态。卡片头部 SHALL 显示会话名、状态（排队中/运行中/空闲/已结束/已过期）、累计 turns 与 token、队列深度。正文 SHALL 包含本轮**中间步骤**的 assistant 文本（最终文本由结果卡片承载，见上），以及每个已完成工具调用一个折叠面板：状态与退出码、耗时、工具名、命令或参数、输出**末尾 15 行**与 `… (N more lines)`/`… (opencode truncated)` 标记；失败（退出码非 0 或有 error）的面板 SHALL 默认展开并带失败视觉标识，成功面板 SHALL 默认折叠，最新面板 SHALL NOT 自动展开。卡片 SHALL 只有一层折叠（折叠面板 SHALL NOT 嵌套折叠面板）。更新 SHALL 合并到最多每 1.5 秒一次，并在终态（完成/失败/超时/中断）、`/stop`、`/done` 与任一失败事件时立即刷新；单次更新失败 SHALL 退避重试一次，仍失败只记 WARN，由后续刷新自愈。下一轮开始时系统 SHALL 封存上一轮的卡片：把其按钮行替换为一行统计，卡片其余内容（工具面板、文本、展开状态）保持不变。卡片体积 SHALL 维持在工作预算 24KB 内；超预算时 SHALL 按"最旧面板输出降到 3 行 → 去掉其输出只留标题行 → 该面板替换为一行'还有 N 个工具调用未展示'"的顺序从最旧开始降级。
+`verbosity: detailed` 时，每个 turn SHALL 创建一张独立的交互卡片（卡片 JSON 2.0、`config.update_multi: true`），作为该轮的可见反馈与过程面；卡片 SHALL 在占用目标目录与并发额度**之前**创建，使排队期间也有可见状态。卡片头部 SHALL 显示会话名、状态（排队中/运行中/空闲/已结束/已过期）、累计 turns 与 token、队列深度。正文 SHALL 包含本轮**中间步骤**的 assistant 文本（最终文本由结果卡片承载，见上），以及每个已完成工具调用一个折叠面板：状态与退出码、耗时、工具名、命令或参数、输出**末尾 15 行**与 `… (N more lines)`/`… (opencode truncated)` 标记；失败（退出码非 0 或有 error）的面板 SHALL 默认展开并带失败视觉标识，成功面板 SHALL 默认折叠，最新面板 SHALL NOT 自动展开。卡片 SHALL 只有一层折叠（折叠面板 SHALL NOT 嵌套折叠面板）。更新 SHALL 合并到最多每 1.5 秒一次，并在终态（完成/失败/超时/中断）、`/stop`、`/done` 与任一失败事件时立即刷新。单次更新失败 SHALL 按错误类别处理：**可重试错误**（HTTP 5xx、429、网络层错误）SHALL 延迟约 2 秒（含抖动）后重试一次，成功则卡片原地继续；**不可重试错误**（4xx，429 除外）SHALL 立即放弃、不等待。重试仍失败时 SHALL 发生**卡片降级**：本 turn 剩余更新改以**单条合并文本**投递，仅包含尚未成功渲染上卡的工具（增量，不重发卡片已有内容），并只记 WARN；降级 SHALL 仅覆盖本 turn 剩余部分；若降级期间仍有工具未投递，下一 turn 开始前 SHALL 恰好补发一次该剩余增量（不重发已上卡内容）；下一 turn SHALL 重新尝试创建卡片（不设跨 turn 的永久禁用）。下一轮开始时系统 SHALL 封存上一轮的卡片：把其按钮行替换为一行统计，卡片其余内容（工具面板、文本、展开状态）保持不变。卡片体积 SHALL 维持在工作预算 24KB 内；超预算时 SHALL 按"最旧面板输出降到 3 行 → 去掉其输出只留标题行 → 该面板替换为一行'还有 N 个工具调用未展示'"的顺序从最旧开始降级。
 
 #### Scenario: detailed 新一轮创建卡片并充当 ACK
 - **WHEN** verbosity=detailed 的会话开始新一轮
@@ -194,6 +194,22 @@ TUI SHALL 以独立区块列出活跃（`running`/`idle`）直连会话，数据
 #### Scenario: 更新合并与终态立即刷新
 - **WHEN** 1.5 秒内连续完成多个工具，随后该轮结束
 - **THEN** 过程中的多次事件被合并为更少的卡片更新，且终态变化立即反映到卡片
+
+#### Scenario: 可重试错误延迟重试成功
+- **WHEN** 一次卡片更新返回 5xx/429 或网络层错误，延迟重试时网络已恢复
+- **THEN** 重试成功后卡片原地继续更新，本 turn 不发生文本降级，不重发任何工具
+
+#### Scenario: 重试仍败降级为增量文本
+- **WHEN** 延迟重试仍失败，且此前已有工具成功渲染上卡
+- **THEN** 本 turn 剩余工具以单条合并文本消息投递，其中不包含卡片上已有的工具
+
+#### Scenario: 下一 turn 自动恢复卡片
+- **WHEN** 某 turn 因更新连败发生卡片降级，用户继续追问开启下一 turn
+- **THEN** 下一 turn 正常创建新的轮次卡片，无需重启或重新建会话
+
+#### Scenario: 不可重试错误快速降级
+- **WHEN** 一次卡片更新返回 429 之外的 4xx 错误
+- **THEN** 不做延迟等待与重试，立即进入本 turn 的文本降级
 
 #### Scenario: 下一轮开始封存上一轮
 - **WHEN** 新一轮开始且上一轮卡片仍带按钮行
@@ -296,22 +312,26 @@ TUI SHALL 以独立区块列出活跃（`running`/`idle`）直连会话，数据
 - **THEN** WORKFLOW.md 与目标目录的 `.opencode/` 内容不变
 
 ### Requirement: /auto 权限姿态切换
-`/auto` SHALL 支持 `on`（本会话后续所有轮放开）、`off`/`reset`（回到配置默认）、`once`（仅下一轮放开，用完即弃）与无参数（回显当前姿态及其来源：会话覆盖 / 项目条目 / 全局）。`on` SHALL 落库（重启后仍生效），`once` SHALL 只存在于内存。放开 SHALL 只影响是否传 `--auto`，SHALL NOT 改变目标项目自身的 `deny` 规则。
+`/auto` SHALL 支持 `on`（本会话后续所有轮放开，经 `session.update` 注入全放 ruleset，立即生效）、`off`/`reset`（清空会话 ruleset 回到配置默认）、`once`（放开至下一 turn 边界自动收回）与无参数（回显当前姿态及其来源：会话覆盖 / 项目条目 / 全局）。`on` SHALL 落库（重启后仍生效），`once` SHALL 只存在于内存。姿态操作 SHALL NOT 改变目标项目自身的 `deny` 类规则与文件。
 
 #### Scenario: auto on 后续轮放开
 - **WHEN** 执行 `/auto on` 并继续几轮
-- **THEN** 这些轮的命令都带 `--auto`，直到 `/auto off`、`reset` 或会话结束
+- **THEN** 这些轮不再因 ask 挂起，直到 `/auto off`、`reset` 或会话结束
+
+#### Scenario: auto on 立即生效
+- **WHEN** turn 运行中执行 `/auto on`
+- **THEN** session.update 即刻生效，不等待 turn 边界
 
 #### Scenario: auto once 只作用于下一轮
 - **WHEN** 执行 `/auto once` 后有新一轮
-- **THEN** 只有该轮带 `--auto`，其后各轮回到配置默认
+- **THEN** 该轮结束后 ruleset 自动收回，其后各轮回到配置默认
 
 #### Scenario: 无参数回显姿态与来源
 - **WHEN** 执行 `/auto`
 - **THEN** 回复当前姿态，并说明它来自会话覆盖、项目条目还是全局配置
 
 ### Requirement: 卡片上的权限按钮与姿态显示
-最新一轮卡片的控制行 SHALL 提供 `🔐 权限` 按钮；点击时若当前未放开，SHALL 以同一张卡片返回确认行（`[✅ 本会话放开] [⚡ 仅下一轮] [✖ 取消]` 与"目标仓库 deny 仍生效"说明），放开 SHALL 在确认后才生效；若当前已 `on` 或 `once`，同一点击 SHALL 立即收回。卡片头部 SHALL 持续显示当前姿态（`🔓 auto` / `⚡ 下轮放开`，默认态不显示或显示 `🔒`）。
+最新一轮卡片的控制行 SHALL 提供 `🔐 权限` 按钮；点击时若当前未放开，SHALL 以同一张卡片返回确认行（`[✅ 本会话放开] [⚡ 仅下一轮] [✖ 取消]` 与"目标仓库 deny 仍生效"说明），放开 SHALL 在确认后才生效（经 `session.update`）；若当前已 `on` 或 `once`，同一点击 SHALL 立即收回（清空 ruleset）。卡片头部 SHALL 持续显示当前姿态（`🔓 auto` / `⚡ 下轮放开`，默认态不显示或显示 `🔒`）。审批挂起期间卡片 SHALL 显示等待审批与剩余时间。
 
 #### Scenario: 打开需要确认
 - **WHEN** 在默认态点击 `🔐 权限`
@@ -324,7 +344,7 @@ TUI SHALL 以独立区块列出活跃（`running`/`idle`）直连会话，数据
 
 #### Scenario: 收回立即生效
 - **WHEN** 已 `🔓 auto` 时点击同一按钮
-- **THEN** 姿态立即回到配置默认，头部不再显示 `🔓 auto`
+- **THEN** 会话 ruleset 立即清空，头部不再显示 `🔓 auto`
 
 #### Scenario: 仅下一轮
 - **WHEN** 在确认行选择 `⚡ 仅下一轮`
@@ -346,11 +366,11 @@ TUI SHALL 以独立区块列出活跃（`running`/`idle`）直连会话，数据
 - **THEN** 回复当前会话名与用法，不做修改
 
 ### Requirement: 每轮启动记录生效命令与姿态
-每轮启动时系统 SHALL 以 info 级记录一行 `direct turn starting`，字段包含 `root_id`、`dir`、生效的 `agent`/`model`、`auto_approve`（本轮是否传 `--auto`）、`continuation` 与**完整的 spawn 命令**（超长时截断，保证参数可见）。以便逐轮核对"这一轮到底带了哪些参数"。
+每轮启动时系统 SHALL 以 info 级记录一行 `direct turn starting`，字段包含 `root_id`、`dir`、生效的 `agent`/`model`、`auto_approve`（本轮会话是否放开姿态）、`continuation` 与**生效的驱动参数摘要**（sessionID、model ref、ruleset 姿态；超长截断，保证参数可见）。以便逐轮核对"这一轮到底带了哪些参数"。
 
 #### Scenario: 命令与姿态可逐轮核对
 - **WHEN** 任意一轮启动
-- **THEN** 日志出现含 `--dir`、`auto_approve` 与该轮 agent 的 `direct turn starting` 记录
+- **THEN** 日志出现含 `dir`、`auto_approve` 与该轮 agent 的 `direct turn starting` 记录
 - **AND** `/auto once` 之后的下一轮记录 `auto_approve: true`，再下一轮恢复 `false`
 
 ### Requirement: 会话命令 /new 与 /status
@@ -435,4 +455,11 @@ turn 运行期间系统 SHALL 至少每 5 秒刷新一次该轮卡片（复用�
 #### Scenario: 信息卡回落纯文本
 - **WHEN** 适配器没有卡片发送能力（或发卡失败）
 - **THEN** 同一命令以纯文本回执，命令语义不变
+
+### Requirement: 审批卡投放到会话话题
+直连 turn 挂起等审批时，审批卡（见 permission-approval 能力）SHALL 投放到该会话话题，与轮次卡片并存；审批结果 SHALL 反映到轮次卡片状态（等待审批 → 恢复运行）。
+
+#### Scenario: 直连审批卡在会话话题出现
+- **WHEN** 直连 turn 因 ask 规则挂起
+- **THEN** 会话话题出现审批卡，允许/拒绝后轮次卡片恢复运行状态
 
