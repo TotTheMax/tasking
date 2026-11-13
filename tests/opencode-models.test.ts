@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type ModelProbeRunner, probeOpencodeModels } from "../src/shared/opencode-models.js";
+import { type ModelProbeRunner, probeOpencodeModels } from "../src/driver/opencode-models.js";
 import { modelDefaultResponse, modelListResponse } from "./helpers/opencode-fixtures.js";
 
 function scriptedRunner(routes: Record<string, string>): ModelProbeRunner {
@@ -35,6 +35,16 @@ describe("probeOpencodeModels", () => {
     });
     expect(probe.status).toBe("unreachable");
     expect(probe.error).toContain("spawn timeout");
+  });
+
+  it("falls back to the process cwd when the requested directory does not exist", async () => {
+    const seen: string[] = [];
+    const probe = await probeOpencodeModels("opencode", "/definitely/not/a/dir", async (_args, cwd) => {
+      seen.push(cwd);
+      return { stdout: modelDefaultResponse(), stderr: "" };
+    });
+    expect(probe.status).toBe("ok");
+    expect(seen).toContain(process.cwd());
   });
 
   it("still reports ok with a default when the list call fails", async () => {

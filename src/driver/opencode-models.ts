@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { buildApiArgs } from "./api-client.js";
 import type { ResolvedModel } from "./session-ops.js";
 
@@ -78,17 +79,18 @@ export async function probeOpencodeModels(
   run: ModelProbeRunner = defaultModelProbeRunner,
 ): Promise<OpencodeModelsProbe> {
   const base = { command, serverUrl: null };
+  const safeCwd = existsSync(cwd) ? cwd : process.cwd();
   const deadline = Date.now() + PROBE_TIMEOUT_MS;
   const remaining = () => Math.max(1, deadline - Date.now());
   try {
     const defaultArgs = buildApiArgs({ ...base, operation: "model.default" });
-    const { stdout: defaultOut } = await run(defaultArgs, cwd, remaining());
+    const { stdout: defaultOut } = await run(defaultArgs, safeCwd, remaining());
     const defaultEnvelope = JSON.parse(defaultOut) as { data?: unknown };
     const defaultModel = parseModelRef(defaultEnvelope.data);
     let available: AvailableModelRef[] | undefined;
     try {
       const listArgs = buildApiArgs({ ...base, operation: "model.list" });
-      const { stdout: listOut } = await run(listArgs, cwd, remaining());
+      const { stdout: listOut } = await run(listArgs, safeCwd, remaining());
       const listEnvelope = JSON.parse(listOut) as { data?: unknown[] };
       available = (listEnvelope.data ?? []).flatMap((entry) => {
         const parsed = parseCatalogEntry(entry);
