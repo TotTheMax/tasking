@@ -147,6 +147,17 @@ describe("buildSnapshot", () => {
     const snap = buildSnapshot(state);
     expect(snap.counts.running).toBe(0);
     expect(snap.counts.retrying).toBe(0);
+    expect(snap.direct_dirs).toEqual([]);
+  });
+
+  it("passes through direct directory occupancy", () => {
+    const state = createInitialState(30000, 10);
+    const directDirs = [
+      { path: "/repos/a", active: 2, limit: 2, waiters: 1 },
+      { path: "/repos/b", active: 1, limit: 2, waiters: 0 },
+    ];
+    const snap = buildSnapshot(state, { directDirs });
+    expect(snap.direct_dirs).toEqual(directDirs);
   });
 });
 
@@ -417,6 +428,7 @@ describe("HttpDashboard", () => {
       logger,
       directSessions: () => direct,
       directTotals: () => ({ input_tokens: 1000, output_tokens: 200, total_tokens: 1200 }),
+      directDirs: () => [{ path: "/repos/tasking", active: 2, limit: 2, waiters: 1 }],
     });
     const port = await dashboard.start();
     try {
@@ -424,6 +436,7 @@ describe("HttpDashboard", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
         direct: Array<{ id: string; name: string; project: string; status: string }>;
+        direct_dirs: Array<{ path: string; active: number; limit: number; waiters: number }>;
         counts: { running: number };
         codex_totals: { total_tokens: number };
       };
@@ -431,6 +444,9 @@ describe("HttpDashboard", () => {
       expect(body.direct[0]?.id).toBe("direct:om_x");
       expect(body.direct[0]?.name).toBe("会话一");
       expect(body.direct[0]?.status).toBe("running");
+      expect(body.direct_dirs).toEqual([
+        { path: "/repos/tasking", active: 2, limit: 2, waiters: 1 },
+      ]);
       expect(body.counts.running).toBe(0);
       expect(body.codex_totals.total_tokens).toBe(1900);
     } finally {

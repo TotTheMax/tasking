@@ -37,6 +37,7 @@ export function httpToSnapshot(json: Record<string, unknown>): RuntimeSnapshot {
   const running = Array.isArray(json.running) ? json.running : [];
   const retrying = Array.isArray(json.retrying) ? json.retrying : [];
   const direct = Array.isArray(json.direct) ? json.direct : [];
+  const directDirs = Array.isArray(json.direct_dirs) ? json.direct_dirs : [];
   const totalsRaw = json.codex_totals ?? json.totals;
   const totals =
     typeof totalsRaw === "object" && totalsRaw !== null
@@ -72,6 +73,15 @@ export function httpToSnapshot(json: Record<string, unknown>): RuntimeSnapshot {
         input_tokens: Number(r.input_tokens ?? 0),
         output_tokens: Number(r.output_tokens ?? 0),
         total_tokens: Number(r.total_tokens ?? 0),
+      };
+    }),
+    direct_dirs: directDirs.map((e: unknown) => {
+      const r = e as Record<string, unknown>;
+      return {
+        path: String(r.path ?? ""),
+        active: Number(r.active ?? 0),
+        limit: Number(r.limit ?? 1),
+        waiters: Number(r.waiters ?? 0),
       };
     }),
     counts: {

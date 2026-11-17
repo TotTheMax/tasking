@@ -139,6 +139,13 @@ function resolveDirectConfig(
       "feishu.direct.idle_ttl_ms must be a positive number",
     );
   }
+  const maxConcurrentTurnsPerDir = Math.floor(
+    asNumber(
+      d.max_concurrent_turns_per_dir,
+      DEFAULTS.feishu.direct.max_concurrent_turns_per_dir,
+      1,
+    ),
+  );
   return {
     enabled,
     projects,
@@ -147,6 +154,7 @@ function resolveDirectConfig(
       typeof d.auto_approve === "boolean" ? d.auto_approve : DEFAULTS.feishu.direct.auto_approve,
     verbosity: verbosityRaw === "quiet" || verbosityRaw === "summary" ? verbosityRaw : "detailed",
     max_concurrent: asNumber(maxConcurrentRaw, DEFAULTS.feishu.direct.max_concurrent, 1),
+    max_concurrent_turns_per_dir: maxConcurrentTurnsPerDir,
     idle_ttl_ms: asNumber(idleTtlRaw, DEFAULTS.feishu.direct.idle_ttl_ms, 1),
   };
 }

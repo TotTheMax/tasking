@@ -689,7 +689,28 @@ describe("feishu.direct config", () => {
     expect(cfg.feishu.direct.auto_approve).toBe(false);
     expect(cfg.feishu.direct.verbosity).toBe("detailed");
     expect(cfg.feishu.direct.max_concurrent).toBe(5);
+    expect(cfg.feishu.direct.max_concurrent_turns_per_dir).toBe(1);
     expect(cfg.feishu.direct.idle_ttl_ms).toBe(30 * 24 * 60 * 60 * 1000);
+  });
+
+  it("resolves max_concurrent_turns_per_dir and floors fractional values", () => {
+    const cfg = resolveConfig(
+      { feishu: { direct: { max_concurrent_turns_per_dir: 2.9, projects: {} } } },
+      "/tmp",
+      "p",
+    );
+    expect(cfg.feishu.direct.max_concurrent_turns_per_dir).toBe(2);
+  });
+
+  it("falls back to 1 for non-positive or non-numeric max_concurrent_turns_per_dir", () => {
+    for (const value of [0, -1, Number.NaN, "3"]) {
+      const cfg = resolveConfig(
+        { feishu: { direct: { max_concurrent_turns_per_dir: value, projects: {} } } },
+        "/tmp",
+        "p",
+      );
+      expect(cfg.feishu.direct.max_concurrent_turns_per_dir).toBe(1);
+    }
   });
 
   it("resolves inline flow projects/path_roots written in frontmatter", () => {

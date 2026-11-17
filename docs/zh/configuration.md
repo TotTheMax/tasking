@@ -200,7 +200,8 @@ route agent 同一时刻最多一个运行(除非另行配置),不阻塞结构�
 | `path_roots` | string[] | `[]` | 否 | ad-hoc path 模式（`/chat /绝对路径 <消息>`）的目录前缀白名单；空 = 不限制 |
 | `auto_approve` | boolean | `false` | 否 | 为 true 时会话携带全放 ruleset（自动放行未被显式拒绝的权限）。默认 false：权限姿态由目标目录自己的 `.opencode` 权限配置决定，`ask` 项**挂起等待审批卡**（0.7 起；v1 的“自动拒绝”已废止） |
 | `verbosity` | `quiet`\|`summary`\|`detailed` | `detailed` | 否 | 镜像到飞书的事件量级：`quiet` 仅最终回复正文（权限拒绝提示保留）；`summary` 正文 + 一行统计（⏱/🔧/tokens，老客户端环境的显式回退）；`detailed`（默认）为每个 turn 发一张可原地更新的过程卡片（工具明细折叠面板 + 中断/重试/完整输出/结束按钮；失败面板默认展开），turn 结束时再发一张 markdown 结果卡片（标题/表格/代码块正常渲染；超长时改发 `.md` 附件）。折叠面板需飞书/Lark 客户端 >= V7.9，更低版本显示「请升级」占位符（不影响结果投递） |
-| `max_concurrent` | integer | `5` | 否 | 直连 turn 的全局并发上限（独立于 Jira 的 `max_concurrent_agents`）；同目录/同会话始终串行 |
+| `max_concurrent` | integer | `5` | 否 | 直连 turn 的全局并发上限（独立于 Jira 的 `max_concurrent_agents`）；同会话始终串行，同目录默认串行（见下一行） |
+| `max_concurrent_turns_per_dir` | integer | `1` | 否 | 同一目录可同时执行的 turn 数。`1` = 串行（默认，保持原有安全行为）；`2+` = 显式放开同目录并行，需自行承担共享工作树的文件/git 竞态风险。实际并发与 `max_concurrent` 取更严者；等待审批的 turn 继续占用槽位 |
 | `idle_ttl_ms` | integer | `2592000000`(30 天) | 否 | 空闲多久后把会话标记为 expired（不删除 opencode 磁盘上的 session） |
 
 直连 turn 继承操作者级的 `opencode.agent`、`opencode.model`、`opencode.variant`（非空时映射会话 agent 与 `Model.Ref`），与 Jira worker 一致；目标目录自身的 `.opencode/` 配置仍治理权限/LSP/formatter。

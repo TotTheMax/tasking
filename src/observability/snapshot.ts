@@ -1,11 +1,13 @@
 import type {
   OrchestratorRuntimeState,
+  RuntimeDirectDir,
   RuntimeDirectSession,
   RuntimeSnapshot,
 } from "../shared/types.js";
 
 export interface SnapshotExtras {
   direct?: RuntimeDirectSession[];
+  directDirs?: RuntimeDirectDir[];
   directTotals?: { input_tokens: number; output_tokens: number; total_tokens: number };
   permissionTimeoutMs?: number;
 }
@@ -15,6 +17,7 @@ export function buildSnapshot(
   extras: SnapshotExtras = {},
 ): RuntimeSnapshot {
   const direct = extras.direct ?? [];
+  const directDirs = extras.directDirs ?? [];
   const directTotals = extras.directTotals ?? {
     input_tokens: 0,
     output_tokens: 0,
@@ -70,6 +73,7 @@ export function buildSnapshot(
     generated_at: Date.now(),
     max_concurrent_agents: state.max_concurrent_agents,
     direct,
+    direct_dirs: directDirs,
     counts: {
       running: running.length,
       retrying: retrying.length,

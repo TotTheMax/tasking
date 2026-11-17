@@ -62,9 +62,7 @@ function parseCatalogEntry(value: unknown): AvailableModelRef | null {
       if (typeof tier !== "object" || tier === null) return false;
       const item = tier as Record<string, unknown>;
       const cache = item.cache as Record<string, unknown> | undefined;
-      return (
-        item.input === 0 && item.output === 0 && cache?.read === 0 && cache?.write === 0
-      );
+      return item.input === 0 && item.output === 0 && cache?.read === 0 && cache?.write === 0;
     });
   }
   return entry;

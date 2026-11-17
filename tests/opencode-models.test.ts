@@ -39,10 +39,14 @@ describe("probeOpencodeModels", () => {
 
   it("falls back to the process cwd when the requested directory does not exist", async () => {
     const seen: string[] = [];
-    const probe = await probeOpencodeModels("opencode", "/definitely/not/a/dir", async (_args, cwd) => {
-      seen.push(cwd);
-      return { stdout: modelDefaultResponse(), stderr: "" };
-    });
+    const probe = await probeOpencodeModels(
+      "opencode",
+      "/definitely/not/a/dir",
+      async (_args, cwd) => {
+        seen.push(cwd);
+        return { stdout: modelDefaultResponse(), stderr: "" };
+      },
+    );
     expect(probe.status).toBe("ok");
     expect(seen).toContain(process.cwd());
   });

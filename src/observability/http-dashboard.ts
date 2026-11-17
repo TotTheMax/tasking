@@ -1,5 +1,9 @@
 import { type Server, createServer } from "node:http";
-import type { OrchestratorRuntimeState, RuntimeDirectSession } from "../shared/types.js";
+import type {
+  OrchestratorRuntimeState,
+  RuntimeDirectDir,
+  RuntimeDirectSession,
+} from "../shared/types.js";
 import type { ActivityStore } from "./activity-store.js";
 import type { ConfigView } from "./config-view.js";
 import type { LogRingBuffer } from "./log-buffer.js";
@@ -16,6 +20,7 @@ export interface HttpDashboardOptions {
   logBuffer?: LogRingBuffer;
   activityStore?: ActivityStore;
   directSessions?: () => RuntimeDirectSession[];
+  directDirs?: () => RuntimeDirectDir[];
   directTotals?: () => { input_tokens: number; output_tokens: number; total_tokens: number };
   permissionTimeoutMs?: () => number | undefined;
   deleteDirectSession?: (rootId: string) => Promise<boolean>;
@@ -32,15 +37,17 @@ function toIso(epoch: number | null): string | null {
 function buildSnapshotResponse(
   state: OrchestratorRuntimeState,
   direct: RuntimeDirectSession[],
+  directDirs: RuntimeDirectDir[],
   directTotals: { input_tokens: number; output_tokens: number; total_tokens: number },
   permissionTimeoutMs?: number,
 ): Record<string, unknown> {
-  const snap = buildSnapshot(state, { direct, directTotals, permissionTimeoutMs });
+  const snap = buildSnapshot(state, { direct, directDirs, directTotals, permissionTimeoutMs });
   return {
     generated_at: isoNow(),
     max_concurrent_agents: snap.max_concurrent_agents,
     counts: snap.counts,
     direct,
+    direct_dirs: directDirs,
     running: snap.running.map((e) => ({
       ...e,
       started_at: toIso(e.started_at),
@@ -144,6 +151,7 @@ export class HttpDashboard {
             buildSnapshotResponse(
               this.opts.state(),
               this.opts.directSessions?.() ?? [],
+              this.opts.directDirs?.() ?? [],
               this.opts.directTotals?.() ?? {
                 input_tokens: 0,
                 output_tokens: 0,

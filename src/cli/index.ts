@@ -554,6 +554,7 @@ async function runStart(args: string[]): Promise<number> {
       });
       await directManager.recover();
       directManager.start();
+      configMgr.onReload(() => directManager?.syncSameDirConcurrencyWarning());
       logger.info("direct session manager ready", {
         projects: Object.keys(configMgr.current.feishu.direct.projects).length,
       });
@@ -625,6 +626,7 @@ async function runStart(args: string[]): Promise<number> {
       logBuffer,
       activityStore,
       directSessions: () => directManager?.listActive() ?? [],
+      directDirs: () => directManager?.listDirectDirs() ?? [],
       directTotals: () =>
         directManager?.aggregateTotals() ?? {
           input_tokens: 0,
@@ -664,6 +666,7 @@ async function runStart(args: string[]): Promise<number> {
       configView,
       activityStore,
       directSessions: () => directManager?.listActive() ?? [],
+      directDirs: () => directManager?.listDirectDirs() ?? [],
       directTotals: () =>
         directManager?.aggregateTotals() ?? {
           input_tokens: 0,

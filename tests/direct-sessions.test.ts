@@ -7,6 +7,7 @@ import type { BindingStore } from "../src/bridge/binding-store.js";
 import { BindingStore as BindingStoreImpl } from "../src/bridge/binding-store.js";
 import type { EffectiveConfig } from "../src/config/config-types.js";
 import { DEFAULTS, type DirectConfig } from "../src/config/config-types.js";
+import { ConfigManager } from "../src/config/manager.js";
 import { resolveConfig } from "../src/config/resolver.js";
 import type { DirectTurnOutcome } from "../src/direct/driver.js";
 import { type DirectFeishuPort, DirectSessionManager } from "../src/direct/manager.js";
@@ -1619,6 +1620,338 @@ describe("DirectSessionManager UX review fixes (TAS-41)", () => {
     } finally {
       rmSync(dirA, { recursive: true, force: true });
     }
+  });
+});
+
+describe("DirectSessionManager per-directory concurrency", () => {
+  function setup(overrides: Partial<DirectConfig> = {}) {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig(overrides),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    return { feishu, runner, mgr };
+  }
+
+  it("runs two turns in the same directory concurrently when the limit is 2", async () => {
+    const { runner, mgr } = setup({ max_concurrent_turns_per_dir: 2 });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pd1", text: "/chat tasking 一" }));
+    await runner.waitForCall(1);
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pd2", text: "/chat tasking 二" }));
+    await runner.waitForCall(2);
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pd3", text: "/chat tasking 三" }));
+    await new Promise((r) => setTimeout(r, 60));
+    expect(runner.calls).toHaveLength(2);
+    runner.finish(0, [textEvent("一答")]);
+    await runner.waitForCall(3);
+    runner.finish(1, [textEvent("二答")]);
+    runner.finish(2, [textEvent("三答")]);
+    await mgr.whenIdle();
+  });
+
+  it("still serializes a directory when the global max_concurrent is stricter", async () => {
+    const { runner, mgr } = setup({ max_concurrent_turns_per_dir: 5, max_concurrent: 1 });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pg1", text: "/chat tasking 一" }));
+    await runner.waitForCall(1);
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pg2", text: "/chat tasking 二" }));
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pg3", text: "/chat tasking 三" }));
+    await new Promise((r) => setTimeout(r, 60));
+    expect(runner.calls).toHaveLength(1);
+    runner.finish(0, [textEvent("一答")]);
+    await runner.waitForCall(2);
+    runner.finish(1, [textEvent("二答")]);
+    await runner.waitForCall(3);
+    runner.finish(2, [textEvent("三答")]);
+    await mgr.whenIdle();
+  });
+
+  it("keeps the directory slot while a turn waits for approval", async () => {
+    const { feishu, runner, mgr } = setup({ verbosity: "detailed" });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_ph1", text: "/chat tasking 一" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.request.onPendingPermissions?.([
+      {
+        id: "per_hold",
+        sessionID: "ses_hold",
+        action: "shell",
+        resources: ["echo hold"],
+        save: ["echo *"],
+      },
+    ]);
+    runner.calls[0]?.request.onWaitingForApproval?.(true);
+    await vi.waitFor(() => expect(mgr.listActive()[0]?.waiting_approval).toBe(true));
+    await mgr.handleIntakeMessage(msg({ message_id: "om_ph2", text: "/chat tasking 二" }));
+    await new Promise((r) => setTimeout(r, 60));
+    expect(runner.calls).toHaveLength(1);
+    expect(feishu.cards.some((c) => c.rootId === "om_ph2")).toBe(true);
+    runner.finish(0, [textEvent("一答")]);
+    await runner.waitForCall(2);
+    runner.finish(1, [textEvent("二答")]);
+    await mgr.whenIdle();
+  });
+
+  it("applies a hot-reloaded limit to later turns without interrupting the running one", async () => {
+    let limit = 1;
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ max_concurrent_turns_per_dir: limit }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pr1", text: "/chat tasking 一" }));
+    await runner.waitForCall(1);
+    limit = 2;
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pr2", text: "/chat tasking 二" }));
+    await runner.waitForCall(2);
+    expect(runner.calls).toHaveLength(2);
+    runner.finish(0, [textEvent("一答")]);
+    runner.finish(1, [textEvent("二答")]);
+    await mgr.whenIdle();
+  });
+
+  it("does not drop a queued turn when the limit is lowered", async () => {
+    let limit = 2;
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ max_concurrent_turns_per_dir: limit }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pd1", text: "/chat tasking 一" }));
+    await runner.waitForCall(1);
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pd2", text: "/chat tasking 二" }));
+    await runner.waitForCall(2);
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pd3", text: "/chat tasking 三" }));
+    await vi.waitFor(() =>
+      expect(mgr.listDirectDirs()).toEqual([
+        { path: projectPath(), active: 2, limit: 2, waiters: 1 },
+      ]),
+    );
+    limit = 1;
+    runner.finish(0, [textEvent("一答")]);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(runner.calls).toHaveLength(2);
+    runner.finish(1, [textEvent("二答")]);
+    await runner.waitForCall(3);
+    runner.finish(2, [textEvent("三答")]);
+    await mgr.whenIdle();
+    expect(mgr.listDirectDirs()).toEqual([]);
+  });
+
+  it("warns when a config reload raises the limit above one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tasking-reload-"));
+    const wf = join(dir, "WORKFLOW.md");
+    const write = (limit: number): void =>
+      writeFileSync(
+        wf,
+        [
+          "---",
+          "tracker:",
+          "  kind: none",
+          "feishu:",
+          "  enabled: true",
+          "  app_id: cli_abc",
+          "  app_secret: sec",
+          "  intake_chat_id: oc_exist",
+          "  direct:",
+          `    max_concurrent_turns_per_dir: ${limit}`,
+          "---",
+          "body",
+          "",
+        ].join("\n"),
+      );
+    try {
+      write(1);
+      const configMgr = ConfigManager.fromFile(wf);
+      const lines: string[] = [];
+      const mgr = new DirectSessionManager({
+        feishu: new FakeFeishu(),
+        store,
+        config: () => configMgr.current,
+        logger: fakeLogger(lines),
+        turnDriver: new FakeRunner().spawn,
+      });
+      configMgr.onReload(() => mgr.syncSameDirConcurrencyWarning());
+      configMgr.reload();
+      expect(lines.filter((l) => l.includes("same-directory turn concurrency"))).toHaveLength(0);
+      write(2);
+      configMgr.reload();
+      expect(lines.filter((l) => l.includes("same-directory turn concurrency"))).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("shows queued only after the per-directory limit is reached", async () => {
+    const { feishu, runner, mgr } = setup({
+      verbosity: "detailed",
+      max_concurrent_turns_per_dir: 2,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pc1", text: "/chat tasking 一" }));
+    await runner.waitForCall(1);
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pc2", text: "/chat tasking 二" }));
+    await runner.waitForCall(2);
+    await vi.waitFor(() => expect(feishu.cards.some((c) => c.rootId === "om_pc2")).toBe(true));
+    const secondCard = feishu.cards.find((c) => c.rootId === "om_pc2");
+    expect(JSON.stringify(secondCard?.card)).not.toContain("排队中");
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pc3", text: "/chat tasking 三" }));
+    await vi.waitFor(() => expect(feishu.cards.some((c) => c.rootId === "om_pc3")).toBe(true));
+    const thirdCard = feishu.cards.find((c) => c.rootId === "om_pc3");
+    expect(JSON.stringify(thirdCard?.card)).toContain("排队中");
+    runner.finish(0, [textEvent("一答")]);
+    await runner.waitForCall(3);
+    runner.finish(1, [textEvent("二答")]);
+    runner.finish(2, [textEvent("三答")]);
+    await mgr.whenIdle();
+  });
+
+  it("reports directory occupancy with active, limit and waiters", async () => {
+    const { runner, mgr } = setup({ max_concurrent_turns_per_dir: 2 });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_po1", text: "/chat tasking 一" }));
+    await runner.waitForCall(1);
+    await mgr.handleIntakeMessage(msg({ message_id: "om_po2", text: "/chat tasking 二" }));
+    await runner.waitForCall(2);
+    await mgr.handleIntakeMessage(msg({ message_id: "om_po3", text: "/chat tasking 三" }));
+    await vi.waitFor(() =>
+      expect(mgr.listDirectDirs()).toEqual([
+        { path: projectPath(), active: 2, limit: 2, waiters: 1 },
+      ]),
+    );
+    runner.finish(0, [textEvent("一答")]);
+    await runner.waitForCall(3);
+    runner.finish(1, [textEvent("二答")]);
+    runner.finish(2, [textEvent("三答")]);
+    await mgr.whenIdle();
+    expect(mgr.listDirectDirs()).toEqual([]);
+  });
+
+  it("counts turns waiting on the global budget as active directory slots", async () => {
+    const { runner, mgr } = setup({ max_concurrent_turns_per_dir: 5, max_concurrent: 1 });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pw1", text: "/chat tasking 一" }));
+    await runner.waitForCall(1);
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pw2", text: "/chat tasking 二" }));
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pw3", text: "/chat tasking 三" }));
+    await vi.waitFor(() =>
+      expect(mgr.listDirectDirs()).toEqual([
+        { path: projectPath(), active: 3, limit: 5, waiters: 0 },
+      ]),
+    );
+    expect(runner.calls).toHaveLength(1);
+    runner.finish(0, [textEvent("一答")]);
+    await runner.waitForCall(2);
+    runner.finish(1, [textEvent("二答")]);
+    await runner.waitForCall(3);
+    runner.finish(2, [textEvent("三答")]);
+    await mgr.whenIdle();
+  });
+
+  it("sorts direct directories by path", async () => {
+    const dirA = mkdtempSync(join(tmpdir(), "tasking-sort-a-"));
+    const dirB = mkdtempSync(join(tmpdir(), "tasking-sort-b-"));
+    try {
+      const { runner, mgr } = setup();
+      await mgr.handleIntakeMessage(msg({ message_id: "om_ps1", text: `/chat ${dirB} B` }));
+      await runner.waitForCall(1);
+      await mgr.handleIntakeMessage(msg({ message_id: "om_ps2", text: `/chat ${dirA} A` }));
+      await runner.waitForCall(2);
+      expect(mgr.listDirectDirs().map((d) => d.path)).toEqual(
+        [realpathSync(dirA), realpathSync(dirB)].sort(),
+      );
+      runner.finish(0, [textEvent("B答")]);
+      runner.finish(1, [textEvent("A答")]);
+      await mgr.whenIdle();
+    } finally {
+      rmSync(dirA, { recursive: true, force: true });
+      rmSync(dirB, { recursive: true, force: true });
+    }
+  });
+
+  it("warns once when same-directory concurrency is enabled, including the auto_approve note", () => {
+    const lines: string[] = [];
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ max_concurrent_turns_per_dir: 2, auto_approve: true }),
+      logger: fakeLogger(lines),
+      turnDriver: runner.spawn,
+    });
+    mgr.start();
+    mgr.stop();
+    const warns = lines.filter((l) => l.includes("same-directory turn concurrency"));
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toContain("auto_approve");
+    expect(warns[0]).toContain('"max_concurrent_turns_per_dir":2');
+  });
+
+  it("does not warn when the per-directory limit is 1", () => {
+    const lines: string[] = [];
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ max_concurrent_turns_per_dir: 1 }),
+      logger: fakeLogger(lines),
+      turnDriver: runner.spawn,
+    });
+    mgr.start();
+    mgr.stop();
+    expect(lines.filter((l) => l.includes("same-directory turn concurrency"))).toHaveLength(0);
+  });
+
+  it("re-arms the warning after the limit falls back to 1 and rises again", () => {
+    let limit = 1;
+    const lines: string[] = [];
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ max_concurrent_turns_per_dir: limit }),
+      logger: fakeLogger(lines),
+      turnDriver: runner.spawn,
+    });
+    mgr.start();
+    limit = 2;
+    mgr.syncSameDirConcurrencyWarning();
+    mgr.syncSameDirConcurrencyWarning();
+    limit = 1;
+    mgr.syncSameDirConcurrencyWarning();
+    limit = 3;
+    mgr.syncSameDirConcurrencyWarning();
+    mgr.stop();
+    expect(lines.filter((l) => l.includes("same-directory turn concurrency"))).toHaveLength(2);
+  });
+
+  it("logs the effective per-directory limit on each turn", async () => {
+    const lines: string[] = [];
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ max_concurrent_turns_per_dir: 2 }),
+      logger: fakeLogger(lines),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_pl1", text: "/chat tasking 一" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("一答")]);
+    await mgr.whenIdle();
+    const start = lines.find((l) => l.includes("direct turn starting"));
+    expect(start).toContain('"max_concurrent_turns_per_dir":2');
   });
 });
 

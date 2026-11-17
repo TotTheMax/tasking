@@ -1660,6 +1660,23 @@ describe("TerminalDashboard direct sessions", () => {
     expect(plain(withDirect.output())).toContain("running");
   });
 
+  it("renders the same overview when direct_dirs is populated", () => {
+    const baseline = makeTui(createInitialState(30000, 10), undefined, () => 160);
+    baseline.tui.forceRender();
+    let output = "";
+    const tui = new TerminalDashboard({
+      state: () => createInitialState(30000, 10),
+      logger,
+      renderFn: (c) => {
+        output = c;
+      },
+      terminalWidth: () => 160,
+      directDirs: () => [{ path: "/repos/a", active: 2, limit: 2, waiters: 1 }],
+    });
+    tui.forceRender();
+    expect(output).toBe(baseline.output());
+  });
+
   it("D deletes the focused direct session after a confirmation press", async () => {
     const deleted: string[] = [];
     let output = "";

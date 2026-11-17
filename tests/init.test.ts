@@ -4320,7 +4320,10 @@ describe("init model selection", () => {
   it("re-searches after an empty match instead of dropping straight to manual input", async () => {
     const dir = tempDir();
     try {
-      const captured: { selectOptions: Array<Array<{ value: string; label: string }>>; asked: string[] } = {
+      const captured: {
+        selectOptions: Array<Array<{ value: string; label: string }>>;
+        asked: string[];
+      } = {
         selectOptions: [],
         asked: [],
       };
@@ -4339,7 +4342,9 @@ describe("init model selection", () => {
       });
       expect(code).toBe(0);
       expect(content()).toContain("可换关键词重搜");
-      expect(captured.asked.filter((q) => q.includes("搜索关键词")).length).toBeGreaterThanOrEqual(2);
+      expect(captured.asked.filter((q) => q.includes("搜索关键词")).length).toBeGreaterThanOrEqual(
+        2,
+      );
       expect(captured.selectOptions[0]?.map((o) => o.value)).toContain(
         "zhipuai-coding-plan/glm-5.3",
       );
@@ -4351,7 +4356,10 @@ describe("init model selection", () => {
   it("still offers follow-the-default when the catalog leg failed but a default resolved", async () => {
     const dir = tempDir();
     try {
-      const captured: { selectOptions: Array<Array<{ value: string; label: string }>>; asked: string[] } = {
+      const captured: {
+        selectOptions: Array<Array<{ value: string; label: string }>>;
+        asked: string[];
+      } = {
         selectOptions: [],
         asked: [],
       };

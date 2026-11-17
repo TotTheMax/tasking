@@ -25,7 +25,7 @@ import type { ActivityEvent } from "../observability/activity-store.js";
 import type { Logger } from "../observability/logger.js";
 import { TaskingError, toTaskingError } from "../shared/errors.js";
 import { redactSecrets } from "../shared/redact.js";
-import type { RuntimeDirectSession } from "../shared/types.js";
+import type { RuntimeDirectDir, RuntimeDirectSession } from "../shared/types.js";
 import {
   CARD_BUDGET_BYTES,
   type TurnCardPhase,
@@ -169,6 +169,11 @@ function approvalCardResolution(
   return { state: state as "expired" | "cancelled" | "external" };
 }
 
+interface DirSlot {
+  active: number;
+  waiters: Array<() => void>;
+}
+
 export class DirectSessionManager {
   private readonly deps: DirectManagerDeps;
   private readonly runtime = new Map<string, SessionRuntime>();
@@ -183,9 +188,10 @@ export class DirectSessionManager {
     { messageId: string; rootId: string; request: ApprovalRequest }
   >();
   private readonly approvals: ApprovalCoordinator;
-  private readonly dirSlots = new Map<string, { busy: boolean; waiters: Array<() => void> }>();
+  private readonly dirSlots = new Map<string, DirSlot>();
   private running = false;
   private halted = false;
+  private sameDirWarned = false;
   private ttlTimer: NodeJS.Timeout | null = null;
   private activeTurns = 0;
   private readonly waiters: Array<() => void> = [];
@@ -218,8 +224,27 @@ export class DirectSessionManager {
     if (this.running) return;
     this.running = true;
     this.halted = false;
+    this.syncSameDirConcurrencyWarning();
     this.ttlTimer = setInterval(() => this.expireIdle(), TTL_SWEEP_INTERVAL_MS);
     this.ttlTimer.unref?.();
+  }
+
+  syncSameDirConcurrencyWarning(): void {
+    const config = this.deps.config();
+    const limit = this.dirConcurrencyLimit();
+    if (limit <= 1) {
+      this.sameDirWarned = false;
+      return;
+    }
+    if (this.sameDirWarned) return;
+    this.sameDirWarned = true;
+    const autoNote = config.feishu.direct.auto_approve
+      ? " auto_approve is on: concurrent turns can write files without prompting."
+      : "";
+    this.deps.logger.warn(
+      `same-directory turn concurrency enabled; concurrent turns share one working tree and may race on files or git.${autoNote}`,
+      { max_concurrent_turns_per_dir: limit },
+    );
   }
 
   stop(): void {
@@ -1162,6 +1187,19 @@ export class DirectSessionManager {
     }
   }
 
+  listDirectDirs(): RuntimeDirectDir[] {
+    const limit = this.dirConcurrencyLimit();
+    return [...this.dirSlots.entries()]
+      .filter(([, slot]) => slot.active > 0 || slot.waiters.length > 0)
+      .map(([path, slot]) => ({
+        path,
+        active: slot.active,
+        limit,
+        waiters: slot.waiters.length,
+      }))
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  }
+
   listActive(): RuntimeDirectSession[] {
     const sessions = this.deps.store.listActiveDirectSessions();
     const config = this.deps.config();
@@ -1403,7 +1441,8 @@ export class DirectSessionManager {
         if (this.halted || rt.stopRequested) break;
         await this.sealTurnCard(rt);
         const max = this.deps.config().feishu.direct.max_concurrent;
-        const busy = this.activeTurns >= max || this.dirSlotFor(session.path).busy;
+        const busy =
+          this.activeTurns >= max || this.dirActiveFor(session.path) >= this.dirConcurrencyLimit();
         await this.startTurnCard(session, rt, busy, retriedFrom);
         if (busy && !this.cardsLive(rt)) {
           await this.replySafe(
@@ -1869,6 +1908,7 @@ export class DirectSessionManager {
       switch_agent: switchAgent,
       switch_model: switchModel,
       poll_interval_ms: config.opencode.poll_interval_ms,
+      max_concurrent_turns_per_dir: this.dirConcurrencyLimit(),
       tasking_version: readTaskingVersion(),
       command: describeApiCommand({
         command: config.opencode.command,
@@ -2103,32 +2143,41 @@ export class DirectSessionManager {
     });
   }
 
-  private dirSlotFor(dir: string): { busy: boolean; waiters: Array<() => void> } {
+  private dirConcurrencyLimit(): number {
+    return Math.max(1, Math.floor(this.deps.config().feishu.direct.max_concurrent_turns_per_dir));
+  }
+
+  private dirActiveFor(dir: string): number {
+    return this.dirSlots.get(dir)?.active ?? 0;
+  }
+
+  private ensureDirSlot(dir: string): DirSlot {
     let s = this.dirSlots.get(dir);
     if (!s) {
-      s = { busy: false, waiters: [] };
+      s = { active: 0, waiters: [] };
       this.dirSlots.set(dir, s);
     }
     return s;
   }
 
   private async acquireDir(dir: string): Promise<void> {
-    const s = this.dirSlotFor(dir);
-    if (!s.busy) {
-      s.busy = true;
+    const s = this.ensureDirSlot(dir);
+    if (s.active < this.dirConcurrencyLimit()) {
+      s.active++;
       return;
     }
     await new Promise<void>((resolve) => s.waiters.push(resolve));
   }
 
   private releaseDir(dir: string): void {
-    const s = this.dirSlotFor(dir);
-    const next = s.waiters.shift();
-    if (next) {
-      next();
+    const s = this.ensureDirSlot(dir);
+    const limit = this.dirConcurrencyLimit();
+    if (s.waiters.length > 0 && s.active > 0 && s.active <= limit) {
+      s.waiters.shift()?.();
       return;
     }
-    s.busy = false;
+    s.active = Math.max(0, s.active - 1);
+    if (s.active === 0 && s.waiters.length === 0) this.dirSlots.delete(dir);
   }
 
   private async composePromptWithAttachments(

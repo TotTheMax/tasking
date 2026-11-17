@@ -120,12 +120,16 @@ describe("english workflow templates (TAS-19)", () => {
       it("shipped feishu.direct block parses to a valid empty config", () => {
         for (const file of [pair.zh, pair.en]) {
           const def = parseWorkflowContent(readFileSync(join(ROOT, file), "utf8"), file);
+          const rawFeishu = (def.config.feishu as Record<string, unknown> | undefined) ?? {};
+          const rawDirect = (rawFeishu.direct as Record<string, unknown> | undefined) ?? {};
+          expect(rawDirect.max_concurrent_turns_per_dir).toBe(1);
           const cfg = resolveConfig(def.config, ROOT, def.prompt_template);
           expect(cfg.feishu.direct.enabled).toBe(true);
           expect(cfg.feishu.direct.projects).toEqual({});
           expect(cfg.feishu.direct.path_roots).toEqual([]);
           expect(cfg.feishu.direct.verbosity).toBe("detailed");
           expect(cfg.feishu.direct.max_concurrent).toBe(5);
+          expect(cfg.feishu.direct.max_concurrent_turns_per_dir).toBe(1);
           expect(cfg.feishu.direct.idle_ttl_ms).toBe(2592000000);
         }
       });

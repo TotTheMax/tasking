@@ -13,10 +13,10 @@ import { JiraTracker } from "../adapters/jira/tracker.js";
 import type { FeishuConfig, TrackerConfig } from "../config/config-types.js";
 import { loadDotenvIfPresent } from "../config/dotenv.js";
 import { ConfigManager } from "../config/manager.js";
-import { getMcpServerScriptPath } from "../mcp/inject.js";
 import type { OpencodeModelsProbe } from "../driver/opencode-models.js";
-import { formatResolvedModel } from "../driver/session-ops.js";
 import { probeOpencodeModels } from "../driver/opencode-models.js";
+import { formatResolvedModel } from "../driver/session-ops.js";
+import { getMcpServerScriptPath } from "../mcp/inject.js";
 import {
   type OpencodeAuthProbe,
   type OpencodeServiceProbe,
@@ -293,8 +293,7 @@ export async function runDoctor(
       if (modelTarget !== undefined) {
         const target = modelTarget;
         const probe = await (
-          deps.opencodeModels ??
-          (() => probeOpencodeModels(target.command, target.root ?? cwd))
+          deps.opencodeModels ?? (() => probeOpencodeModels(target.command, target.root ?? cwd))
         )();
         items.push(modelResolutionItem(target.configured, probe, target.command));
       }

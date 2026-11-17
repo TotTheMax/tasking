@@ -108,6 +108,13 @@ export interface OrchestratorRuntimeState {
   totals: AggregateTotals;
 }
 
+export interface RuntimeDirectDir {
+  path: string;
+  active: number;
+  limit: number;
+  waiters: number;
+}
+
 export interface RuntimeDirectSession {
   id: string;
   root_id: string;
@@ -133,6 +140,7 @@ export interface RuntimeSnapshot {
   generated_at: number;
   max_concurrent_agents: number;
   direct?: RuntimeDirectSession[];
+  direct_dirs: RuntimeDirectDir[];
   counts: {
     running: number;
     retrying: number;

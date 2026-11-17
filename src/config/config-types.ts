@@ -74,6 +74,7 @@ export interface DirectConfig {
   auto_approve: boolean;
   verbosity: DirectVerbosity;
   max_concurrent: number;
+  max_concurrent_turns_per_dir: number;
   idle_ttl_ms: number;
 }
 
@@ -185,6 +186,7 @@ export const DEFAULTS = {
       auto_approve: false,
       verbosity: "detailed" as DirectVerbosity,
       max_concurrent: 5,
+      max_concurrent_turns_per_dir: 1,
       idle_ttl_ms: 30 * 24 * 60 * 60 * 1000,
     },
   },

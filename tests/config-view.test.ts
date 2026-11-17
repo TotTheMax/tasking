@@ -71,6 +71,20 @@ describe("serializeConfig", () => {
     expect(lark.api_base).toBe("https://open.larksuite.com");
   });
 
+  it("surfaces feishu.direct.max_concurrent_turns_per_dir", () => {
+    const config = makeConfig();
+    const defaults = serializeConfig(config).feishu as Record<string, unknown>;
+    expect((defaults.direct as Record<string, unknown>).max_concurrent_turns_per_dir).toBe(1);
+    const overridden = serializeConfig({
+      ...config,
+      feishu: {
+        ...config.feishu,
+        direct: { ...config.feishu.direct, max_concurrent_turns_per_dir: 2 },
+      },
+    }).feishu as Record<string, unknown>;
+    expect((overridden.direct as Record<string, unknown>).max_concurrent_turns_per_dir).toBe(2);
+  });
+
   it("masks all env values", () => {
     const serialized = serializeConfig(makeConfig());
     const env = serialized.env as Record<string, unknown>;

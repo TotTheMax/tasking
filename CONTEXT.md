@@ -219,6 +219,10 @@ _Avoid_: Chat session, direct chat, free session
 An existing, user-owned directory — a config-mapped project or an explicitly given path — where a direct session runs; tasking never creates, clones, or removes it.
 _Avoid_: Static workspace, target workspace, project dir
 
+**Per-directory turn limit (目录并发上限)**:
+The maximum number of direct-session turns allowed to occupy one fixed directory at the same time; the default of one serializes that directory.
+_Avoid_: Directory lock, parallel chat, same-dir parallelism
+
 **Chat command (/chat)**:
 The intake-group root command that starts a direct session by project name or absolute path; all follow-ups happen inside the created thread, never in the group.
 _Avoid_: Run command, spawn command

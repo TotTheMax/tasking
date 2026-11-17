@@ -69,7 +69,9 @@ describe("resolved model read-back", () => {
   });
 
   it("tolerates a missing model field", async () => {
-    const { exec } = recorder([sessionGetResponse({ id: "ses_1", outcome: "succeeded", model: undefined })]);
+    const { exec } = recorder([
+      sessionGetResponse({ id: "ses_1", outcome: "succeeded", model: undefined }),
+    ]);
     const session = await getSession(exec, base, "ses_1");
     expect(session.model).toBeUndefined();
   });

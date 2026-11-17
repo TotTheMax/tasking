@@ -240,8 +240,13 @@ feishu:
     # How much is mirrored to Feishu: quiet (final reply only) | summary (reply + stats line) | detailed (default; one process card per turn; collapsible panels need Feishu/Lark client >= V7.9).
     verbosity: detailed
 
-    # Daemon-wide cap on concurrent direct turns (independent of Jira's max_concurrent_agents); per directory/session is always serial.
+    # Daemon-wide cap on concurrent direct turns (independent of Jira's max_concurrent_agents); turns within one session are always serial.
     max_concurrent: 5
+
+    # Maximum turns allowed to occupy one directory at once. 1 = serialized (default, safe);
+    # 2+ explicitly opts into same-directory parallelism and the user assumes the shared-worktree race risk.
+    # Also bounded by max_concurrent above (the stricter limit wins).
+    max_concurrent_turns_per_dir: 1
 
     # Idle time before a session is marked expired (ms; it does not delete the opencode session on disk). Default 2592000000 = 30 days.
     idle_ttl_ms: 2592000000

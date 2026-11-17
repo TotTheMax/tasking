@@ -1,5 +1,6 @@
 import type {
   OrchestratorRuntimeState,
+  RuntimeDirectDir,
   RuntimeDirectSession,
   RuntimeSnapshot,
 } from "../shared/types.js";
@@ -89,6 +90,7 @@ export interface TerminalDashboardOptions {
   fetchActivity?: (taskId: string) => Promise<ActivityEvent[]>;
   deleteDirectSession?: (rootId: string) => Promise<boolean>;
   directSessions?: () => RuntimeDirectSession[];
+  directDirs?: () => RuntimeDirectDir[];
   directTotals?: () => { input_tokens: number; output_tokens: number; total_tokens: number };
   permissionTimeoutMs?: () => number | undefined;
   terminalWidth?: () => number;
@@ -786,6 +788,7 @@ export class TerminalDashboard {
   private snapshotExtras(): SnapshotExtras {
     return {
       direct: this.opts.directSessions?.() ?? [],
+      directDirs: this.opts.directDirs?.() ?? [],
       directTotals: this.opts.directTotals?.(),
       permissionTimeoutMs: this.opts.permissionTimeoutMs?.(),
     };
@@ -1746,6 +1749,7 @@ export class TerminalDashboard {
       running: [],
       retrying: [],
       direct: [],
+      direct_dirs: [],
       totals: { input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0 },
     };
   }

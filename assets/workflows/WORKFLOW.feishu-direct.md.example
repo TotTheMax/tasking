@@ -223,8 +223,12 @@ feishu:
     # 镜像到飞书的事件量级：quiet（仅最终正文）| summary（正文 + 统计行）| detailed（默认，每 turn 一张过程卡片；折叠面板需飞书/Lark 客户端 >= V7.9）。
     verbosity: detailed
 
-    # 直连 turn 的全局并发上限（独立于 Jira 的 max_concurrent_agents）；同目录/同会话始终串行。
+    # 直连 turn 的全局并发上限（独立于 Jira 的 max_concurrent_agents）；同会话始终串行。
     max_concurrent: 5
+
+    # 同一目录可同时执行的 turn 数。1 = 串行（默认，安全）；2+ = 显式放开同目录并行，
+    # 需自行承担共享工作树的文件/git 竞态风险。仍受上面的 max_concurrent 限制（取更严者）。
+    max_concurrent_turns_per_dir: 1
 
     # 空闲多久后把会话标记为 expired（毫秒，不删除 opencode 磁盘 session）。默认 2592000000 = 30 天。
     idle_ttl_ms: 2592000000
