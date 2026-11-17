@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.7.1
+
+### Added
+
+- Direct sessions can opt into same-directory concurrency via
+  `feishu.direct.max_concurrent_turns_per_dir` (integer >=1, default `1`).
+  `1` keeps the existing serialized behavior; `2+` lets several turns occupy
+  one directory at once, and the operator owns the shared-worktree race risk.
+  The global `max_concurrent` cap still wins, approval waits keep their slot,
+  and startup/hot-reload raise a WARN when the limit is above one.
+- `/api/v1/state` now exposes `direct_dirs` (`path`, `active`, `limit`,
+  `waiters`) so directory occupancy is observable; idle directories are pruned.
+- Resolved model observability: `session.create`/`session.get` results carry the
+  server-resolved model into turn logs, scheduler events, the TUI, and the
+  session sidecar; adjacent turns that drift raise a WARN. `tasking doctor`
+  gains a model-resolution check (configured validation / unconfigured warning
+  with the actual value / unreachable info degrade).
+- Interactive `tasking init` model picker (subsequence search, top-20 by
+  release, free tags, manual fallback, 15s probe degrade) plus a `--model`
+  pre-answer flag; `--update` never touches an existing `opencode.model`.
+- The eight shipped WORKFLOW templates now document `auto_approve`,
+  `poll_interval_ms`, and `server_url` in the `opencode` block.
+
+### Fixed
+
+- The doctor model probe falls back to `process.cwd()` when the configured
+  workspace root does not exist yet, avoiding spawn `ENOENT` on a fresh setup.
+- Same-directory concurrency keeps queued turns when the limit is lowered
+  (the counted semaphore hands slots off without dropping waiters).
+
 ## 0.7.0
 
 opencode v2 baseline. tasking 0.7 drives every turn through the `opencode api`
