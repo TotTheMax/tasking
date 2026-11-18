@@ -37,3 +37,4 @@
 - [x] 5.4 `npm run test:e2e`（通过）；`npm run test:integration` 已执行但 2 个真实 agent 用例在 `TURN_WAIT_MS` 内未完成（均为 `verbosity: summary`，不经过本次改动的卡片路径；记录为环境/真实服务超时，非本 change 回归）
 - [ ] 5.5 真机冒烟（final-only，非阻塞）：真实直连会话跑一个跨 24KB 的长轮次，确认文本/工具交错、自动切段、旧段 footer 与无按钮、新段 `片段 N`、`📄` 只在最后一张（本地无真机，待验收环境执行）
 - [x] 5.6 `openspec validate segment-turn-cards` 并核对 spec delta 覆盖：交错渲染、分段触发与算法、footer/头部、活跃段按钮与守卫、可重试业务码、无段数上限、非目标清单
+- [x] 5.7 真实飞书 turn-card smoke（全自动）：新增 `tests/integration-turn-card.test.ts` + `npm run test:turn-card-smoke`，向真实测试群发送交错卡、近 24KB 更新、续段卡并断言均被接受、线程内至少两张 interactive 消息，finally 删除全部消息；已实跑通过（4.7s）

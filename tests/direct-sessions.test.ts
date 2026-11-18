@@ -2680,6 +2680,66 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     expect(text).toContain("因体积过大未包含");
     expect(text).toContain("new-tool");
   });
+
+  it("seals the last segment card when the next turn starts", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_life1", text: "/chat tasking 第一轮" }));
+    await runner.waitForCall(1);
+    const output = "y".repeat(1500);
+    for (let i = 0; i < 30; i++) {
+      runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
+    }
+    runner.finish(0, [textEvent("第一答")]);
+    await mgr.whenIdle();
+    const lastSegment = feishu.cards
+      .filter((c) => JSON.stringify(c.card).includes("**Turn 1**"))
+      .at(-1);
+    expect(lastSegment).toBeDefined();
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_life2", root_id: "om_life1", text: "继续", create_time: "1700000100" }),
+    );
+    await runner.waitForCall(2);
+    const seals = feishu.updates
+      .filter((u) => u.messageId === lastSegment?.messageId)
+      .map((u) => JSON.stringify(u.card));
+    expect(seals.some((c) => c.includes("该轮已结束"))).toBe(true);
+    expect(seals.at(-1)).not.toContain('"tag":"button"');
+    runner.finish(1, [textEvent("第二答")]);
+    await mgr.whenIdle();
+  });
+
+  it("falls back to the persisted latest card id for actions after a restart", async () => {
+    store.upsertDirectSession({
+      root_id: "om_rs1",
+      chat_id: "oc_chat",
+      project: "tasking",
+      name: "会话",
+      path: workdir,
+      session_id: null,
+      status: "idle",
+    });
+    store.updateDirectSession("om_rs1", { card_message_id: "om_card_latest" });
+    const feishu = new FakeFeishu();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+    });
+    const base = { chatId: "oc_chat", operatorOpenId: "ou_op", operatorName: "张三" };
+    const ok = await mgr.handleCardAction({
+      ...base,
+      messageId: "om_card_latest",
+      value: { action: "full", root_id: "om_rs1" },
+    });
+    expect(ok?.toast.content).toContain("正在整理完整输出");
+    const stale = await mgr.handleCardAction({
+      ...base,
+      messageId: "om_card_old",
+      value: { action: "full", root_id: "om_rs1" },
+    });
+    expect(stale?.toast.content).toBe("该片段已结束");
+  });
 });
 
 describe("DirectSessionManager turn card actions", () => {

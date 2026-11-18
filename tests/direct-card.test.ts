@@ -11,6 +11,7 @@ import {
   toolSummary,
 } from "../src/direct/card.js";
 import { mapContentEntry } from "../src/driver/turn-driver.js";
+import { setLocale } from "../src/translate/locale.js";
 import { capturedToolEntry } from "./helpers/opencode-fixtures.js";
 
 interface CardElement {
@@ -101,6 +102,19 @@ describe("buildTurnCard structure", () => {
   it("marks continuation segments in the header", () => {
     expect(asCard(buildTurnCard(state({ segment: 1 }))).header.title.content).not.toContain("片段");
     expect(asCard(buildTurnCard(state({ segment: 2 }))).header.title.content).toContain("片段 2");
+  });
+
+  it("renders segment wording in English", () => {
+    setLocale("en");
+    try {
+      const card = asCard(buildTurnCard(state({ segment: 2, sealed: true, continued: true })));
+      expect(card.header.title.content).toContain("segment 2");
+      expect(card.body.elements.at(-1)?.content).toBe(
+        "— Segment ended; continues in the next card —",
+      );
+    } finally {
+      setLocale("zh");
+    }
   });
 });
 

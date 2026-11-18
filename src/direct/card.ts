@@ -239,7 +239,7 @@ function renderFooter(state: TurnCardState): Array<Record<string, unknown>> {
       state.phase === "expired"
         ? "— 会话已过期 —"
         : state.continued
-          ? "— 本段结束，续见下一条卡片 —"
+          ? translate("— 本段结束，续见下一条卡片 —")
           : translate(
               `— 该轮已结束 · ${state.durationSec}s · ≈${formatTokens(state.turnTokens)} —`,
             );

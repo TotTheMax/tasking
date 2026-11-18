@@ -8,7 +8,9 @@ import {
   validateFeishuConfig,
 } from "../src/adapters/feishu/source.js";
 import type { FeishuConfig } from "../src/config/config-types.js";
+import { buildTurnCard, cardPayloadBytes } from "../src/direct/card.js";
 import { ConsoleLogger } from "../src/observability/logger.js";
+import { cardMessageBody } from "../src/shared/card-payload.js";
 import { TaskingError } from "../src/shared/errors.js";
 import { setLocale } from "../src/translate/locale.js";
 
@@ -209,6 +211,34 @@ describe("FeishuSource.replyCardFlat", () => {
     await expect(src.replyCardFlat("om_root1", { schema: "2.0" })).rejects.toMatchObject({
       category: "feishu_api_status",
     });
+  });
+});
+
+describe("FeishuSource.updateCard payload", () => {
+  it("sends exactly the body the card budget measures", async () => {
+    let raw = "";
+    const fetchImpl = tokenFetch((_url, init) => {
+      raw = String(init.body ?? "");
+      return new Response(JSON.stringify({ code: 0 }), { status: 200 });
+    });
+    const src = new FeishuSource(makeConfig(), logger, fetchImpl);
+    const card = buildTurnCard({
+      rootId: "om_root1",
+      sessionName: "s",
+      sessionStatus: "running",
+      turns: 1,
+      totalTokens: 0,
+      queued: 0,
+      turn: 1,
+      phase: "running",
+      toolCalls: 0,
+      durationSec: 0,
+      turnTokens: 0,
+      events: [{ kind: "text", text: "hello" }],
+    });
+    await src.updateCard("om_card1", card);
+    expect(raw).toBe(cardMessageBody(card));
+    expect(Buffer.byteLength(raw, "utf8")).toBe(cardPayloadBytes(card));
   });
 });
 
