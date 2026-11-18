@@ -7,8 +7,10 @@ import { JiraTracker } from "../src/adapters/jira/tracker.js";
 import { type Binding, BindingStore } from "../src/bridge/binding-store.js";
 import { CommentBridge } from "../src/bridge/comment-bridge.js";
 import { buildApprovalCard, buildTurnCard } from "../src/direct/card.js";
+import type { DirectTurnOutcome, DirectTurnRequest } from "../src/direct/driver.js";
 import { DirectSessionManager } from "../src/direct/manager.js";
 import { ApprovalCoordinator } from "../src/driver/approval.js";
+import type { TurnDriverEvent } from "../src/driver/turn-driver.js";
 import { ConsoleLogger } from "../src/observability/logger.js";
 import { buildInfoCard } from "../src/shared/info-card.js";
 import { setLocale } from "../src/translate/locale.js";
@@ -404,6 +406,7 @@ describe("direct round-trip guard", () => {
   let manager: DirectSessionManager;
   let harness: ReturnType<typeof startRoundTrip>;
   let config: ReturnType<typeof makeRoundTripConfig>;
+  let turnDriver: ((request: DirectTurnRequest) => Promise<DirectTurnOutcome>) | null = null;
 
   const threadMsg = (text: string, n: number) =>
     ({
@@ -438,8 +441,7 @@ describe("direct round-trip guard", () => {
       toolCalls: 0,
       durationSec: 1,
       turnTokens: 0,
-      texts: [],
-      tools: [],
+      events: [],
     });
 
   beforeEach(() => {
@@ -447,6 +449,7 @@ describe("direct round-trip guard", () => {
     store = new BindingStore(join(root, "b.db"));
     config = makeRoundTripConfig(undefined, true);
     rec = createRoundTripRecorder();
+    turnDriver = null;
     const feishu = new FeishuSource(config.feishu, logger, rec.fetchImpl);
     store.upsertDirectSession({
       root_id: "om_d1",
@@ -457,7 +460,16 @@ describe("direct round-trip guard", () => {
       session_id: null,
       status: "idle",
     });
-    manager = new DirectSessionManager({ feishu, store, config: () => config, logger });
+    manager = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => config,
+      logger,
+      turnDriver: (request) => {
+        if (turnDriver === null) throw new Error("unexpected turn");
+        return turnDriver(request);
+      },
+    });
     const dummyBridge = new CommentBridge({
       tracker: trackerFor(),
       feishu,
@@ -532,6 +544,44 @@ describe("direct round-trip guard", () => {
     const stopped = await dispatch("om_turn", stopBtn?.value ?? {});
     expect(stopped.toast.content).toBe("该轮已结束");
   });
+
+  it("rejects a stop from an older segment card through the real event channel", async () => {
+    let emit: ((evt: TurnDriverEvent) => void) | null = null;
+    let resolveTurn: ((outcome: DirectTurnOutcome) => void) | null = null;
+    let started: (() => void) | null = null;
+    const startedPromise = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    turnDriver = (request) =>
+      new Promise<DirectTurnOutcome>((resolve) => {
+        emit = request.onEvent ?? null;
+        resolveTurn = resolve;
+        started?.();
+      });
+    await manager.handleThreadMessage(threadMsg("干活", 2) as never);
+    await startedPromise;
+    const output = "y".repeat(1500);
+    for (let i = 0; i < 30; i++) {
+      emit?.({ type: "tool_use", tool: "bash", title: `tool-${i}`, status: "completed", output });
+    }
+    resolveTurn?.({
+      status: "succeeded",
+      sessionId: "ses_rt",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      error: null,
+      postureOpened: false,
+    });
+    await manager.whenIdle();
+    const segmentCards = rec.cards.filter((c) => JSON.stringify(c.card).includes("**Turn 1**"));
+    expect(segmentCards.length).toBeGreaterThanOrEqual(2);
+    const staleStop = extractButtons(segmentCards[0]?.card).find((b) => b.action === "stop");
+    expect(staleStop).toBeDefined();
+    const reply = await dispatch("om_r0", staleStop?.value ?? {});
+    expect(reply.toast.content).toBe("该片段已结束");
+    const again = await dispatch("om_r0", staleStop?.value ?? {});
+    expect(again.toast.content).toBe("该操作已处理");
+    expect(store.getDirectSession("om_d1")?.status).not.toBe("interrupted");
+  });
 });
 
 describe("turn card waiting marker", () => {
@@ -548,8 +598,7 @@ describe("turn card waiting marker", () => {
       toolCalls: 0,
       durationSec: 0,
       turnTokens: 0,
-      texts: [],
-      tools: [],
+      events: [],
       waitingRemainingMs: 12 * 60_000,
     }) as { header?: { title?: { content?: string } } };
     expect(card.header?.title?.content ?? "").toContain("等待审批");
@@ -569,8 +618,7 @@ describe("turn card waiting marker", () => {
       toolCalls: 0,
       durationSec: 0,
       turnTokens: 0,
-      texts: [],
-      tools: [],
+      events: [],
     }) as { header?: { title?: { content?: string } } };
     expect(card.header?.title?.content ?? "").not.toContain("等待审批");
   });
@@ -589,8 +637,7 @@ describe("turn card waiting marker", () => {
       toolCalls: 0,
       durationSec: 0,
       turnTokens: 0,
-      texts: [],
-      tools: [],
+      events: [],
     }) as { header?: { title?: { content?: string } } };
     const header = card.header?.title?.content ?? "";
     expect(header).toContain("≈259.5k");
@@ -610,8 +657,7 @@ describe("turn card waiting marker", () => {
       toolCalls: 0,
       durationSec: 0,
       turnTokens: 0,
-      texts: [],
-      tools: [],
+      events: [],
     }) as { header?: { title?: { content?: string } } };
     expect(card.header?.title?.content ?? "").not.toContain("ctx");
   });

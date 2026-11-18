@@ -99,3 +99,9 @@ Accessing the Lark international API (open.larksuite.com) from mainland networks
 
 ### No retry on card creation (deferred enhancement)
 Card **creation** (`replyCardInThread` — the result card and turn card) does not yet use the delayed retry: a transient 5xx falls straight through to text delivery (no content loss, only the card's markdown look). Card **updates** (`updateCard`) already have retryable classification + delayed retry. Add this only if real usage reports "route is fine overall but result cards occasionally lost" (true transient blips); on a chronically degraded route retry would only delay the answer.
+
+### More than 5 tables in one card fails the whole card
+A Feishu card allows at most 5 table components. If one card accumulates more than 5 markdown tables from assistant text, the update is rejected (`11310 table number over limit`), the rest of that turn degrades to coalesced text, and the next turn recovers. tasking does not rewrite tables before rendering — a known limitation, not data loss; the full text remains available in the TUI activity view and via `📄 Full output`.
+
+### A crash between creating a segment card and persisting it can leave an orphan card with buttons
+Segment boundaries live only in memory; `direct_sessions.card_message_id` stores just the latest segment. If the daemon crashes after creating a new segment card but before updating the row, restart recovery seals only the card recorded in the database, leaving that orphan card with live buttons. Clicking it goes through the active-segment guard: `⏹ Interrupt` / `🔁 Retry` / `📄 Full output` only return "This segment already ended" and change nothing, `🛑 End` still needs two-step confirmation, and `🔐 Permission` still toggles the session posture.

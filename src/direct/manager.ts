@@ -28,6 +28,7 @@ import { redactSecrets } from "../shared/redact.js";
 import type { RuntimeDirectDir, RuntimeDirectSession } from "../shared/types.js";
 import {
   CARD_BUDGET_BYTES,
+  type TurnCardEvent,
   type TurnCardPhase,
   type TurnCardSessionStatus,
   type TurnCardState,
@@ -36,6 +37,8 @@ import {
   buildCompletionCard,
   buildInfoCard,
   buildTurnCard,
+  cardFits,
+  cardPayloadBytes,
   formatTokens,
   isFailed,
   toolSummary,
@@ -116,6 +119,7 @@ interface SessionRuntime {
   turn: TurnCardState | null;
   turnStartedAt: number;
   flushedTools: number;
+  toolPanels: TurnCardToolEvent[];
   autoOnce: boolean;
   turnUsedOnce: boolean;
   postureOpen: boolean;
@@ -342,6 +346,14 @@ export class DirectSessionManager {
     }
     if (turn !== null && turn !== currentTurn) {
       return { toast: { type: "info", content: "该轮已结束" } };
+    }
+    const activeCardId = rt.cardId ?? session.card_message_id;
+    if (
+      (name === "stop" || name === "retry" || name === "full") &&
+      activeCardId !== null &&
+      action.messageId !== activeCardId
+    ) {
+      return { toast: { type: "info", content: translate("该片段已结束") } };
     }
     if (name === "stop") {
       if (!rt.turnInFlight || !rt.abort) {
@@ -1171,8 +1183,7 @@ export class DirectSessionManager {
       toolCalls: 0,
       durationSec: 0,
       turnTokens: 0,
-      texts: note === "" ? [] : [note],
-      tools: [],
+      events: note === "" ? [] : [{ kind: "text", text: note }],
     };
     if (hideFullDetail) state.hideFullDetail = true;
     if (sealed) state.sealed = true;
@@ -1377,6 +1388,7 @@ export class DirectSessionManager {
         turn: null,
         turnStartedAt: 0,
         flushedTools: 0,
+        toolPanels: [],
         autoOnce: false,
         turnUsedOnce: false,
         postureOpen: false,
@@ -1485,9 +1497,9 @@ export class DirectSessionManager {
     const fresh = this.deps.store.getDirectSession(session.root_id) ?? session;
     await rt.flushPromise?.catch(() => {});
     const prev = rt.turn;
-    if (prev !== null && prev.tools.length > rt.flushedTools) {
-      const pending = prev.tools.slice(rt.flushedTools);
-      rt.flushedTools = prev.tools.length;
+    if (prev !== null && rt.toolPanels.length > rt.flushedTools) {
+      const pending = rt.toolPanels.slice(rt.flushedTools);
+      rt.flushedTools = rt.toolPanels.length;
       await this.replySafe(prev.rootId, truncate(toolTextLines(pending), 2000));
     }
     const state: TurnCardState = {
@@ -1503,14 +1515,15 @@ export class DirectSessionManager {
       toolCalls: 0,
       durationSec: 0,
       turnTokens: 0,
-      texts: [],
-      tools: [],
+      events: [],
+      segment: 1,
     };
     if (retryFromTurn !== undefined) state.retryFromTurn = retryFromTurn;
     rt.turn = state;
     rt.turnUsedOnce = false;
     rt.turnStartedAt = 0;
     rt.flushedTools = 0;
+    rt.toolPanels = [];
     rt.waitingApproval = false;
     rt.waitingSince = null;
     rt.fullDetail = [];
@@ -1545,8 +1558,8 @@ export class DirectSessionManager {
     const updateCard = this.deps.feishu.updateCard;
     const cardId = rt.cardId;
     const turn = rt.turn;
-    const renderedTools = turn.tools.length;
     const sealed: TurnCardState = { ...rt.turn, sealed: true };
+    const renderedTools = rt.toolPanels.length;
     rt.cardId = null;
     if (!updateCard) return;
     try {
@@ -1645,12 +1658,21 @@ export class DirectSessionManager {
     }
     const updateCard = this.deps.feishu.updateCard;
     if (rt.cardsAvailable && rt.cardId !== null && updateCard) {
-      const renderedTools = turn.tools.length;
+      if (!cardFits(turn) && turn.events.length > 1) {
+        const split = await this.splitTurnCard(rt);
+        if (split) {
+          if (rt.cardsAvailable) return;
+          await this.sendToolFallback(rootId, rt);
+          return;
+        }
+      }
+      const renderedTools = rt.toolPanels.length;
+      const renderedCard = buildTurnCard(turn);
       const applySuccess = (): void => {
         if (rt.turn === turn) rt.flushedTools = Math.max(rt.flushedTools, renderedTools);
       };
       try {
-        await updateCard.call(this.deps.feishu, rt.cardId, buildTurnCard(turn));
+        await updateCard.call(this.deps.feishu, rt.cardId, renderedCard);
         applySuccess();
         return;
       } catch (e) {
@@ -1666,7 +1688,7 @@ export class DirectSessionManager {
           await sleepUnrefed(base + jitter);
           if (rt.turn === turn && rt.cardId !== null) {
             try {
-              await updateCard.call(this.deps.feishu, rt.cardId, buildTurnCard(turn));
+              await updateCard.call(this.deps.feishu, rt.cardId, renderedCard);
               applySuccess();
               return;
             } catch (retryError) {
@@ -1681,11 +1703,93 @@ export class DirectSessionManager {
       }
     }
     if (rt.turn !== turn) return;
+    await this.sendToolFallback(rootId, rt);
+  }
+
+  private async sendToolFallback(rootId: string, rt: SessionRuntime): Promise<void> {
     if (this.deps.config().feishu.direct.verbosity !== "detailed") return;
-    const pending = turn.tools.slice(rt.flushedTools);
-    rt.flushedTools = turn.tools.length;
+    const pending = rt.toolPanels.slice(rt.flushedTools);
+    rt.flushedTools = rt.toolPanels.length;
     if (pending.length === 0) return;
     await this.replySafe(rootId, truncate(toolTextLines(pending), 2000));
+  }
+
+  private async splitTurnCard(rt: SessionRuntime): Promise<boolean> {
+    const turn = rt.turn;
+    const updateCard = this.deps.feishu.updateCard;
+    if (!turn || rt.cardId === null || !updateCard) return false;
+    const all = turn.events;
+    const chunks: TurnCardEvent[][] = [];
+    let index = 0;
+    while (index < all.length) {
+      let size = all.length - index;
+      while (size > 1 && !cardFits({ ...turn, events: all.slice(index, index + size) })) {
+        size--;
+      }
+      if (size === 1 && !cardFits({ ...turn, events: all.slice(index, index + 1) })) {
+        chunks.push(all.slice(index, index + 1));
+        index += 1;
+        continue;
+      }
+      chunks.push(all.slice(index, index + size));
+      index += size;
+    }
+    if (chunks.length < 2) return false;
+    const first = chunks[0] ?? [];
+    const oldCardId = rt.cardId;
+    const oldView: TurnCardState = { ...turn, events: first, sealed: true, continued: true };
+    let renderedTools = 0;
+    try {
+      await updateCard.call(this.deps.feishu, oldCardId, buildTurnCard(oldView));
+    } catch (e) {
+      this.deps.logger.warn("direct segment seal failed", {
+        root_id: turn.rootId,
+        error: toTaskingError(e).message,
+      });
+    }
+    renderedTools += countToolEvents(first);
+    rt.cardId = null;
+    const replyCard = this.deps.feishu.replyCardInThread;
+    let active = first;
+    for (let i = 1; i < chunks.length; i++) {
+      const chunk = chunks[i] ?? [];
+      turn.segment = (turn.segment ?? 1) + 1;
+      if (!replyCard) {
+        rt.cardsAvailable = false;
+        turn.segment -= 1;
+        break;
+      }
+      try {
+        const isLast = i === chunks.length - 1;
+        const created = await replyCard.call(
+          this.deps.feishu,
+          turn.rootId,
+          buildTurnCard({
+            ...turn,
+            events: chunk,
+            ...(isLast ? {} : { sealed: true, continued: true }),
+          }),
+        );
+        rt.cardId = created.message_id;
+        this.deps.store.updateDirectSession(turn.rootId, { card_message_id: created.message_id });
+        if (created.thread_id) {
+          this.deps.store.updateDirectSession(turn.rootId, { thread_id: created.thread_id });
+        }
+        renderedTools += countToolEvents(chunk);
+        active = chunk;
+      } catch (e) {
+        rt.cardsAvailable = false;
+        turn.segment -= 1;
+        this.deps.logger.warn("direct segment card create failed; falling back to text", {
+          root_id: turn.rootId,
+          error: toTaskingError(e).message,
+        });
+        break;
+      }
+    }
+    turn.events = active;
+    rt.flushedTools = Math.max(rt.flushedTools, renderedTools);
+    return true;
   }
 
   private accumulateTool(rt: SessionRuntime, evt: TurnDriverEvent): void {
@@ -1705,7 +1809,8 @@ export class DirectSessionManager {
       if (dropped) rt.fullDetailBytes -= fullDetailBytes(dropped);
       rt.fullDetailDropped++;
     }
-    rt.turn?.tools.push(panel);
+    rt.toolPanels.push(panel);
+    rt.turn?.events.push({ kind: "tool", tool: panel });
   }
 
   private async sendCompletion(
@@ -1723,7 +1828,7 @@ export class DirectSessionManager {
       statsLine: delivery.statsLine,
       note: delivery.note,
     });
-    if (JSON.stringify(card).length <= CARD_BUDGET_BYTES) {
+    if (cardPayloadBytes(card) <= CARD_BUDGET_BYTES) {
       try {
         await replyCard.call(this.deps.feishu, session.root_id, card);
         return;
@@ -1813,7 +1918,10 @@ export class DirectSessionManager {
     if (!rt.turn) return;
     rt.turn.toolCalls = stats.toolCalls;
     rt.turn.turnTokens = stats.totalTokens;
-    if (dropFinalText) rt.turn.finalized = true;
+    if (dropFinalText) {
+      const lastText = rt.turn.events.findLastIndex((event) => event.kind === "text");
+      if (lastText >= 0) rt.turn.events.splice(lastText, 1);
+    }
     await this.finalizeCardPhase(rootId, phase, durationSec);
   }
 
@@ -1963,7 +2071,7 @@ export class DirectSessionManager {
       }
       if (evt.type === "text" && typeof evt.text === "string" && evt.text.trim() !== "") {
         stats.lastText = evt.text;
-        if (rt.turn) rt.turn.texts.push(evt.text);
+        rt.turn?.events.push({ kind: "text", text: evt.text });
         this.scheduleFlush(session.root_id);
       }
       if (this.deps.activity) {
@@ -2592,8 +2700,21 @@ function isRetryableCardError(e: unknown): boolean {
   if (!(e instanceof TaskingError)) return true;
   if (e.category === "feishu_api_request") return true;
   if (e.category !== "feishu_api_status") return false;
-  const status = (e.details as { status?: unknown } | undefined)?.status;
-  return status === 429 || (typeof status === "number" && status >= 500);
+  const details = e.details as { status?: unknown; body?: unknown } | undefined;
+  const status = details?.status;
+  if (status === 429 || (typeof status === "number" && status >= 500)) return true;
+  const body = typeof details?.body === "string" ? details.body : "";
+  try {
+    const parsed = JSON.parse(body) as { code?: unknown };
+    return parsed.code === 230020 || parsed.code === 200810;
+  } catch {
+    const code = /"code"\s*:\s*(\d+)/.exec(body)?.[1];
+    return code === "230020" || code === "200810";
+  }
+}
+
+function countToolEvents(events: TurnCardEvent[]): number {
+  return events.filter((event) => event.kind === "tool").length;
 }
 
 function toolTextLines(tools: TurnCardToolEvent[]): string {

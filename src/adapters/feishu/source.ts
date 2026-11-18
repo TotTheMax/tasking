@@ -1,7 +1,7 @@
 import type { FeishuConfig, FeishuEdition } from "../../config/config-types.js";
 import type { Logger } from "../../observability/logger.js";
+import { cardContentJson, cardMessageBody } from "../../shared/card-payload.js";
 import { TaskingError, toTaskingError } from "../../shared/errors.js";
-import { translateCard } from "../../translate/card.js";
 import { translate } from "../../translate/locale.js";
 import { diagnoseFeishuError, feishuBodyCode } from "./probe.js";
 import { crossRegionHint, feishuApiBase } from "./probe.js";
@@ -216,14 +216,14 @@ export class FeishuSource {
     rootId: string,
     card: unknown,
   ): Promise<{ message_id: string; root_id: string | null; thread_id: string | null }> {
-    return this.replyPayload(rootId, "interactive", JSON.stringify(translateCard(card)), true);
+    return this.replyPayload(rootId, "interactive", cardContentJson(card), true);
   }
 
   async replyCardFlat(
     rootId: string,
     card: unknown,
   ): Promise<{ message_id: string; root_id: string | null; thread_id: string | null }> {
-    return this.replyPayload(rootId, "interactive", JSON.stringify(translateCard(card)), false);
+    return this.replyPayload(rootId, "interactive", cardContentJson(card), false);
   }
 
   async updateCard(messageId: string, card: unknown): Promise<void> {
@@ -239,7 +239,7 @@ export class FeishuSource {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ content: JSON.stringify(translateCard(card)) }),
+          body: cardMessageBody(card),
         },
         this.defaultTimeoutMs,
       );

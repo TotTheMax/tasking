@@ -232,11 +232,19 @@ The CommentBridge-sibling component that owns direct-session lifecycle — comma
 _Avoid_: Chat manager, session service, direct router
 
 **Turn card (轮次卡片)**:
-The Feishu interactive card that represents one turn of a direct session — that turn's tool calls as collapsible panels plus the session's control buttons. It is updated in place while the turn runs and becomes a read-only record once sealed.
+The process surface of one direct-session turn — that turn's assistant text and tool calls rendered in source order — composed of one or more **Segment cards**. Only the newest segment is live and carries the session's control buttons.
 _Avoid_: 进度卡, session card, dashboard card
 
+**Segment card (分段卡片)**:
+The Feishu card that carries one continuous range of a turn's events. A turn may span several segment cards; only the newest is updated in place while the turn runs, the rest are sealed as history.
+_Avoid_: 续卡, 子卡, 分片, chunk
+
+**Turn event (轮次事件)**:
+One renderable unit of a turn's process surface, in source order — either a piece of assistant text or one tool call.
+_Avoid_: 卡片条目, item, entry, block
+
 **Sealing (封存)**:
-Ending a turn card's interactive life: its control-button row is replaced by a one-line stats footer, so the card reads as a historical record while its panels, text and expand state stay as they were.
+Ending a segment card's interactive life: its control-button row is replaced by a one-line footer, so the card reads as a historical record while its panels, text and expand state stay as they were.
 _Avoid_: 归档, 冻结, closing a card
 
 **Card fallback (卡片降级)**:

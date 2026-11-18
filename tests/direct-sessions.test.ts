@@ -79,7 +79,7 @@ interface Reply {
 class FakeFeishu {
   replies: Reply[] = [];
   threads = new Map<string, FeishuPolledMessage[]>();
-  cards: Array<{ rootId: string; card: unknown }> = [];
+  cards: Array<{ rootId: string; card: unknown; messageId: string }> = [];
   updates: Array<{ messageId: string; card: unknown }> = [];
   async replyInThread(rootId: string, text: string) {
     this.replies.push({ rootId, text });
@@ -93,9 +93,10 @@ class FakeFeishu {
     this.replies.push({ rootId, text });
   }
   async replyCardInThread(rootId: string, card: unknown) {
-    this.cards.push({ rootId, card });
+    const messageId = `om_card_${this.cards.length + 1}`;
+    this.cards.push({ rootId, card, messageId });
     return {
-      message_id: `om_card_${this.cards.length}`,
+      message_id: messageId,
       root_id: rootId,
       thread_id: `omt_${rootId}`,
     };
@@ -2458,6 +2459,226 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     await mgr.whenIdle();
     expect(feishu.sent("om_dc1").some((t) => t.includes("短回答"))).toBe(true);
     expect(feishu.fileMessages).toHaveLength(0);
+  });
+
+  const toolWithOutput = (title: string, output: string): TurnDriverEvent => ({
+    type: "tool_use",
+    tool: "bash",
+    title,
+    status: "completed",
+    output,
+  });
+
+  it("renders narration and tools in source order on the turn card", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_ord1", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    const call = runner.calls[0];
+    call?.onEvent?.(textEvent("STEP-A"));
+    call?.onEvent?.(toolEvent("TOOL-1"));
+    call?.onEvent?.(textEvent("STEP-B"));
+    call?.onEvent?.(toolEvent("TOOL-2"));
+    call?.onEvent?.(textEvent("FINAL"));
+    runner.finish(0, []);
+    await mgr.whenIdle();
+    const card = feishu.updateJson().at(-1) ?? "";
+    expect(card.indexOf("STEP-A")).toBeLessThan(card.indexOf("TOOL-1"));
+    expect(card.indexOf("TOOL-1")).toBeLessThan(card.indexOf("STEP-B"));
+    expect(card.indexOf("STEP-B")).toBeLessThan(card.indexOf("TOOL-2"));
+    expect(card).not.toContain("FINAL");
+  });
+
+  it("splits a long turn into continuation segment cards instead of dropping tools", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_seg1", text: "/chat tasking 长任务" }));
+    await runner.waitForCall(1);
+    const output = "y".repeat(1500);
+    for (let i = 0; i < 30; i++) {
+      runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
+    }
+    runner.finish(0, [textEvent("最终答案")]);
+    await mgr.whenIdle();
+    const updates = feishu.updateJson();
+    expect(updates.some((c) => c.includes("本段结束，续见下一条卡片"))).toBe(true);
+    expect(feishu.cards.some((c) => JSON.stringify(c.card).includes("片段 2"))).toBe(true);
+    const sealedOld = updates.find((c) => c.includes("本段结束，续见下一条卡片")) ?? "";
+    expect(sealedOld).not.toContain('"tag":"button"');
+    const sealedSegmentCards = feishu.cards.filter((c) =>
+      JSON.stringify(c.card).includes("本段结束，续见下一条卡片"),
+    );
+    expect(sealedSegmentCards.length).toBeGreaterThanOrEqual(1);
+    for (const card of sealedSegmentCards) {
+      expect(JSON.stringify(card.card)).not.toContain('"tag":"button"');
+    }
+    const turnCards = feishu.cards.filter((c) => JSON.stringify(c.card).includes("**Turn 1**"));
+    const lastTurnCard = JSON.stringify(turnCards.at(-1)?.card) ?? "";
+    expect(lastTurnCard).toContain("tool-29");
+    expect(lastTurnCard).toContain('"tag":"button"');
+    expect(lastTurnCard).not.toContain("最终答案");
+    expect(JSON.stringify(feishu.cards.at(-1)?.card)).toContain("最终答案");
+  });
+
+  it("splits when the estimated element count is exceeded under the byte budget", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_seg2", text: "/chat tasking 多工具" }));
+    await runner.waitForCall(1);
+    for (let i = 0; i < 60; i++) {
+      runner.calls[0]?.onEvent?.(toolEvent(`tiny-${i}`));
+    }
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    expect(feishu.cards.some((c) => JSON.stringify(c.card).includes("片段 2"))).toBe(true);
+  });
+
+  it("degrades a single oversized tool instead of opening an empty segment", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_seg3", text: "/chat tasking 巨量输出" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.onEvent?.(toolWithOutput("huge", "z".repeat(200_000)));
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    expect(feishu.cards).toHaveLength(2);
+    const card = feishu.updateJson().at(-1) ?? "";
+    expect(card).not.toContain("**Output:**");
+    expect(card).toContain("huge");
+  });
+
+  it("ignores stop/retry/full from an old segment card of the same turn", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_seg4", text: "/chat tasking 长任务" }));
+    await runner.waitForCall(1);
+    const output = "y".repeat(1500);
+    for (let i = 0; i < 30; i++) {
+      runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
+    }
+    runner.finish(0, [textEvent("最终答案")]);
+    await mgr.whenIdle();
+    expect(feishu.cards.some((c) => JSON.stringify(c.card).includes("片段 2"))).toBe(true);
+    const oldCard = feishu.cards[0];
+    expect(oldCard).toBeDefined();
+    const action = {
+      messageId: oldCard?.messageId ?? "",
+      chatId: "oc_chat",
+      operatorOpenId: "ou_op",
+      operatorName: "张三",
+      value: { action: "full", root_id: "om_seg4", turn: 1 },
+    };
+    const reply = await mgr.handleCardAction(action);
+    expect(reply?.toast.content).toContain("该片段已结束");
+    const again = await mgr.handleCardAction(action);
+    expect(again?.toast.content).toBe("该操作已处理");
+    expect(feishu.fileMessages).toHaveLength(0);
+  });
+
+  it("degrades only the oversized event and keeps later events on a segment card", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_seg8", text: "/chat tasking 巨量+小" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.onEvent?.(toolWithOutput("huge", "z".repeat(200_000)));
+    runner.calls[0]?.onEvent?.(toolWithOutput("small-tool", "ok"));
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    expect(feishu.sent("om_seg8").some((t) => t.includes("🔧"))).toBe(false);
+    expect(feishu.cards.some((c) => JSON.stringify(c.card).includes("small-tool"))).toBe(true);
+    const sealed = feishu.updateJson().find((c) => c.includes("本段结束")) ?? "";
+    expect(sealed).toContain("huge");
+    expect(sealed).not.toContain("**Output:**");
+  });
+
+  it("treats a body-code rate limit as retryable instead of dropping the card", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    let attempts = 0;
+    const port: DirectFeishuPort = {
+      replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+      replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+      replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
+      updateCard: async (messageId, card) => {
+        attempts++;
+        if (attempts === 1) {
+          throw new TaskingError("feishu_api_status", "feishu updateCard failed: 400", {
+            status: 400,
+            body: '{"code":230020,"msg":"rate limit"}',
+          });
+        }
+        await feishu.updateCard(messageId, card);
+      },
+    };
+    const mgr = new DirectSessionManager({
+      feishu: port,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_seg5", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.onEvent?.(toolEvent("kept-tool"));
+    await vi.waitFor(() => expect(attempts).toBeGreaterThanOrEqual(2), { timeout: 4000 });
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    expect(feishu.sent("om_seg5").some((t) => t.includes("🔧"))).toBe(false);
+  });
+
+  it("falls back to text for the remaining tools when creating a segment card fails", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    let cardCalls = 0;
+    const port: DirectFeishuPort = {
+      replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+      replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+      replyCardInThread: async (rootId, card) => {
+        cardCalls++;
+        if (cardCalls === 2) throw new Error("segment create failed");
+        return feishu.replyCardInThread(rootId, card);
+      },
+      updateCard: (messageId, card) => feishu.updateCard(messageId, card),
+    };
+    const mgr = new DirectSessionManager({
+      feishu: port,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_seg6", text: "/chat tasking 长任务" }));
+    await runner.waitForCall(1);
+    const output = "y".repeat(1500);
+    for (let i = 0; i < 30; i++) {
+      runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
+    }
+    runner.finish(0, [textEvent("最终答案")]);
+    await mgr.whenIdle();
+    expect(feishu.updateJson().some((c) => c.includes("本段结束，续见下一条卡片"))).toBe(true);
+    expect(feishu.sent("om_seg6").some((t) => t.includes("tool-29"))).toBe(true);
+  });
+
+  it("caps full tool detail at 1MB by dropping the oldest and noting it", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_seg7", text: "/chat tasking 大输出" }));
+    await runner.waitForCall(1);
+    const big = "z".repeat(600_000);
+    runner.calls[0]?.onEvent?.(toolWithOutput("old-tool", big));
+    runner.calls[0]?.onEvent?.(toolWithOutput("new-tool", big));
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    const activeCard = feishu.cards
+      .filter((c) => JSON.stringify(c.card).includes("**Turn 1**"))
+      .at(-1);
+    expect(activeCard).toBeDefined();
+    await mgr.handleCardAction({
+      messageId: activeCard?.messageId ?? "",
+      chatId: "oc_chat",
+      operatorOpenId: "ou_op",
+      operatorName: "张三",
+      value: { action: "full", root_id: "om_seg7", turn: 1 },
+    });
+    await vi.waitFor(() => expect(feishu.files).toHaveLength(1), { timeout: 4000 });
+    const text = Buffer.from(feishu.files[0]?.content ?? new Uint8Array()).toString("utf8");
+    expect(text).toContain("因体积过大未包含");
+    expect(text).toContain("new-tool");
   });
 });
 

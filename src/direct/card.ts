@@ -1,3 +1,4 @@
+import { cardMessageBody } from "../shared/card-payload.js";
 import { redactSecrets } from "../shared/redact.js";
 import { translate } from "../translate/locale.js";
 
@@ -23,6 +24,10 @@ export interface TurnCardToolEvent {
   truncated?: boolean;
 }
 
+export type TurnCardEvent =
+  | { kind: "text"; text: string }
+  | { kind: "tool"; tool: TurnCardToolEvent };
+
 export interface TurnCardState {
   rootId: string;
   waitingRemainingMs?: number | null;
@@ -37,12 +42,12 @@ export interface TurnCardState {
   toolCalls: number;
   durationSec: number;
   turnTokens: number;
-  texts: string[];
-  tools: TurnCardToolEvent[];
+  events: TurnCardEvent[];
+  segment?: number;
   retryFromTurn?: number;
   hideFullDetail?: boolean;
-  finalized?: boolean;
   sealed?: boolean;
+  continued?: boolean;
   renderSeq?: number;
   autoPosture?: "off" | "on" | "once";
   agentOverride?: string | null;
@@ -78,7 +83,9 @@ let cardRenderSeq = 0;
 const OUTPUT_TAIL_LINES = 15;
 const DEGRADED_TAIL_LINES = 3;
 const MAX_LABEL_CHARS = 120;
-const MAX_TEXT_CHARS = 400;
+const CARD_MAX_ELEMENTS = 180;
+const CARD_FIXED_ELEMENTS = 12;
+const TOOL_EVENT_ELEMENTS = 3;
 
 const SESSION_STATUS_LABEL: Record<TurnCardSessionStatus, string> = {
   queued: "排队中",
@@ -228,17 +235,15 @@ function renderFooter(state: TurnCardState): Array<Record<string, unknown>> {
     ];
   }
   if (state.sealed || state.phase === "expired") {
-    return [
-      {
-        tag: "markdown",
-        content:
-          state.phase === "expired"
-            ? "— 会话已过期 —"
-            : translate(
-                `— 该轮已结束 · ${state.durationSec}s · ≈${formatTokens(state.turnTokens)} —`,
-              ),
-      },
-    ];
+    const content =
+      state.phase === "expired"
+        ? "— 会话已过期 —"
+        : state.continued
+          ? "— 本段结束，续见下一条卡片 —"
+          : translate(
+              `— 该轮已结束 · ${state.durationSec}s · ≈${formatTokens(state.turnTokens)} —`,
+            );
+    return [{ tag: "markdown", content }];
   }
   if (state.phase === "confirm") {
     return [
@@ -302,33 +307,43 @@ function renderPermissionButton(state: TurnCardState): Record<string, unknown> {
   return button;
 }
 
-function renderCard(state: TurnCardState, levels: number[]): Record<string, unknown> {
+function renderCard(
+  state: TurnCardState,
+  levels: number[],
+  textLimit = 0,
+): Record<string, unknown> {
   const elements: Array<Record<string, unknown>> = [];
   const queuePart = state.queued > 0 ? translate(` · 队列 ${state.queued}`) : "";
   const retryPart =
     state.retryFromTurn !== undefined ? translate(` · 🔁 重试自 Turn ${state.retryFromTurn}`) : "";
+  const segmentPart =
+    state.segment !== undefined && state.segment > 1 ? translate(` · 片段 ${state.segment}`) : "";
   const durationPart = state.durationSec > 0 ? ` · ${state.durationSec}s` : "";
   elements.push({
     tag: "markdown",
     content: `**Turn ${state.turn}** · ${translate(PHASE_LABEL[state.phase])}${durationPart} · 🔧 ${state.toolCalls} · ≈${formatTokens(state.turnTokens)}${retryPart}`,
   });
-  const stepTexts = state.finalized ? state.texts.slice(0, -1) : state.texts;
-  for (const text of stepTexts) {
-    if (text.trim() === "") continue;
-    elements.push({
-      tag: "markdown",
-      content: text.length <= MAX_TEXT_CHARS ? text : `${text.slice(0, MAX_TEXT_CHARS)}…`,
-    });
-  }
   let dropped = 0;
-  for (const [index, evt] of state.tools.entries()) {
+  for (const [index, event] of state.events.entries()) {
+    if (event.kind === "text") {
+      if (event.text.trim() === "") continue;
+      const content =
+        textLimit > 0 && event.text.length > textLimit
+          ? `${event.text.slice(0, textLimit)}…`
+          : event.text;
+      elements.push({ tag: "markdown", content });
+      continue;
+    }
     const level = levels[index] ?? 0;
     if (level >= 3) {
       dropped++;
       continue;
     }
     elements.push(
-      renderPanel(evt, level === 2 ? null : level === 1 ? DEGRADED_TAIL_LINES : OUTPUT_TAIL_LINES),
+      renderPanel(
+        event.tool,
+        level === 2 ? null : level === 1 ? DEGRADED_TAIL_LINES : OUTPUT_TAIL_LINES,
+      ),
     );
   }
   if (dropped > 0) {
@@ -345,27 +360,82 @@ function renderCard(state: TurnCardState, levels: number[]): Record<string, unkn
       template: "blue",
       title: {
         tag: "plain_text",
-        content: `📁 ${state.sessionName} · ${translate(SESSION_STATUS_LABEL[state.sessionStatus])} · ${state.turns} turn${state.turns === 1 ? "" : "s"} · ≈${formatTokens(state.totalTokens)}${renderContextMarker(state)}${queuePart}${renderWaitingMarker(state)}${renderPostureMarker(state)}`,
+        content: `📁 ${state.sessionName} · ${translate(SESSION_STATUS_LABEL[state.sessionStatus])} · ${state.turns} turn${state.turns === 1 ? "" : "s"} · ≈${formatTokens(state.totalTokens)}${renderContextMarker(state)}${queuePart}${renderWaitingMarker(state)}${renderPostureMarker(state)}${segmentPart}`,
       },
     },
     body: { elements },
   };
 }
 
+export function estimateCardElements(state: TurnCardState): number {
+  let total = CARD_FIXED_ELEMENTS;
+  for (const event of state.events) {
+    total += event.kind === "text" ? 1 : TOOL_EVENT_ELEMENTS;
+  }
+  return total;
+}
+
+export function cardPayloadBytes(card: unknown): number {
+  return Buffer.byteLength(cardMessageBody(card), "utf8");
+}
+
+function fitsCard(card: unknown, state: TurnCardState): boolean {
+  return (
+    cardPayloadBytes(card) <= CARD_BUDGET_BYTES && estimateCardElements(state) <= CARD_MAX_ELEMENTS
+  );
+}
+
+export function cardFits(state: TurnCardState): boolean {
+  return fitsCard(
+    renderCard(
+      state,
+      state.events.map(() => 0),
+    ),
+    state,
+  );
+}
+
+function truncateSingleTextToFit(
+  state: TurnCardState,
+  levels: number[],
+): Record<string, unknown> | null {
+  const only = state.events[0];
+  if (state.events.length !== 1 || only === undefined || only.kind !== "text") return null;
+  let low = 0;
+  let high = only.text.length;
+  let best: Record<string, unknown> | null = null;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const card = renderCard(state, levels, mid);
+    if (cardPayloadBytes(card) <= CARD_BUDGET_BYTES) {
+      best = card;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return best;
+}
+
 export function buildTurnCard(state: TurnCardState): unknown {
-  const levels = state.tools.map(() => 0);
+  const levels = state.events.map(() => 0);
   const stamped: TurnCardState = { ...state, renderSeq: ++cardRenderSeq };
   let card = renderCard(stamped, levels);
-  const fits = (): boolean => JSON.stringify(card).length <= CARD_BUDGET_BYTES;
+  const fits = (): boolean => fitsCard(card, state);
   if (!fits()) {
     for (const target of [1, 2, 3]) {
-      for (let i = 0; i < state.tools.length && !fits(); i++) {
+      for (let i = 0; i < state.events.length && !fits(); i++) {
+        if (state.events[i]?.kind !== "tool") continue;
         if ((levels[i] ?? 0) < target) {
           levels[i] = target;
           card = renderCard(stamped, levels);
         }
       }
     }
+  }
+  if (!fits()) {
+    const truncated = truncateSingleTextToFit(stamped, levels);
+    if (truncated !== null) card = truncated;
   }
   return card;
 }

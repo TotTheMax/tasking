@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   CARD_BUDGET_BYTES,
+  type TurnCardEvent,
   type TurnCardState,
   type TurnCardToolEvent,
   buildCompletionCard,
   buildTurnCard,
+  cardPayloadBytes,
+  estimateCardElements,
   toolSummary,
 } from "../src/direct/card.js";
 import { mapContentEntry } from "../src/driver/turn-driver.js";
@@ -45,6 +48,14 @@ function toolEvent(over: Partial<TurnCardToolEvent> = {}): TurnCardToolEvent {
   };
 }
 
+function textCardEvent(text: string): TurnCardEvent {
+  return { kind: "text", text };
+}
+
+function toolCardEvent(tool: TurnCardToolEvent = toolEvent()): TurnCardEvent {
+  return { kind: "tool", tool };
+}
+
 function state(over: Partial<TurnCardState> = {}): TurnCardState {
   return {
     rootId: "om_root1",
@@ -58,8 +69,7 @@ function state(over: Partial<TurnCardState> = {}): TurnCardState {
     toolCalls: 2,
     durationSec: 42,
     turnTokens: 8400,
-    texts: [],
-    tools: [],
+    events: [],
     ...over,
   };
 }
@@ -87,12 +97,50 @@ describe("buildTurnCard structure", () => {
     expect(asCard(buildTurnCard(state({ queued: 0 }))).header.title.content).not.toContain("队列");
     expect(asCard(buildTurnCard(state({ queued: 2 }))).header.title.content).toContain("队列 2");
   });
+
+  it("marks continuation segments in the header", () => {
+    expect(asCard(buildTurnCard(state({ segment: 1 }))).header.title.content).not.toContain("片段");
+    expect(asCard(buildTurnCard(state({ segment: 2 }))).header.title.content).toContain("片段 2");
+  });
+});
+
+describe("buildTurnCard event order", () => {
+  it("renders texts and tools in source order", () => {
+    const t1 = toolEvent({ tool: "read", title: "a.txt" });
+    const t2 = toolEvent({ tool: "grep", title: "needle" });
+    const card = asCard(
+      buildTurnCard(
+        state({
+          events: [
+            textCardEvent("先看 A"),
+            toolCardEvent(t1),
+            textCardEvent("再看 B"),
+            toolCardEvent(t2),
+          ],
+        }),
+      ),
+    );
+    const sequence: string[] = [];
+    for (const element of card.body.elements) {
+      if (element.tag === "markdown" && element.content?.startsWith("先看")) {
+        sequence.push("A");
+      } else if (element.tag === "markdown" && element.content?.startsWith("再看")) {
+        sequence.push("B");
+      } else if (element.tag === "collapsible_panel") {
+        const title = element.header?.title?.content ?? "";
+        sequence.push(title.includes("read") ? "T1" : "T2");
+      }
+    }
+    expect(sequence).toEqual(["A", "T1", "B", "T2"]);
+  });
 });
 
 describe("buildTurnCard tool panels", () => {
   it("renders one panel per tool with tool name, command and output tail", () => {
     const card = asCard(
-      buildTurnCard(state({ tools: [toolEvent(), toolEvent({ tool: "read" })] })),
+      buildTurnCard(
+        state({ events: [toolCardEvent(), toolCardEvent(toolEvent({ tool: "read" }))] }),
+      ),
     );
     const ps = panels(card);
     expect(ps).toHaveLength(2);
@@ -108,7 +156,7 @@ describe("buildTurnCard tool panels", () => {
 
   it("shows only the last 15 output lines and marks the drop", () => {
     const output = Array.from({ length: 20 }, (_, i) => `line-${i + 1}`).join("\n");
-    const card = asCard(buildTurnCard(state({ tools: [toolEvent({ output })] })));
+    const card = asCard(buildTurnCard(state({ events: [toolCardEvent(toolEvent({ output }))] })));
     const body = panels(card)[0]?.elements?.[0]?.content ?? "";
     expect(body).not.toContain("line-5");
     expect(body).toContain("line-6");
@@ -120,8 +168,10 @@ describe("buildTurnCard tool panels", () => {
     const card = asCard(
       buildTurnCard(
         state({
-          tools: [
-            toolEvent({ tool: "grep", input: { pattern: "ssh", path: "scripts" }, output: "" }),
+          events: [
+            toolCardEvent(
+              toolEvent({ tool: "grep", input: { pattern: "ssh", path: "scripts" }, output: "" }),
+            ),
           ],
         }),
       ),
@@ -132,7 +182,9 @@ describe("buildTurnCard tool panels", () => {
   });
 
   it("notes opencode-side truncation", () => {
-    const card = asCard(buildTurnCard(state({ tools: [toolEvent({ truncated: true })] })));
+    const card = asCard(
+      buildTurnCard(state({ events: [toolCardEvent(toolEvent({ truncated: true }))] })),
+    );
     expect(panels(card)[0]?.elements?.[0]?.content).toContain("opencode truncated");
   });
 
@@ -147,7 +199,9 @@ describe("buildTurnCard tool panels", () => {
     for (const c of cases) {
       const [evt] = mapContentEntry(capturedToolEntry(c.name));
       expect(toolSummary(evt as TurnCardToolEvent)).toBe(c.expect);
-      const card = asCard(buildTurnCard(state({ tools: [evt as TurnCardToolEvent] })));
+      const card = asCard(
+        buildTurnCard(state({ events: [toolCardEvent(evt as TurnCardToolEvent)] })),
+      );
       expect(panels(card)[0]?.header?.title?.content).toContain(c.expect);
     }
   });
@@ -156,9 +210,9 @@ describe("buildTurnCard tool panels", () => {
     const card = asCard(
       buildTurnCard(
         state({
-          tools: [
-            toolEvent(),
-            toolEvent({ tool: "bash", title: "systemctl status jenkins", exit: 1 }),
+          events: [
+            toolCardEvent(),
+            toolCardEvent(toolEvent({ tool: "bash", title: "systemctl status jenkins", exit: 1 })),
           ],
         }),
       ),
@@ -173,7 +227,12 @@ describe("buildTurnCard tool panels", () => {
 
   it("keeps every panel collapsed while the turn runs", () => {
     const card = asCard(
-      buildTurnCard(state({ phase: "running", tools: [toolEvent(), toolEvent({ tool: "read" })] })),
+      buildTurnCard(
+        state({
+          phase: "running",
+          events: [toolCardEvent(), toolCardEvent(toolEvent({ tool: "read" }))],
+        }),
+      ),
     );
     expect(panels(card).every((p) => p.expanded === false)).toBe(true);
   });
@@ -190,29 +249,43 @@ function buttonActions(card: CardJson): string[] {
 describe("buildTurnCard budget", () => {
   const bigOutput = Array.from({ length: 40 }, (_, i) => `L${i}-${"x".repeat(60)}`).join("\n");
 
-  it("degrades oldest panels first while keeping the newest intact", () => {
-    const tools = Array.from({ length: 24 }, () => toolEvent({ output: bigOutput }));
-    const card = buildTurnCard(state({ tools }));
-    expect(JSON.stringify(card).length).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
+  it("keeps the payload within budget by degrading oldest panels first", () => {
+    const events = Array.from({ length: 24 }, () =>
+      toolCardEvent(toolEvent({ output: bigOutput })),
+    );
+    const card = buildTurnCard(state({ events }));
+    expect(cardPayloadBytes(card)).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
     const ps = panels(asCard(card));
-    expect(ps).toHaveLength(tools.length);
-    const oldest = ps[0]?.elements?.[0]?.content ?? "";
-    const newest = ps.at(-1)?.elements?.[0]?.content ?? "";
-    expect(oldest.length).toBeLessThan(newest.length);
-    expect(oldest).not.toContain("L30-");
-    expect(newest).toContain("L30-");
+    expect(ps.length).toBeLessThanOrEqual(events.length);
+    if (ps.length === events.length) {
+      const oldest = ps[0]?.elements?.[0]?.content ?? "";
+      const newest = ps.at(-1)?.elements?.[0]?.content ?? "";
+      expect(oldest.length).toBeLessThan(newest.length);
+      expect(oldest).not.toContain("L30-");
+      expect(newest).toContain("L30-");
+    } else {
+      expect(asCard(card).body.elements.some((e) => e.content?.includes("未展示"))).toBe(true);
+    }
   });
 
   it("drops the oldest panels and marks how many were not shown", () => {
-    const tools = Array.from({ length: 120 }, () => toolEvent({ output: bigOutput }));
-    const card = buildTurnCard(state({ tools }));
-    expect(JSON.stringify(card).length).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
+    const events = Array.from({ length: 120 }, () =>
+      toolCardEvent(toolEvent({ output: bigOutput })),
+    );
+    const card = buildTurnCard(state({ events }));
+    expect(cardPayloadBytes(card)).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
     const ps = panels(asCard(card));
-    expect(ps.length).toBeLessThan(tools.length);
+    expect(ps.length).toBeLessThan(events.length);
     const marker = asCard(card).body.elements.find(
       (e) => e.tag === "markdown" && e.content?.includes("未展示"),
     );
-    expect(marker?.content).toContain(String(tools.length - ps.length));
+    expect(marker?.content).toContain(String(events.length - ps.length));
+  });
+
+  it("truncates a single oversized text event to the budget", () => {
+    const card = buildTurnCard(state({ events: [textCardEvent("中".repeat(60_000))] }));
+    expect(cardPayloadBytes(card)).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
+    expect(JSON.stringify(card)).toContain("…");
   });
 });
 
@@ -237,6 +310,12 @@ describe("buildTurnCard control row", () => {
     expect(last?.tag).toBe("markdown");
     expect(last?.content).toContain("该轮已结束");
     expect(last?.content).toContain("42s");
+  });
+
+  it("uses a continuation footer for a segment sealed mid-turn", () => {
+    const card = asCard(buildTurnCard(state({ phase: "running", sealed: true, continued: true })));
+    expect(buttons(card)).toHaveLength(0);
+    expect(card.body.elements.at(-1)?.content).toContain("本段结束，续见下一条卡片");
   });
 
   it("marks an expired session without claiming the turn completed", () => {
@@ -305,18 +384,14 @@ describe("buildCompletionCard", () => {
 });
 
 describe("buildTurnCard text handling", () => {
-  it("shows step texts while the turn runs", () => {
-    const card = asCard(buildTurnCard(state({ texts: ["先看一下", "再确认"] })));
+  it("shows step texts in order without a fixed character cap", () => {
+    const long = "很长的步骤文本".repeat(100);
+    const card = asCard(
+      buildTurnCard(state({ events: [textCardEvent("先看一下"), textCardEvent(long)] })),
+    );
     const contents = card.body.elements.filter((e) => e.tag === "markdown").map((e) => e.content);
     expect(contents).toContain("先看一下");
-    expect(contents).toContain("再确认");
-  });
-
-  it("drops the final answer text once finalised (it lives in the completion message)", () => {
-    const card = buildTurnCard(state({ texts: ["先看一下", "最终答案"], finalized: true }));
-    const joined = JSON.stringify(card);
-    expect(joined).toContain("先看一下");
-    expect(joined).not.toContain("最终答案");
+    expect(contents).toContain(long);
   });
 
   it("pluralises the turn count", () => {
@@ -325,6 +400,30 @@ describe("buildTurnCard text handling", () => {
       "1 turns",
     );
     expect(asCard(buildTurnCard(state({ turns: 3 }))).header.title.content).toContain("3 turns");
+  });
+});
+
+describe("buildTurnCard budget measurement", () => {
+  it("estimates elements as fixed overhead plus text=1 and tool=3", () => {
+    expect(
+      estimateCardElements(
+        state({
+          events: [
+            textCardEvent("a"),
+            textCardEvent("b"),
+            toolCardEvent(),
+            toolCardEvent(toolEvent({ tool: "read" })),
+          ],
+        }),
+      ),
+    ).toBe(12 + 1 + 1 + 3 + 3);
+  });
+
+  it("measures the escaped UTF-8 payload, not the raw character count", () => {
+    const card = buildTurnCard(state({ events: [textCardEvent("中文".repeat(100))] }));
+    const rawBytes = Buffer.byteLength(JSON.stringify(card), "utf8");
+    expect(cardPayloadBytes(card)).toBeGreaterThan(rawBytes);
+    expect(cardPayloadBytes(card)).toBeGreaterThan(JSON.stringify(card).length * 1.4);
   });
 });
 

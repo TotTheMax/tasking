@@ -237,11 +237,13 @@ export const EXACT: Record<string, string> = {
   飞书凭据: "Feishu credentials",
   "飞书直连专用部署：/chat 在配置目录创建 opencode 会话（无需 Jira）。详见 docs/feishu-quickstart.md":
     "Feishu-direct deployment: /chat creates an opencode session in a configured directory (no Jira needed). See docs/feishu-quickstart.md",
+  "— 本段结束，续见下一条卡片 —": "— Segment ended; continues in the next card —",
   "该操作需要 Jira 任务源": "This action requires a Jira task source",
   该操作已处理: "This action was already processed",
   "该轮没有可导出的完整明细（可能因 daemon 重启，明细已不在内存中）。":
     "This turn has no exportable full detail (a daemon restart may have cleared it from memory).",
   该轮已结束: "This turn already ended",
+  该片段已结束: "This segment already ended",
   关闭: "Closed",
   合并中: "Merging",
   "后续消息（含图片/文件）都会先收集，不立即执行。":
@@ -856,6 +858,10 @@ export const PATTERNS: PatternRule[] = [
       `^${normalizeTemplate("— 该轮已结束 · ${state.durationSec}s · ≈${formatTokens(state.turnTokens)} —")}$`,
     ),
     en: "— Turn finished · $1s · ≈$2 —",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate(" · 片段 ${state.segment}")}$`),
+    en: " · segment $1",
   },
   {
     re: new RegExp(`^${normalizeTemplate("✅ 已切 ${label}（下一 turn 生效）")}$`),
