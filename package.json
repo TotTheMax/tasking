@@ -44,12 +44,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "vitest run tests/e2e.test.ts tests/bridge-flow.test.ts tests/trackerless.test.ts",
+    "test:e2e": "vitest run tests/e2e.test.ts tests/bridge-flow.test.ts tests/trackerless.test.ts tests/integration-turn-card.test.ts",
     "test:integration": "INTEGRATION=1 vitest run tests/integration-real.test.ts tests/integration-direct.test.ts tests/integration-opencode-v2.test.ts",
     "prepublishOnly": "npm run build",
     "test:event-flow": "INTEGRATION=1 vitest run tests/integration-event-flow.test.ts",
     "test:card-smoke": "INTEGRATION=1 CARD_SMOKE=1 vitest run tests/integration-card-smoke.test.ts",
-    "test:turn-card-smoke": "INTEGRATION=1 TURN_CARD_SMOKE=1 vitest run tests/integration-turn-card.test.ts",
     "test:direct-approval": "INTEGRATION=1 DIRECT_APPROVAL=1 vitest run tests/integration-direct-approval.test.ts",
     "test:jira-worker": "INTEGRATION=1 JIRA_WORKER=1 vitest run tests/integration-jira-worker.test.ts",
     "test:jira-approval": "INTEGRATION=1 JIRA_APPROVAL=1 vitest run tests/integration-jira-approval.test.ts"

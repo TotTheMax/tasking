@@ -7,8 +7,12 @@
  * It posts a real interleaved turn card, PATCHes it with a near-budget card,
  * posts a continuation segment card into the same thread, and asserts the real
  * API accepts all three (proving the card JSON, collapsible panels, buttons and
- * the measured ~24KB payload fit Feishu's 30KB limit). Messages are deleted in a
- * finally block. Visual correctness still needs the human final-only smoke.
+ * the measured ~24KB payload fit Feishu's 30KB limit). The cards are kept in the
+ * test group as visual evidence (the root is timestamped per run); visual
+ * correctness still needs a human look.
+ *
+ * Run through the e2e script: `INTEGRATION=1 TURN_CARD_SMOKE=1 npm run test:e2e`
+ * (plain `npm run test:e2e` skips this file without touching Feishu).
  */
 import { describe, expect, it } from "vitest";
 import { type FeishuPolledMessage, FeishuSource } from "../src/adapters/feishu/source.js";
@@ -100,59 +104,41 @@ describe.skipIf(!enabled)("real Feishu turn-card smoke (automated)", () => {
       `[integration-turn-card] ${Date.now()}`,
     );
     expect(rootId).not.toBe("");
-    const posted: string[] = [];
-    try {
-      const interleaved = buildTurnCard(
-        cardState([
-          { kind: "text", text: "先看现状：" },
-          toolEvent(1),
-          { kind: "text", text: "再执行第二步：" },
-          toolEvent(2),
-        ]),
-      );
-      const first = await feishu.replyCardInThread(rootId, interleaved);
-      expect(first.message_id).not.toBe("");
-      posted.push(first.message_id);
+    const interleaved = buildTurnCard(
+      cardState([
+        { kind: "text", text: "先看现状：" },
+        toolEvent(1),
+        { kind: "text", text: "再执行第二步：" },
+        toolEvent(2),
+      ]),
+    );
+    const first = await feishu.replyCardInThread(rootId, interleaved);
+    expect(first.message_id).not.toBe("");
 
-      let count = 4;
-      let nearState = cardState(Array.from({ length: count }, (_, i) => toolEvent(i, 900)));
-      let near = buildTurnCard(nearState);
-      while (cardPayloadBytes(near) < 20 * 1024 && count < 40) {
-        count++;
-        nearState = cardState(Array.from({ length: count }, (_, i) => toolEvent(i, 900)));
-        near = buildTurnCard(nearState);
-      }
-      expect(cardPayloadBytes(near)).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
-      await expect(feishu.updateCard(first.message_id, near)).resolves.toBeUndefined();
-
-      const continuation = buildTurnCard({ ...nearState, segment: 2 });
-      const second = await feishu.replyCardInThread(rootId, continuation);
-      expect(second.message_id).not.toBe("");
-      expect(second.message_id).not.toBe(first.message_id);
-      posted.push(second.message_id);
-
-      const threadId = second.thread_id ?? first.thread_id;
-      expect(threadId).not.toBeNull();
-      let interactive: FeishuPolledMessage[] = [];
-      await waitFor(async () => {
-        const replies = await feishu.listThreadReplies(threadId ?? "", null);
-        interactive = replies.filter((m) => m.msg_type === "interactive");
-        return interactive.length >= 2;
-      }, 15000);
-      expect(interactive.length).toBeGreaterThanOrEqual(2);
-    } finally {
-      for (const id of posted) {
-        try {
-          await feishu.deleteMessage(id);
-        } catch {
-          void 0;
-        }
-      }
-      try {
-        await feishu.deleteMessage(rootId);
-      } catch {
-        void 0;
-      }
+    let count = 4;
+    let nearState = cardState(Array.from({ length: count }, (_, i) => toolEvent(i, 900)));
+    let near = buildTurnCard(nearState);
+    while (cardPayloadBytes(near) < 20 * 1024 && count < 40) {
+      count++;
+      nearState = cardState(Array.from({ length: count }, (_, i) => toolEvent(i, 900)));
+      near = buildTurnCard(nearState);
     }
+    expect(cardPayloadBytes(near)).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
+    await expect(feishu.updateCard(first.message_id, near)).resolves.toBeUndefined();
+
+    const continuation = buildTurnCard({ ...nearState, segment: 2 });
+    const second = await feishu.replyCardInThread(rootId, continuation);
+    expect(second.message_id).not.toBe("");
+    expect(second.message_id).not.toBe(first.message_id);
+
+    const threadId = second.thread_id ?? first.thread_id;
+    expect(threadId).not.toBeNull();
+    let interactive: FeishuPolledMessage[] = [];
+    await waitFor(async () => {
+      const replies = await feishu.listThreadReplies(threadId ?? "", null);
+      interactive = replies.filter((m) => m.msg_type === "interactive");
+      return interactive.length >= 2;
+    }, 15000);
+    expect(interactive.length).toBeGreaterThanOrEqual(2);
   }, 120_000);
 });

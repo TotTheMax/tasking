@@ -8,6 +8,7 @@ import {
   buildTurnCard,
   cardPayloadBytes,
   estimateCardElements,
+  formatTokens,
   toolSummary,
 } from "../src/direct/card.js";
 import { mapContentEntry } from "../src/driver/turn-driver.js";
@@ -249,6 +250,31 @@ describe("buildTurnCard tool panels", () => {
       ),
     );
     expect(panels(card).every((p) => p.expanded === false)).toBe(true);
+  });
+
+  it("formats million-scale tokens and long durations", () => {
+    expect(formatTokens(2_000_000)).toBe("2.0M");
+    expect(formatTokens(1500)).toBe("1.5k");
+    expect(formatTokens(999)).toBe("999");
+    const card = asCard(
+      buildTurnCard(state({ events: [toolCardEvent(toolEvent({ durationMs: 1500 }))] })),
+    );
+    expect(panels(card)[0]?.elements?.[0]?.content).toContain("1.5s");
+  });
+
+  it("falls back to the bare tool name and a bare failure marker", () => {
+    const bare = asCard(
+      buildTurnCard(state({ events: [toolCardEvent({ tool: "bash", status: "completed" })] })),
+    );
+    expect(panels(bare)[0]?.header?.title?.content).toBe("🔧 **bash**");
+    const unknownArgs = asCard(
+      buildTurnCard(state({ events: [toolCardEvent({ tool: "bash", input: { odd: true } })] })),
+    );
+    expect(panels(unknownArgs)[0]?.header?.title?.content).toBe("🔧 **bash**");
+    const failed = asCard(
+      buildTurnCard(state({ events: [toolCardEvent(toolEvent({ exit: 0, error: "" }))] })),
+    );
+    expect(panels(failed)[0]?.elements?.[1]?.content).toBe("**失败**");
   });
 });
 

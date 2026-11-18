@@ -2518,6 +2518,38 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     expect(JSON.stringify(feishu.cards.at(-1)?.card)).toContain("最终答案");
   });
 
+  it("still continues in a new segment when sealing the old one fails", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const port: DirectFeishuPort = {
+      replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+      replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+      replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
+      updateCard: async (messageId, card) => {
+        if (JSON.stringify(card).includes("本段结束")) throw new Error("seal failed");
+        await feishu.updateCard(messageId, card);
+      },
+    };
+    const mgr = new DirectSessionManager({
+      feishu: port,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_seg9", text: "/chat tasking 长任务" }));
+    await runner.waitForCall(1);
+    const output = "y".repeat(1500);
+    for (let i = 0; i < 30; i++) {
+      runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
+    }
+    runner.finish(0, [textEvent("最终答案")]);
+    await mgr.whenIdle();
+    expect(feishu.cards.some((c) => JSON.stringify(c.card).includes("片段 2"))).toBe(true);
+    expect(feishu.sent("om_seg9").some((t) => t.includes("🔧"))).toBe(false);
+  });
+
   it("splits when the estimated element count is exceeded under the byte budget", async () => {
     const { feishu, runner, mgr } = setup();
     await mgr.handleIntakeMessage(msg({ message_id: "om_seg2", text: "/chat tasking 多工具" }));
