@@ -29,6 +29,6 @@
 - [x] 5.1 定向测试：`npx vitest run tests/direct-card.test.ts tests/direct-sessions.test.ts tests/card-roundtrip.test.ts tests/translate-coverage.test.ts tests/docs-links.test.ts tests/feishu-source.test.ts`
 - [x] 5.2 `npm run lint` + `npm run typecheck`
 - [x] 5.3 `npm test` + `npm run build`
-- [x] 5.4 `npm run test:e2e`（mock 部分）+ 真机 smoke（带门禁）
+- [x] 5.4 `npm run test:e2e`（mock 部分）+ 真机 smoke（带门禁）；`npm run test:integration` 已跑：7 passed / 3 failed，失败均为真实 agent 超时或秒级游标竞态（`/stop` 后 follow-up 断言），不涉及卡片形态；卡片相关的真实 smoke 已通过
 - [ ] 5.5 人工冒烟（final-only，非阻塞）：真实长轮次确认单卡密度、旧面板降级、最新完整、`本段/本轮` 计数
 - [x] 5.6 `openspec validate degrade-before-split`；确认归档顺序：先 `segment-turn-cards`，再本 change
