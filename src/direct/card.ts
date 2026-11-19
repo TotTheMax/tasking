@@ -420,6 +420,10 @@ export function renderTurnCard(
   );
 }
 
+export function renderedCardFits(card: unknown, state: TurnCardState): boolean {
+  return fitsCard(card, state);
+}
+
 export function cardFits(state: TurnCardState): boolean {
   const working = state.renderSeq === undefined ? stampState(state) : state;
   return fitsCard(

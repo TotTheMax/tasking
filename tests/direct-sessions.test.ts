@@ -2569,6 +2569,30 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     expect(last).not.toContain("本段");
   });
 
+  it("truncates shared inputs to keep one card when prompts alone exceed the budget", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dense4", text: "/chat tasking 大输入" }));
+    await runner.waitForCall(1);
+    for (let i = 0; i < 20; i++) {
+      runner.calls[0]?.onEvent?.({
+        type: "tool_use",
+        tool: "subagent",
+        title: `sub-${i}`,
+        status: "completed",
+        input: { prompt: "p".repeat(1500) },
+        output: "ok",
+      });
+    }
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    expect(feishu.cards).toHaveLength(2);
+    const last = feishu.updateJson().at(-1) ?? "{}";
+    const bodies = cardPanelBodies(last);
+    expect(bodies).toHaveLength(20);
+    expect(last).not.toContain("本段");
+    expect(last).not.toContain("p".repeat(1500));
+  });
+
   it("degrades old panels live as new events arrive", async () => {
     const { feishu, runner, mgr } = setup();
     await mgr.handleIntakeMessage(msg({ message_id: "om_live1", text: "/chat tasking 实时" }));

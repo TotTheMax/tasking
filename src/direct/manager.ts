@@ -41,8 +41,7 @@ import {
   cardPayloadBytes,
   formatTokens,
   isFailed,
-  planDegradation,
-  renderTurnCard,
+  renderedCardFits,
   toolSummary,
 } from "./card.js";
 import { type DirectTurnDriver, createDefaultTurnDriver } from "./driver.js";
@@ -1665,9 +1664,9 @@ export class DirectSessionManager {
       turn.segmentToolCalls = countToolEvents(turn.events);
       let plannedCard: unknown | null = null;
       if (!cardFits(turn) && turn.events.length > 1) {
-        const densePlan = planDegradation(turn);
-        if (densePlan.fits) {
-          plannedCard = renderTurnCard(turn, densePlan.levels);
+        const denseCard = buildTurnCard(turn);
+        if (renderedCardFits(denseCard, turn)) {
+          plannedCard = denseCard;
         } else {
           const split = await this.splitTurnCard(rt);
           if (split) {
@@ -1741,7 +1740,8 @@ export class DirectSessionManager {
     let capacity = 1;
     while (lo <= hi) {
       const mid = Math.floor((lo + hi) / 2);
-      if (planDegradation({ ...turn, events: prefix.slice(0, mid) }).fits) {
+      const candidateState: TurnCardState = { ...turn, events: prefix.slice(0, mid) };
+      if (renderedCardFits(buildTurnCard(candidateState), candidateState)) {
         capacity = mid;
         lo = mid + 1;
       } else {
