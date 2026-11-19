@@ -41,6 +41,8 @@ import {
   cardPayloadBytes,
   formatTokens,
   isFailed,
+  planDegradation,
+  renderTurnCard,
   toolSummary,
 } from "./card.js";
 import { type DirectTurnDriver, createDefaultTurnDriver } from "./driver.js";
@@ -1181,6 +1183,7 @@ export class DirectSessionManager {
       turn: session.turns,
       phase,
       toolCalls: 0,
+      segmentToolCalls: 0,
       durationSec: 0,
       turnTokens: 0,
       events: note === "" ? [] : [{ kind: "text", text: note }],
@@ -1513,6 +1516,7 @@ export class DirectSessionManager {
       turn: fresh.turns + 1,
       phase: "running",
       toolCalls: 0,
+      segmentToolCalls: 0,
       durationSec: 0,
       turnTokens: 0,
       events: [],
@@ -1658,16 +1662,26 @@ export class DirectSessionManager {
     }
     const updateCard = this.deps.feishu.updateCard;
     if (rt.cardsAvailable && rt.cardId !== null && updateCard) {
+      turn.segmentToolCalls = countToolEvents(turn.events);
+      let plannedCard: unknown | null = null;
       if (!cardFits(turn) && turn.events.length > 1) {
-        const split = await this.splitTurnCard(rt);
-        if (split) {
-          if (rt.cardsAvailable) return;
-          await this.sendToolFallback(rootId, rt);
-          return;
+        const suffixStart = findFullSuffixStart(turn);
+        const plan = planDegradation(turn, {
+          protectSuffix: turn.events.length - suffixStart,
+        });
+        if (plan.fits) {
+          plannedCard = renderTurnCard(turn, plan.levels);
+        } else {
+          const split = await this.splitTurnCard(rt);
+          if (split) {
+            if (rt.cardsAvailable) return;
+            await this.sendToolFallback(rootId, rt);
+            return;
+          }
         }
       }
       const renderedTools = rt.toolPanels.length;
-      const renderedCard = buildTurnCard(turn);
+      const renderedCard = plannedCard ?? buildTurnCard(turn);
       const applySuccess = (): void => {
         if (rt.turn === turn) rt.flushedTools = Math.max(rt.flushedTools, renderedTools);
       };
@@ -1719,25 +1733,41 @@ export class DirectSessionManager {
     const updateCard = this.deps.feishu.updateCard;
     if (!turn || rt.cardId === null || !updateCard) return false;
     const all = turn.events;
+    const suffixStart = findFullSuffixStart(turn);
+    if (suffixStart <= 0 || suffixStart >= all.length) return false;
+    const prefix = all.slice(0, suffixStart);
+    const suffix = all.slice(suffixStart);
+    turn.segmented = true;
+
     const chunks: TurnCardEvent[][] = [];
-    let index = 0;
-    while (index < all.length) {
-      let size = all.length - index;
-      while (size > 1 && !cardFits({ ...turn, events: all.slice(index, index + size) })) {
-        size--;
+    let rest = prefix;
+    while (rest.length > 0) {
+      let lo = 1;
+      let hi = rest.length;
+      let best = 1;
+      while (lo <= hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        if (planDegradation({ ...turn, events: rest.slice(0, mid) }).fits) {
+          best = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
       }
-      if (size === 1 && !cardFits({ ...turn, events: all.slice(index, index + 1) })) {
-        chunks.push(all.slice(index, index + 1));
-        index += 1;
-        continue;
-      }
-      chunks.push(all.slice(index, index + size));
-      index += size;
+      chunks.push(rest.slice(0, best));
+      rest = rest.slice(best);
     }
-    if (chunks.length < 2) return false;
+    if (chunks.length === 0) return false;
+
     const first = chunks[0] ?? [];
     const oldCardId = rt.cardId;
-    const oldView: TurnCardState = { ...turn, events: first, sealed: true, continued: true };
+    const oldView: TurnCardState = {
+      ...turn,
+      events: first,
+      segmentToolCalls: countToolEvents(first),
+      sealed: true,
+      continued: true,
+    };
     let renderedTools = 0;
     try {
       await updateCard.call(this.deps.feishu, oldCardId, buildTurnCard(oldView));
@@ -1749,47 +1779,73 @@ export class DirectSessionManager {
     }
     renderedTools += countToolEvents(first);
     rt.cardId = null;
-    const replyCard = this.deps.feishu.replyCardInThread;
+
+    let lastSegment = turn.segment ?? 1;
     let active = first;
     for (let i = 1; i < chunks.length; i++) {
       const chunk = chunks[i] ?? [];
-      turn.segment = (turn.segment ?? 1) + 1;
-      if (!replyCard) {
+      const segment = lastSegment + 1;
+      const messageId = await this.replySegmentCard(turn, chunk, segment, true);
+      if (messageId === null) {
         rt.cardsAvailable = false;
-        turn.segment -= 1;
         break;
       }
-      try {
-        const isLast = i === chunks.length - 1;
-        const created = await replyCard.call(
-          this.deps.feishu,
-          turn.rootId,
-          buildTurnCard({
-            ...turn,
-            events: chunk,
-            ...(isLast ? {} : { sealed: true, continued: true }),
-          }),
-        );
-        rt.cardId = created.message_id;
-        this.deps.store.updateDirectSession(turn.rootId, { card_message_id: created.message_id });
-        if (created.thread_id) {
-          this.deps.store.updateDirectSession(turn.rootId, { thread_id: created.thread_id });
-        }
-        renderedTools += countToolEvents(chunk);
-        active = chunk;
-      } catch (e) {
+      rt.cardId = messageId;
+      lastSegment = segment;
+      active = chunk;
+      renderedTools += countToolEvents(chunk);
+    }
+    if (rt.cardsAvailable) {
+      const segment = lastSegment + 1;
+      const messageId = await this.replySegmentCard(turn, suffix, segment, false);
+      if (messageId === null) {
         rt.cardsAvailable = false;
-        turn.segment -= 1;
-        this.deps.logger.warn("direct segment card create failed; falling back to text", {
-          root_id: turn.rootId,
-          error: toTaskingError(e).message,
-        });
-        break;
+      } else {
+        rt.cardId = messageId;
+        lastSegment = segment;
+        active = suffix;
+        renderedTools += countToolEvents(suffix);
       }
     }
     turn.events = active;
+    turn.segment = lastSegment;
+    turn.segmentToolCalls = countToolEvents(active);
     rt.flushedTools = Math.max(rt.flushedTools, renderedTools);
     return true;
+  }
+
+  private async replySegmentCard(
+    turn: TurnCardState,
+    events: TurnCardEvent[],
+    segment: number,
+    history: boolean,
+  ): Promise<string | null> {
+    const replyCard = this.deps.feishu.replyCardInThread;
+    if (!replyCard) return null;
+    try {
+      const created = await replyCard.call(
+        this.deps.feishu,
+        turn.rootId,
+        buildTurnCard({
+          ...turn,
+          events,
+          segment,
+          segmentToolCalls: countToolEvents(events),
+          ...(history ? { sealed: true, continued: true } : {}),
+        }),
+      );
+      this.deps.store.updateDirectSession(turn.rootId, { card_message_id: created.message_id });
+      if (created.thread_id) {
+        this.deps.store.updateDirectSession(turn.rootId, { thread_id: created.thread_id });
+      }
+      return created.message_id;
+    } catch (e) {
+      this.deps.logger.warn("direct segment card create failed; falling back to text", {
+        root_id: turn.rootId,
+        error: toTaskingError(e).message,
+      });
+      return null;
+    }
   }
 
   private accumulateTool(rt: SessionRuntime, evt: TurnDriverEvent): void {
@@ -2715,6 +2771,20 @@ function isRetryableCardError(e: unknown): boolean {
 
 function countToolEvents(events: TurnCardEvent[]): number {
   return events.filter((event) => event.kind === "tool").length;
+}
+
+function findFullSuffixStart(state: TurnCardState): number {
+  const total = state.events.length;
+  if (total === 0) return 0;
+  if (!cardFits({ ...state, events: state.events.slice(total - 1) })) return total - 1;
+  let lo = 0;
+  let hi = total - 1;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (cardFits({ ...state, events: state.events.slice(mid) })) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
 }
 
 function toolTextLines(tools: TurnCardToolEvent[]): string {

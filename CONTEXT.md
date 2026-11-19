@@ -251,6 +251,10 @@ _Avoid_: 归档, 冻结, closing a card
 The switch of one turn's process updates from in-place turn-card updates to coalesced plain-text delivery, after card updates fail retryably. It covers only the remainder of that turn and only tools not yet rendered on the card; card mode resumes on the next turn.
 _Avoid_: 永久弃卡, text mode, card disable
 
+**Panel degradation (面板降级)**:
+Shortening one tool panel's content — output 15 lines → 3 lines → removed, always keeping the command/arguments — oldest-first, so more tool calls fit on one card. It never removes the panel; replacing the whole card with text is **Card fallback**.
+_Avoid_: 卡片降级（reserved for Card fallback）, 截断, 压缩, 隐藏
+
 **Card action (卡片动作)**:
 A button press on a turn card, delivered as a `card.action.trigger` callback over the event channel and answered within seconds with a toast and/or a new version of that card. It is a distinct ingress kind from a user message and is never queued behind one.
 _Avoid_: 按钮事件, card callback

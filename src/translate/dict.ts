@@ -595,12 +595,6 @@ export const PATTERNS: PatternRule[] = [
   },
   {
     re: new RegExp(
-      `^${normalizeTemplate("… 还有 ${dropped} 个工具调用未展示（完整明细见 TUI 活动视图）")}$`,
-    ),
-    en: "… $1 more tool calls not shown (see the TUI activity view for full detail)",
-  },
-  {
-    re: new RegExp(
       `^${normalizeTemplate('${base} → 开发者后台「权限管理」搜索 "${scope}" 开通后重新发布版本')}$`,
     ),
     en: '$1 → Developer console → Permissions: search "$2", grant it, then publish a new version',
@@ -862,6 +856,12 @@ export const PATTERNS: PatternRule[] = [
   {
     re: new RegExp(`^${normalizeTemplate(" · 片段 ${state.segment}")}$`),
     en: " · segment $1",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("🔧 本段 ${state.segmentToolCalls} · 本轮 ${state.toolCalls}")}$`,
+    ),
+    en: "🔧 $1 this card · $2 turn",
   },
   {
     re: new RegExp(`^${normalizeTemplate("✅ 已切 ${label}（下一 turn 生效）")}$`),

@@ -71,6 +71,13 @@ function projectPath(): string {
   return realpathSync(workdir);
 }
 
+function cardPanelBodies(cardJson: string): string[] {
+  const card = JSON.parse(cardJson) as { body?: { elements?: Array<Record<string, unknown>> } };
+  return (card.body?.elements ?? [])
+    .filter((element) => element.tag === "collapsible_panel")
+    .map((element) => JSON.stringify(element));
+}
+
 interface Reply {
   rootId: string;
   text: string;
@@ -2502,20 +2509,90 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     expect(updates.some((c) => c.includes("本段结束，续见下一条卡片"))).toBe(true);
     expect(feishu.cards.some((c) => JSON.stringify(c.card).includes("片段 2"))).toBe(true);
     const sealedOld = updates.find((c) => c.includes("本段结束，续见下一条卡片")) ?? "";
+    expect(sealedOld).toContain("tool-0");
     expect(sealedOld).not.toContain('"tag":"button"');
-    const sealedSegmentCards = feishu.cards.filter((c) =>
-      JSON.stringify(c.card).includes("本段结束，续见下一条卡片"),
-    );
-    expect(sealedSegmentCards.length).toBeGreaterThanOrEqual(1);
-    for (const card of sealedSegmentCards) {
-      expect(JSON.stringify(card.card)).not.toContain('"tag":"button"');
+    const continuationCards = [
+      ...updates.filter((c) => c.includes("本段结束，续见下一条卡片")),
+      ...feishu.cards
+        .map((c) => JSON.stringify(c.card))
+        .filter((c) => c.includes("本段结束，续见下一条卡片")),
+    ];
+    expect(continuationCards.length).toBeGreaterThanOrEqual(1);
+    for (const card of continuationCards) {
+      expect(card).not.toContain('"tag":"button"');
     }
+    expect(updates.some((c) => c.includes("未展示"))).toBe(false);
     const turnCards = feishu.cards.filter((c) => JSON.stringify(c.card).includes("**Turn 1**"));
     const lastTurnCard = JSON.stringify(turnCards.at(-1)?.card) ?? "";
     expect(lastTurnCard).toContain("tool-29");
+    expect(lastTurnCard).toContain("本段");
+    expect(lastTurnCard).toContain("本轮 30");
     expect(lastTurnCard).toContain('"tag":"button"');
     expect(lastTurnCard).not.toContain("最终答案");
     expect(JSON.stringify(feishu.cards.at(-1)?.card)).toContain("最终答案");
+  });
+
+  it("degrades old panels and keeps a single card when the newest tail still fits", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dense1", text: "/chat tasking 一张卡" }));
+    await runner.waitForCall(1);
+    const output = "y".repeat(2400);
+    for (let i = 0; i < 10; i++) {
+      runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
+    }
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    expect(feishu.cards).toHaveLength(2);
+    const last = feishu.updateJson().at(-1) ?? "{}";
+    const bodies = cardPanelBodies(last);
+    expect(bodies.length).toBe(10);
+    expect(bodies[0]).not.toContain("**Output:**");
+    expect(bodies.at(-1)).toContain("**Output:**");
+    expect(last).not.toContain("未展示");
+  });
+
+  it("degrades old panels live as new events arrive", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_live1", text: "/chat tasking 实时" }));
+    await runner.waitForCall(1);
+    const output = "y".repeat(2400);
+    for (let i = 0; i < 5; i++) {
+      runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
+    }
+    await vi.waitFor(() => expect(feishu.updates.length).toBeGreaterThanOrEqual(1), {
+      timeout: 4000,
+    });
+    for (let i = 5; i < 10; i++) {
+      runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
+    }
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    const last = feishu.updateJson().at(-1) ?? "{}";
+    const bodies = cardPanelBodies(last);
+    expect(bodies).toHaveLength(10);
+    expect(bodies[0]).not.toContain("**Output:**");
+    expect(bodies.at(-1)).toContain("**Output:**");
+    expect(last).not.toContain("未展示");
+  });
+
+  it("keeps every tool across dense cards when the turn is very long", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dense2", text: "/chat tasking 很长" }));
+    await runner.waitForCall(1);
+    const output = "y".repeat(1500);
+    for (let i = 0; i < 61; i++) {
+      runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
+    }
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    const seen = [...feishu.updateJson(), ...feishu.cards.map((c) => JSON.stringify(c.card))].join(
+      "\n",
+    );
+    for (let i = 0; i < 61; i++) {
+      expect(seen).toContain(`tool-${i}`);
+    }
+    expect(seen).not.toContain("未展示");
+    expect(seen).toContain("本段");
   });
 
   it("still continues in a new segment when sealing the old one fails", async () => {
@@ -2602,7 +2679,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     expect(feishu.fileMessages).toHaveLength(0);
   });
 
-  it("degrades only the oversized event and keeps later events on a segment card", async () => {
+  it("degrades the oversized event and keeps later events on the same card", async () => {
     const { feishu, runner, mgr } = setup();
     await mgr.handleIntakeMessage(msg({ message_id: "om_seg8", text: "/chat tasking 巨量+小" }));
     await runner.waitForCall(1);
@@ -2611,10 +2688,13 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     runner.finish(0, [textEvent("完成")]);
     await mgr.whenIdle();
     expect(feishu.sent("om_seg8").some((t) => t.includes("🔧"))).toBe(false);
-    expect(feishu.cards.some((c) => JSON.stringify(c.card).includes("small-tool"))).toBe(true);
-    const sealed = feishu.updateJson().find((c) => c.includes("本段结束")) ?? "";
-    expect(sealed).toContain("huge");
-    expect(sealed).not.toContain("**Output:**");
+    expect(feishu.cards).toHaveLength(2);
+    const last = feishu.updateJson().at(-1) ?? "";
+    expect(last).toContain("huge");
+    expect(last).toContain("small-tool");
+    expect(last).not.toContain("z".repeat(1000));
+    expect(last).not.toContain("未展示");
+    expect(last).not.toContain("本段结束");
   });
 
   it("treats a body-code rate limit as retryable instead of dropping the card", async () => {

@@ -40,10 +40,12 @@ export interface TurnCardState {
   turn: number;
   phase: TurnCardPhase;
   toolCalls: number;
+  segmentToolCalls?: number;
   durationSec: number;
   turnTokens: number;
   events: TurnCardEvent[];
   segment?: number;
+  segmented?: boolean;
   retryFromTurn?: number;
   hideFullDetail?: boolean;
   sealed?: boolean;
@@ -78,6 +80,7 @@ export {
 
 export const CARD_BUDGET_BYTES = 24 * 1024;
 
+const CARD_SEQ_BASE = 1_000_000_000;
 let cardRenderSeq = 0;
 
 const OUTPUT_TAIL_LINES = 15;
@@ -86,6 +89,7 @@ const MAX_LABEL_CHARS = 120;
 const CARD_MAX_ELEMENTS = 180;
 const CARD_FIXED_ELEMENTS = 12;
 const TOOL_EVENT_ELEMENTS = 3;
+const MAX_INPUT_BYTES = 2048;
 
 const SESSION_STATUS_LABEL: Record<TurnCardSessionStatus, string> = {
   queued: "排队中",
@@ -141,7 +145,24 @@ export function toolSummary(evt: TurnCardToolEvent): string {
   return "";
 }
 
-function renderPanelBody(evt: TurnCardToolEvent, outputTailLines: number | null): string {
+function truncateToBytes(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) return "";
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes <= maxBytes) return text;
+  const ellipsis = "…";
+  const budget = Math.max(0, maxBytes - Buffer.byteLength(ellipsis, "utf8"));
+  let cut = Math.min(text.length, Math.floor((text.length * budget) / Math.max(1, bytes)));
+  while (cut > 0 && Buffer.byteLength(text.slice(0, cut), "utf8") > budget) cut--;
+  const last = cut > 0 ? text.charCodeAt(cut - 1) : 0;
+  if (last >= 0xd800 && last <= 0xdbff) cut -= 1;
+  return `${text.slice(0, Math.max(0, cut))}${ellipsis}`;
+}
+
+function renderPanelBody(
+  evt: TurnCardToolEvent,
+  outputTailLines: number | null,
+  inputLimitBytes: number | null,
+): string {
   const failed = isFailed(evt);
   const status = evt.status ?? "completed";
   const exitPart = evt.exit !== undefined ? ` (exit ${evt.exit})` : "";
@@ -150,11 +171,13 @@ function renderPanelBody(evt: TurnCardToolEvent, outputTailLines: number | null)
     `**Status:** ${failed ? "✗ " : ""}${status}${exitPart}${durationPart}`,
     `**Tool:** \`${evt.tool}\``,
   ];
+  const truncate = (text: string): string =>
+    inputLimitBytes === null ? text : truncateToBytes(text, inputLimitBytes);
   const command = evt.input?.command;
   if (typeof command === "string") {
-    lines.push("", "**Command:**", "```bash", command, "```");
+    lines.push("", "**Command:**", "```bash", truncate(command), "```");
   } else if (evt.input !== undefined) {
-    lines.push("", "**Args:**", "```json", JSON.stringify(evt.input, null, 2), "```");
+    lines.push("", "**Args:**", "```json", truncate(JSON.stringify(evt.input, null, 2)), "```");
   }
   if (evt.output !== undefined && outputTailLines !== null) {
     const { lines: shown, dropped } = tailLines(evt.output, outputTailLines);
@@ -172,6 +195,7 @@ function renderPanelBody(evt: TurnCardToolEvent, outputTailLines: number | null)
 function renderPanel(
   evt: TurnCardToolEvent,
   outputTailLines: number | null,
+  inputLimitBytes: number | null,
 ): Record<string, unknown> {
   const failed = isFailed(evt);
   const summary = truncateLabel(toolSummary(evt));
@@ -184,7 +208,7 @@ function renderPanel(
     header: { title: { tag: "markdown", content: title } },
     border: { color: failed ? "red" : "grey", corner_radius: "5px" },
     elements: [
-      { tag: "markdown", content: renderPanelBody(evt, outputTailLines) },
+      { tag: "markdown", content: renderPanelBody(evt, outputTailLines, inputLimitBytes) },
       ...(meta === "" ? [] : [{ tag: "markdown", content: meta }]),
     ],
   };
@@ -311,6 +335,7 @@ function renderCard(
   state: TurnCardState,
   levels: number[],
   textLimit = 0,
+  inputLimitBytes: number | null = MAX_INPUT_BYTES,
 ): Record<string, unknown> {
   const elements: Array<Record<string, unknown>> = [];
   const queuePart = state.queued > 0 ? translate(` · 队列 ${state.queued}`) : "";
@@ -319,11 +344,13 @@ function renderCard(
   const segmentPart =
     state.segment !== undefined && state.segment > 1 ? translate(` · 片段 ${state.segment}`) : "";
   const durationPart = state.durationSec > 0 ? ` · ${state.durationSec}s` : "";
+  const toolPart = state.segmented
+    ? translate(`🔧 本段 ${state.segmentToolCalls ?? 0} · 本轮 ${state.toolCalls}`)
+    : `🔧 ${state.toolCalls}`;
   elements.push({
     tag: "markdown",
-    content: `**Turn ${state.turn}** · ${translate(PHASE_LABEL[state.phase])}${durationPart} · 🔧 ${state.toolCalls} · ≈${formatTokens(state.turnTokens)}${retryPart}`,
+    content: `**Turn ${state.turn}** · ${translate(PHASE_LABEL[state.phase])}${durationPart} · ${toolPart} · ≈${formatTokens(state.turnTokens)}${retryPart}`,
   });
-  let dropped = 0;
   for (const [index, event] of state.events.entries()) {
     if (event.kind === "text") {
       if (event.text.trim() === "") continue;
@@ -334,23 +361,14 @@ function renderCard(
       elements.push({ tag: "markdown", content });
       continue;
     }
-    const level = levels[index] ?? 0;
-    if (level >= 3) {
-      dropped++;
-      continue;
-    }
+    const level = Math.min(levels[index] ?? 0, 2);
     elements.push(
       renderPanel(
         event.tool,
         level === 2 ? null : level === 1 ? DEGRADED_TAIL_LINES : OUTPUT_TAIL_LINES,
+        level === 2 ? inputLimitBytes : null,
       ),
     );
-  }
-  if (dropped > 0) {
-    elements.push({
-      tag: "markdown",
-      content: `… 还有 ${dropped} 个工具调用未展示（完整明细见 TUI 活动视图）`,
-    });
   }
   elements.push(...renderFooter(state));
   return {
@@ -385,30 +403,111 @@ function fitsCard(card: unknown, state: TurnCardState): boolean {
   );
 }
 
+function stampState(state: TurnCardState): TurnCardState {
+  return { ...state, renderSeq: CARD_SEQ_BASE + (cardRenderSeq++ % 1_000_000) };
+}
+
+export function renderTurnCard(
+  state: TurnCardState,
+  levels: number[],
+  options: { textLimit?: number; inputLimitBytes?: number | null } = {},
+): Record<string, unknown> {
+  return renderCard(
+    stampState(state),
+    levels,
+    options.textLimit ?? 0,
+    options.inputLimitBytes === undefined ? MAX_INPUT_BYTES : options.inputLimitBytes,
+  );
+}
+
 export function cardFits(state: TurnCardState): boolean {
+  const working = state.renderSeq === undefined ? stampState(state) : state;
   return fitsCard(
     renderCard(
-      state,
+      working,
       state.events.map(() => 0),
     ),
     state,
   );
 }
 
-function truncateSingleTextToFit(
+export interface DegradePlan {
+  levels: number[];
+  fits: boolean;
+}
+
+export function planDegradation(
   state: TurnCardState,
-  levels: number[],
-): Record<string, unknown> | null {
+  options: { protectSuffix?: number } = {},
+): DegradePlan {
+  const protect = Math.max(0, Math.min(options.protectSuffix ?? 0, state.events.length));
+  const working = state.renderSeq === undefined ? stampState(state) : state;
+  const levels = state.events.map(() => 0);
+  let card = renderCard(working, levels);
+  let fits = fitsCard(card, state);
+  if (fits) return { levels, fits };
+  const end = state.events.length - protect;
+  for (let target = 1; target <= 2 && !fits; target++) {
+    for (let i = 0; i < end && !fits; i++) {
+      if (state.events[i]?.kind !== "tool") continue;
+      if ((levels[i] ?? 0) >= target) continue;
+      levels[i] = target;
+      card = renderCard(working, levels);
+      fits = fitsCard(card, state);
+    }
+  }
+  return { levels, fits };
+}
+
+function truncateSingleTextToFit(state: TurnCardState, levels: number[]): number | null {
   const only = state.events[0];
   if (state.events.length !== 1 || only === undefined || only.kind !== "text") return null;
   let low = 0;
   let high = only.text.length;
-  let best: Record<string, unknown> | null = null;
+  let best: number | null = null;
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
-    const card = renderCard(state, levels, mid);
-    if (cardPayloadBytes(card) <= CARD_BUDGET_BYTES) {
-      best = card;
+    if (fitsCard(renderCard(state, levels, mid), state)) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return best;
+}
+
+function truncateSingleToolToFit(state: TurnCardState, levels: number[]): number | null {
+  const only = state.events[0];
+  if (state.events.length !== 1 || only === undefined || only.kind !== "tool") return null;
+  const forced = [...levels];
+  forced[0] = 2;
+  let low = 0;
+  let high = MAX_INPUT_BYTES;
+  let best: number | null = null;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    if (fitsCard(renderCard(state, forced, 0, mid), state)) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return best ?? 0;
+}
+
+function truncateInputsToFit(state: TurnCardState, levels: number[]): number | null {
+  const forced = state.events.map((event, index) =>
+    event.kind === "tool" ? 2 : (levels[index] ?? 0),
+  );
+  let low = 0;
+  let high = MAX_INPUT_BYTES;
+  let best: number | null = null;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    if (fitsCard(renderCard(state, forced, 0, mid), state)) {
+      best = mid;
       low = mid + 1;
     } else {
       high = mid - 1;
@@ -418,26 +517,21 @@ function truncateSingleTextToFit(
 }
 
 export function buildTurnCard(state: TurnCardState): unknown {
-  const levels = state.events.map(() => 0);
-  const stamped: TurnCardState = { ...state, renderSeq: ++cardRenderSeq };
-  let card = renderCard(stamped, levels);
-  const fits = (): boolean => fitsCard(card, state);
-  if (!fits()) {
-    for (const target of [1, 2, 3]) {
-      for (let i = 0; i < state.events.length && !fits(); i++) {
-        if (state.events[i]?.kind !== "tool") continue;
-        if ((levels[i] ?? 0) < target) {
-          levels[i] = target;
-          card = renderCard(stamped, levels);
-        }
-      }
-    }
+  const stamped = stampState(state);
+  const plan = planDegradation(stamped);
+  if (plan.fits) return renderCard(stamped, plan.levels);
+  const textLimit = truncateSingleTextToFit(stamped, plan.levels);
+  if (textLimit !== null) return renderCard(stamped, plan.levels, textLimit);
+  const inputLimit = truncateSingleToolToFit(stamped, plan.levels);
+  if (inputLimit !== null) return renderCard(stamped, plan.levels, 0, inputLimit);
+  const sharedLimit = truncateInputsToFit(stamped, plan.levels);
+  if (sharedLimit !== null) {
+    const forced = stamped.events.map((event, index) =>
+      event.kind === "tool" ? 2 : (plan.levels[index] ?? 0),
+    );
+    return renderCard(stamped, forced, 0, sharedLimit);
   }
-  if (!fits()) {
-    const truncated = truncateSingleTextToFit(stamped, levels);
-    if (truncated !== null) card = truncated;
-  }
-  return card;
+  return renderCard(stamped, plan.levels);
 }
 
 export interface ApprovalCardRequest {

@@ -5,9 +5,10 @@
  * send interactive cards into the intake group.
  *
  * It posts a real interleaved turn card, PATCHes it with a near-budget card,
- * posts a continuation segment card into the same thread, and asserts the real
- * API accepts all three (proving the card JSON, collapsible panels, buttons and
- * the measured ~24KB payload fit Feishu's 30KB limit). The cards are kept in the
+ * posts a continuation segment card and a 50-panel dense card into the same
+ * thread, and asserts the real API accepts all of them (proving the card JSON,
+ * collapsible panels, buttons, the ~24KB payload and the ~180-element estimate
+ * fit Feishu's 30KB / 200-element limits). The cards are kept in the
  * test group as visual evidence (the root is timestamped per run); visual
  * correctness still needs a human look.
  *
@@ -131,7 +132,16 @@ describe.skipIf(!enabled)("real Feishu turn-card smoke (automated)", () => {
     expect(second.message_id).not.toBe("");
     expect(second.message_id).not.toBe(first.message_id);
 
-    const threadId = second.thread_id ?? first.thread_id;
+    const denseState = cardState(
+      Array.from({ length: 50 }, (_, i) => toolEvent(i, 2400)),
+      { toolCalls: 50, segmentToolCalls: 50 },
+    );
+    const dense = buildTurnCard(denseState);
+    expect(cardPayloadBytes(dense)).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
+    const third = await feishu.replyCardInThread(rootId, dense);
+    expect(third.message_id).not.toBe("");
+
+    const threadId = third.thread_id ?? second.thread_id ?? first.thread_id;
     expect(threadId).not.toBeNull();
     let interactive: FeishuPolledMessage[] = [];
     await waitFor(async () => {

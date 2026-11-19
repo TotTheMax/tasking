@@ -56,21 +56,10 @@ describe("translate", () => {
     expect(translate("完全未知的句子 xyz")).toBe("完全未知的句子 xyz");
   });
 
-  it("translates the frame and passes the variable through", () => {
+  it("translates the segment tool-count frame", () => {
     setLocale("en");
-    expect(translate("… 还有 3 个工具调用未展示（完整明细见 TUI 活动视图）")).toBe(
-      "… 3 more tool calls not shown (see the TUI activity view for full detail)",
-    );
-    expect(translate("… 还有 12 个工具调用未展示（完整明细见 TUI 活动视图）")).toBe(
-      "… 12 more tool calls not shown (see the TUI activity view for full detail)",
-    );
-  });
-
-  it("does not re-translate passed-through variable content", () => {
-    setLocale("en");
-    const out = translate("… 还有 已取消 个工具调用未展示（完整明细见 TUI 活动视图）");
-    expect(out).toContain("已取消");
-    expect(out).not.toContain("Cancelled");
+    expect(translate("🔧 本段 12 · 本轮 17")).toBe("🔧 12 this card · 17 turn");
+    expect(translate("🔧 本段 3 · 本轮 29")).toBe("🔧 3 this card · 29 turn");
   });
 
   it("translates multi-line text line by line", () => {

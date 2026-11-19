@@ -9,6 +9,7 @@ import {
   cardPayloadBytes,
   estimateCardElements,
   formatTokens,
+  planDegradation,
   toolSummary,
 } from "../src/direct/card.js";
 import { mapContentEntry } from "../src/driver/turn-driver.js";
@@ -296,36 +297,78 @@ describe("buildTurnCard budget", () => {
     const card = buildTurnCard(state({ events }));
     expect(cardPayloadBytes(card)).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
     const ps = panels(asCard(card));
-    expect(ps.length).toBeLessThanOrEqual(events.length);
-    if (ps.length === events.length) {
-      const oldest = ps[0]?.elements?.[0]?.content ?? "";
-      const newest = ps.at(-1)?.elements?.[0]?.content ?? "";
-      expect(oldest.length).toBeLessThan(newest.length);
-      expect(oldest).not.toContain("L30-");
-      expect(newest).toContain("L30-");
-    } else {
-      expect(asCard(card).body.elements.some((e) => e.content?.includes("未展示"))).toBe(true);
-    }
+    expect(ps).toHaveLength(events.length);
+    const oldest = ps[0]?.elements?.[0]?.content ?? "";
+    const newest = ps.at(-1)?.elements?.[0]?.content ?? "";
+    expect(oldest).not.toContain("L30-");
+    expect(newest).toContain("L30-");
+    expect(asCard(card).body.elements.some((e) => e.content?.includes("未展示"))).toBe(false);
   });
 
-  it("drops the oldest panels and marks how many were not shown", () => {
-    const events = Array.from({ length: 120 }, () =>
+  it("never drops panels even when the card is saturated", () => {
+    const events = Array.from({ length: 40 }, () =>
       toolCardEvent(toolEvent({ output: bigOutput })),
     );
     const card = buildTurnCard(state({ events }));
     expect(cardPayloadBytes(card)).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
     const ps = panels(asCard(card));
-    expect(ps.length).toBeLessThan(events.length);
-    const marker = asCard(card).body.elements.find(
-      (e) => e.tag === "markdown" && e.content?.includes("未展示"),
-    );
-    expect(marker?.content).toContain(String(events.length - ps.length));
+    expect(ps).toHaveLength(events.length);
+    expect(asCard(card).body.elements.some((e) => e.content?.includes("未展示"))).toBe(false);
   });
 
   it("truncates a single oversized text event to the budget", () => {
     const card = buildTurnCard(state({ events: [textCardEvent("中".repeat(60_000))] }));
     expect(cardPayloadBytes(card)).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
     expect(JSON.stringify(card)).toContain("…");
+  });
+
+  it("truncates oversized tool input but keeps the panel", () => {
+    const huge = `echo ${"x".repeat(40_000)}`;
+    const card = buildTurnCard(
+      state({ events: [toolCardEvent(toolEvent({ input: { command: huge } }))] }),
+    );
+    expect(cardPayloadBytes(card)).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
+    const panel = panels(asCard(card))[0];
+    expect(panel).toBeDefined();
+    const body = panel?.elements?.[0]?.content ?? "";
+    expect(body).toContain("…");
+    expect(body).not.toContain(huge);
+  });
+
+  it("degrades oldest panels through level 1 before level 2", () => {
+    const events = Array.from({ length: 30 }, () =>
+      toolCardEvent(toolEvent({ output: bigOutput })),
+    );
+    const plan = planDegradation(state({ events }));
+    expect(plan.fits).toBe(true);
+    for (let i = 1; i < plan.levels.length; i++) {
+      expect(plan.levels[i]).toBeLessThanOrEqual(plan.levels[i - 1]);
+    }
+    expect(plan.levels[0]).toBe(1);
+    expect(plan.levels.at(-1)).toBe(0);
+  });
+
+  it("truncates shared tool inputs when many panels exceed the input-only budget", () => {
+    const events = Array.from({ length: 20 }, () =>
+      toolCardEvent(toolEvent({ input: { command: "x".repeat(3000) }, output: "" })),
+    );
+    const card = buildTurnCard(state({ events }));
+    expect(cardPayloadBytes(card)).toBeLessThanOrEqual(CARD_BUDGET_BYTES);
+    expect(panels(asCard(card))).toHaveLength(20);
+  });
+
+  it("renders the per-card vs turn tool counts for segments", () => {
+    const segment = asCard(
+      buildTurnCard(state({ segmented: true, toolCalls: 17, segmentToolCalls: 12, segment: 2 })),
+    );
+    expect(segment.body.elements[0]?.content).toContain("🔧 本段 12 · 本轮 17");
+    const equalCounts = asCard(
+      buildTurnCard(state({ segmented: true, toolCalls: 17, segmentToolCalls: 17, segment: 2 })),
+    );
+    expect(equalCounts.body.elements[0]?.content).toContain("🔧 本段 17 · 本轮 17");
+    const single = asCard(buildTurnCard(state({ toolCalls: 17, segmentToolCalls: 17 })));
+    expect(single.body.elements[0]?.content).toContain("🔧 17");
+    expect(single.body.elements[0]?.content).not.toContain("本段");
   });
 });
 
