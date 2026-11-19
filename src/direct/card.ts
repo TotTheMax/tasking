@@ -477,26 +477,6 @@ function truncateSingleTextToFit(state: TurnCardState, levels: number[]): number
   return best;
 }
 
-function truncateSingleToolToFit(state: TurnCardState, levels: number[]): number | null {
-  const only = state.events[0];
-  if (state.events.length !== 1 || only === undefined || only.kind !== "tool") return null;
-  const forced = [...levels];
-  forced[0] = 2;
-  let low = 0;
-  let high = MAX_INPUT_BYTES;
-  let best: number | null = null;
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    if (fitsCard(renderCard(state, forced, 0, mid), state)) {
-      best = mid;
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-  return best ?? 0;
-}
-
 function truncateInputsToFit(state: TurnCardState, levels: number[]): number | null {
   const forced = state.events.map((event, index) =>
     event.kind === "tool" ? 2 : (levels[index] ?? 0),
@@ -522,8 +502,6 @@ export function buildTurnCard(state: TurnCardState): unknown {
   if (plan.fits) return renderCard(stamped, plan.levels);
   const textLimit = truncateSingleTextToFit(stamped, plan.levels);
   if (textLimit !== null) return renderCard(stamped, plan.levels, textLimit);
-  const inputLimit = truncateSingleToolToFit(stamped, plan.levels);
-  if (inputLimit !== null) return renderCard(stamped, plan.levels, 0, inputLimit);
   const sharedLimit = truncateInputsToFit(stamped, plan.levels);
   if (sharedLimit !== null) {
     const forced = stamped.events.map((event, index) =>
