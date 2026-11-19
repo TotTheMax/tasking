@@ -1665,12 +1665,9 @@ export class DirectSessionManager {
       turn.segmentToolCalls = countToolEvents(turn.events);
       let plannedCard: unknown | null = null;
       if (!cardFits(turn) && turn.events.length > 1) {
-        const suffixStart = findFullSuffixStart(turn);
-        const plan = planDegradation(turn, {
-          protectSuffix: turn.events.length - suffixStart,
-        });
-        if (plan.fits) {
-          plannedCard = renderTurnCard(turn, plan.levels);
+        const densePlan = planDegradation(turn);
+        if (densePlan.fits) {
+          plannedCard = renderTurnCard(turn, densePlan.levels);
         } else {
           const split = await this.splitTurnCard(rt);
           if (split) {
@@ -1739,23 +1736,23 @@ export class DirectSessionManager {
     const suffix = all.slice(suffixStart);
     turn.segmented = true;
 
-    const chunks: TurnCardEvent[][] = [];
-    let rest = prefix;
-    while (rest.length > 0) {
-      let lo = 1;
-      let hi = rest.length;
-      let best = 1;
-      while (lo <= hi) {
-        const mid = Math.floor((lo + hi) / 2);
-        if (planDegradation({ ...turn, events: rest.slice(0, mid) }).fits) {
-          best = mid;
-          lo = mid + 1;
-        } else {
-          hi = mid - 1;
-        }
+    let lo = 1;
+    let hi = prefix.length;
+    let capacity = 1;
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (planDegradation({ ...turn, events: prefix.slice(0, mid) }).fits) {
+        capacity = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
       }
-      chunks.push(rest.slice(0, best));
-      rest = rest.slice(best);
+    }
+    const chunkCount = Math.max(1, Math.ceil(prefix.length / capacity));
+    const chunkSize = Math.ceil(prefix.length / chunkCount);
+    const chunks: TurnCardEvent[][] = [];
+    for (let i = 0; i < prefix.length; i += chunkSize) {
+      chunks.push(prefix.slice(i, i + chunkSize));
     }
     if (chunks.length === 0) return false;
 

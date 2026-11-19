@@ -561,7 +561,7 @@ describe("direct round-trip guard", () => {
     await manager.handleThreadMessage(threadMsg("干活", 2) as never);
     await startedPromise;
     const output = "y".repeat(1500);
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 70; i++) {
       emit?.({ type: "tool_use", tool: "bash", title: `tool-${i}`, status: "completed", output });
     }
     resolveTurn?.({

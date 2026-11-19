@@ -2500,7 +2500,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     await mgr.handleIntakeMessage(msg({ message_id: "om_seg1", text: "/chat tasking 长任务" }));
     await runner.waitForCall(1);
     const output = "y".repeat(1500);
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 70; i++) {
       runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
     }
     runner.finish(0, [textEvent("最终答案")]);
@@ -2524,9 +2524,9 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     expect(updates.some((c) => c.includes("未展示"))).toBe(false);
     const turnCards = feishu.cards.filter((c) => JSON.stringify(c.card).includes("**Turn 1**"));
     const lastTurnCard = JSON.stringify(turnCards.at(-1)?.card) ?? "";
-    expect(lastTurnCard).toContain("tool-29");
+    expect(lastTurnCard).toContain("tool-69");
     expect(lastTurnCard).toContain("本段");
-    expect(lastTurnCard).toContain("本轮 30");
+    expect(lastTurnCard).toContain("本轮 70");
     expect(lastTurnCard).toContain('"tag":"button"');
     expect(lastTurnCard).not.toContain("最终答案");
     expect(JSON.stringify(feishu.cards.at(-1)?.card)).toContain("最终答案");
@@ -2549,6 +2549,24 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     expect(bodies[0]).not.toContain("**Output:**");
     expect(bodies.at(-1)).toContain("**Output:**");
     expect(last).not.toContain("未展示");
+  });
+
+  it("keeps one dense card when degrading old panels leaves the newest complete", async () => {
+    const { feishu, runner, mgr } = setup();
+    await mgr.handleIntakeMessage(msg({ message_id: "om_dense3", text: "/chat tasking 密集" }));
+    await runner.waitForCall(1);
+    for (let i = 0; i < 30; i++) {
+      runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, "y".repeat(900)));
+    }
+    runner.finish(0, [textEvent("完成")]);
+    await mgr.whenIdle();
+    expect(feishu.cards).toHaveLength(2);
+    const last = feishu.updateJson().at(-1) ?? "{}";
+    const bodies = cardPanelBodies(last);
+    expect(bodies).toHaveLength(30);
+    expect(bodies[0]).not.toContain("**Output:**");
+    expect(bodies.at(-1)).toContain("**Output:**");
+    expect(last).not.toContain("本段");
   });
 
   it("degrades old panels live as new events arrive", async () => {
@@ -2618,7 +2636,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     await mgr.handleIntakeMessage(msg({ message_id: "om_seg9", text: "/chat tasking 长任务" }));
     await runner.waitForCall(1);
     const output = "y".repeat(1500);
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 70; i++) {
       runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
     }
     runner.finish(0, [textEvent("最终答案")]);
@@ -2657,7 +2675,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     await mgr.handleIntakeMessage(msg({ message_id: "om_seg4", text: "/chat tasking 长任务" }));
     await runner.waitForCall(1);
     const output = "y".repeat(1500);
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 70; i++) {
       runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
     }
     runner.finish(0, [textEvent("最终答案")]);
@@ -2758,13 +2776,13 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     await mgr.handleIntakeMessage(msg({ message_id: "om_seg6", text: "/chat tasking 长任务" }));
     await runner.waitForCall(1);
     const output = "y".repeat(1500);
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 70; i++) {
       runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
     }
     runner.finish(0, [textEvent("最终答案")]);
     await mgr.whenIdle();
     expect(feishu.updateJson().some((c) => c.includes("本段结束，续见下一条卡片"))).toBe(true);
-    expect(feishu.sent("om_seg6").some((t) => t.includes("tool-29"))).toBe(true);
+    expect(feishu.sent("om_seg6").some((t) => t.includes("tool-69"))).toBe(true);
   });
 
   it("caps full tool detail at 1MB by dropping the oldest and noting it", async () => {
@@ -2798,7 +2816,7 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     await mgr.handleIntakeMessage(msg({ message_id: "om_life1", text: "/chat tasking 第一轮" }));
     await runner.waitForCall(1);
     const output = "y".repeat(1500);
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 70; i++) {
       runner.calls[0]?.onEvent?.(toolWithOutput(`tool-${i}`, output));
     }
     runner.finish(0, [textEvent("第一答")]);
