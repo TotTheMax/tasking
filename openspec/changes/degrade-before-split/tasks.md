@@ -22,13 +22,13 @@
 
 ## 4. 真机 smoke
 
-- [x] 4.1 扩展 `tests/integration-turn-card.test.ts`：在交错卡、近 24KB 更新、续段卡之外，再发一张 **50 个面板的密集卡**（输入保留、无输出），验证元素上限下真实飞书仍接受；用 `INTEGRATION=1 TURN_CARD_SMOKE=1 npm run test:e2e` 实跑
+- [x] 4.1 扩展 `tests/integration-turn-card.test.ts`：在交错卡、近 24KB 更新、续段卡之外，再发一张 **50 个面板的密集卡**（输入保留、无输出），验证元素上限下真实飞书仍接受；用 `INTEGRATION=1 npm run test:integration` 实跑（该 smoke 已并入集成测试组，不再单独设脚本/开关）
 
 ## 5. 门禁与验收
 
 - [x] 5.1 定向测试：`npx vitest run tests/direct-card.test.ts tests/direct-sessions.test.ts tests/card-roundtrip.test.ts tests/translate-coverage.test.ts tests/docs-links.test.ts tests/feishu-source.test.ts`
 - [x] 5.2 `npm run lint` + `npm run typecheck`
 - [x] 5.3 `npm test` + `npm run build`
-- [x] 5.4 `npm run test:e2e`（mock 部分）+ 真机 smoke（带门禁）；`npm run test:integration` 已跑：7 passed / 3 failed，失败均为真实 agent 超时或秒级游标竞态（`/stop` 后 follow-up 断言），不涉及卡片形态；卡片相关的真实 smoke 已通过
+- [x] 5.4 `npm run test:e2e`（mock 部分）+ `INTEGRATION=1 npm run test:integration`（唯一真实 API 入口，含 turn-card smoke）；此前完整跑为 7 passed / 3 failed，失败均为真实 agent 超时或秒级游标竞态（`/stop` 后 follow-up 断言），不涉及卡片形态；卡片相关的真实 smoke 已通过
 - [x] 5.5 人工冒烟（final-only，非阻塞）：真实长轮次确认单卡密度、旧面板降级、最新完整、`本段/本轮` 计数（已通过：89 工具 → 38/41/10 三卡，旧面板保留输入、最后一段完整输出）
 - [x] 5.6 `openspec validate degrade-before-split`；确认归档顺序：先 `segment-turn-cards`，再本 change

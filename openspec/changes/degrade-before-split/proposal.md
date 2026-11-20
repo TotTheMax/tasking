@@ -33,4 +33,4 @@
 - 数据：无迁移；`direct_sessions.card_message_id` 与段边界策略不变
 - 文档：`CONTEXT.md` 新增 **Panel degradation（面板降级）**；`docs/adr/0042-degrade-before-split.md` + ADR 0041 amended 指针；`docs/{zh,en}/{architecture,usage,configuration}.md`；`openspec/specs/direct-sessions/spec.md`
 - 测试：`tests/direct-card.test.ts`、`tests/direct-sessions.test.ts`；`tests/integration-turn-card.test.ts` 增加 50 面板密集卡的真机 smoke；`tests/translate-coverage.test.ts` / `tests/docs-links.test.ts` 门禁
-- 门禁：`npm run lint` / `typecheck` / `test` / `build` / `test:e2e`（真实 turn-card smoke 需 `INTEGRATION=1 TURN_CARD_SMOKE=1`）；人工冒烟为 final-only
+- 门禁：`npm run lint` / `typecheck` / `test` / `build` / `test:e2e` / `INTEGRATION=1 npm run test:integration`（真实 API 测试的唯一入口，内含 turn-card smoke）；人工冒烟为 final-only

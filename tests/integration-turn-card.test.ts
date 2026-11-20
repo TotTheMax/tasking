@@ -1,8 +1,8 @@
 /**
  * Real Feishu turn-card smoke (fully automated, no human clicks).
  *
- * Gate: INTEGRATION=1 TURN_CARD_SMOKE=1. Requires the test app to be able to
- * send interactive cards into the intake group.
+ * Gate: INTEGRATION=1. Requires the test app to be able to send interactive
+ * cards into the intake group.
  *
  * It posts a real interleaved turn card, PATCHes it with a near-budget card,
  * posts a continuation segment card and a 50-panel dense card into the same
@@ -12,8 +12,8 @@
  * test group as visual evidence (the root is timestamped per run); visual
  * correctness still needs a human look.
  *
- * Run through the e2e script: `INTEGRATION=1 TURN_CARD_SMOKE=1 npm run test:e2e`
- * (plain `npm run test:e2e` skips this file without touching Feishu).
+ * Run through the integration script: `INTEGRATION=1 npm run test:integration`
+ * (plain `npm test` / `npm run test:e2e` skips it without touching Feishu).
  */
 import { describe, expect, it } from "vitest";
 import { type FeishuPolledMessage, FeishuSource } from "../src/adapters/feishu/source.js";
@@ -36,7 +36,7 @@ import {
 const logger = new ConsoleLogger({}, () => {});
 loadE2ECredsEnvFile();
 const CREDS = resolveE2ECreds(process.env);
-const enabled = process.env.INTEGRATION === "1" && process.env.TURN_CARD_SMOKE === "1";
+const enabled = process.env.INTEGRATION === "1";
 if (enabled) assertE2ECredsComplete(CREDS);
 
 function directConfig(): EffectiveConfig {
