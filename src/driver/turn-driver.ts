@@ -184,6 +184,14 @@ export function hasUnsettledAssistant(
   );
 }
 
+export function hasFreshAssistant(
+  messages: SessionMessage[],
+  baselineIds: Set<string> | null,
+): boolean {
+  if (baselineIds === null) return false;
+  return messages.some((m) => m.type === "assistant" && !baselineIds.has(m.id));
+}
+
 function messageSettled(message: SessionMessage): boolean {
   const time = message.time as Record<string, unknown> | undefined;
   return typeof time?.completed === "number";
@@ -299,8 +307,19 @@ export interface TurnDriverOptions {
   onPermissionReply?: (requestID: string, decision: PermissionDecision) => void;
   onWaitingForApproval?: (waiting: boolean) => void;
   onResolvedModel?: (model: ResolvedModel) => void;
+  onAnchorLost?: () => void;
   signal?: AbortSignal;
 }
+
+export type TurnSettlement =
+  | "anchor"
+  | "baseline_idle"
+  | "outcome"
+  | "permission_cap"
+  | "permission_stalled"
+  | "abort"
+  | "turn_timeout"
+  | "inactivity_timeout";
 
 export interface TurnResult {
   status: "succeeded" | "failed" | "interrupted" | "timed_out" | "error";
@@ -309,6 +328,9 @@ export interface TurnResult {
   error: string | null;
   contextTokens?: number;
   model?: ResolvedModel;
+  settledBy?: TurnSettlement;
+  anchorSeen?: boolean;
+  promptMessageId?: string | null;
 }
 
 export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
@@ -319,9 +341,13 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
 
   let sessionId = opts.sessionId;
   let staleOutcome: string | null = null;
+  let baselineOk = false;
   let baselineIds: Set<string> | null = null;
+  let baselineIdleAt: number | null = null;
   let previousIds: Set<string> | null = null;
   let promptMessageID: string | null = null;
+  let anchorSeen = false;
+  let anchorLostNotified = false;
   let resolvedModel: ResolvedModel | undefined;
   const noteModel = (candidate: ResolvedModel | undefined): void => {
     if (!candidate) return;
@@ -354,15 +380,19 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
       try {
         const baseline = await getSession(opts.exec, opts.base, sessionId);
         staleOutcome = baseline.outcome;
+        baselineIdleAt = baseline.idleAt ?? null;
         noteModel(baseline.model);
         baselineIds = new Set(
           (await listSessionMessages(opts.exec, opts.base, sessionId)).map((m) => m.id),
         );
         previousIds = new Set(baselineIds);
+        baselineOk = true;
         break;
       } catch {
         staleOutcome = null;
+        baselineOk = false;
         baselineIds = null;
+        baselineIdleAt = null;
         previousIds = null;
       }
     }
@@ -374,6 +404,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
       usage,
       error: e instanceof Error ? e.message : String(e),
       ...(resolvedModel ? { model: resolvedModel } : {}),
+      promptMessageId: promptMessageID,
     };
   }
 
@@ -387,6 +418,8 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
   let lastSessionUpdated: number | null = null;
   let quiescentPolls = 0;
   let rejectedAt: number | null = null;
+  const rejectedIds = new Set<string>();
+  let pendingIdsNow: string[] = [];
   let lastFetchUpdated: number | null | undefined = undefined;
   let lastFetchPendingCount = -1;
   let pollsSinceFetch = 0;
@@ -395,7 +428,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
   let latestMessages: SessionMessage[] = [];
 
   const settleTimeout = async (
-    reason: "turn_timeout" | "inactivity_timeout",
+    reason: "turn_timeout" | "inactivity_timeout" | "permission_timeout",
   ): Promise<TurnResult> => {
     try {
       await interruptSession(opts.exec, opts.base, sessionId);
@@ -413,6 +446,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
         void 0;
       }
     }
+    const settledBy: TurnSettlement = reason === "permission_timeout" ? "permission_cap" : reason;
     return {
       status: "timed_out",
       sessionId,
@@ -420,6 +454,9 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
       error: reason,
       contextTokens,
       ...(resolvedModel ? { model: resolvedModel } : {}),
+      settledBy,
+      anchorSeen,
+      promptMessageId: promptMessageID,
     };
   };
 
@@ -429,16 +466,19 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
         ...r,
         status: "interrupted" as const,
         error: "aborted",
+        settledBy: "abort" as const,
       }));
     }
     await opts.sleep(opts.pollIntervalMs);
 
     let outcome: string | null = null;
+    let sessionIdleAt: number | null = null;
     let progressed = false;
     let pendingKnown = false;
     try {
       const session = await getSession(opts.exec, opts.base, sessionId);
       outcome = session.outcome;
+      sessionIdleAt = session.idleAt ?? null;
       noteModel(session.model);
       let pending: PendingPermission[] = [];
       try {
@@ -454,6 +494,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
         progressed = true;
       }
       if (pendingKnown) {
+        pendingIdsNow = pending.map((p) => p.id);
         if (pending.length > 0) {
           if (!waitingNotified) {
             waitingNotified = true;
@@ -466,6 +507,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
             for (const p of pending) {
               try {
                 await replyPermission(opts.exec, opts.base, sessionId, p.id, "reject");
+                rejectedIds.add(p.id);
                 opts.onPermissionReply?.(p.id, "reject");
               } catch {
                 void 0;
@@ -478,12 +520,20 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
           if (waitStartedAt !== null) {
             waitAccumMs += nowTs - waitStartedAt;
             waitStartedAt = null;
+            lastActivityAt = Math.max(lastActivityAt, nowTs);
           }
           pendingSince = null;
           if (waitingNotified) {
             waitingNotified = false;
             opts.onWaitingForApproval?.(false);
           }
+        }
+      }
+      if (opts.permissionTimeoutMs > 0) {
+        const totalWaitMs =
+          waitAccumMs + (waitStartedAt === null ? 0 : Math.max(0, nowTs - waitStartedAt));
+        if (totalWaitMs >= opts.permissionTimeoutMs * 2) {
+          return settleTimeout("permission_timeout");
         }
       }
       const pendingCountForGate = pendingKnown ? pending.length : lastFetchPendingCount;
@@ -499,7 +549,7 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
         lastFetchPendingCount = pending.length;
         pollsSinceFetch = 0;
         const diff = diffMessagesToEvents(messages, seen);
-        if (diff.events.length > 0 || pending.length > 0) {
+        if (diff.events.length > 0) {
           lastActivityAt = nowTs;
           progressed = true;
         }
@@ -527,34 +577,64 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
 
     const anchored =
       promptMessageID === null ? null : promptAnchoredSignals(latestMessages, promptMessageID);
-    const idleOutcome = anchored
-      ? anchored.idleOutcome
-      : freshIdleOutcome(latestMessages, baselineIds);
-    const streaming = anchored
-      ? anchored.streaming
-      : hasUnsettledAssistant(latestMessages, baselineIds);
-    const registered = anchored === null || anchored.sawOurPrompt;
-    const produced = anchored === null || anchored.hasAssistant;
+    const anchorInPage = anchored?.sawOurPrompt === true;
+    if (anchorInPage) {
+      anchorSeen = true;
+    } else if (anchorSeen && !anchorLostNotified) {
+      anchorLostNotified = true;
+      opts.onAnchorLost?.();
+    }
+    const idleAdvanced =
+      baselineOk &&
+      sessionIdleAt !== null &&
+      (baselineIdleAt === null || sessionIdleAt > baselineIdleAt);
+
+    let idleOutcome: string | null = null;
+    let streaming: boolean;
+    let produced: boolean;
+    let settledBy: TurnSettlement | null = null;
+    if (anchorInPage && anchored !== null) {
+      idleOutcome = anchored.idleOutcome;
+      streaming = anchored.streaming;
+      produced = anchored.hasAssistant;
+      if (idleOutcome !== null) settledBy = "anchor";
+    } else if (anchored === null) {
+      idleOutcome = freshIdleOutcome(latestMessages, baselineIds);
+      if (idleOutcome === null && idleAdvanced && outcome !== null) idleOutcome = outcome;
+      streaming = hasUnsettledAssistant(latestMessages, baselineIds);
+      produced = baselineIds === null ? true : hasFreshAssistant(latestMessages, baselineIds);
+      if (idleOutcome !== null) settledBy = "baseline_idle";
+    } else {
+      idleOutcome = freshIdleOutcome(latestMessages, baselineIds);
+      if (idleOutcome !== null) settledBy = "baseline_idle";
+      else if (idleAdvanced && outcome !== null) {
+        idleOutcome = outcome;
+        settledBy = "outcome";
+      }
+      streaming = hasUnsettledAssistant(latestMessages, baselineIds);
+      produced = baselineIds === null ? true : hasFreshAssistant(latestMessages, baselineIds);
+    }
+
     let terminal: string | null = idleOutcome;
     if (terminal === null && outcome !== null && baselineIds !== null && outcome !== staleOutcome) {
       terminal = outcome;
+      if (settledBy === null) settledBy = "outcome";
     }
-    if (terminal === null && rejectedAt !== null && quiescentPolls >= REJECT_QUIESCENT_POLLS) {
-      terminal = "failed";
-    }
-    if (registered && produced && !streaming && terminal === "succeeded") {
-      return {
-        status: "succeeded",
-        sessionId,
-        usage,
-        error: null,
-        contextTokens,
-        ...(resolvedModel ? { model: resolvedModel } : {}),
-      };
-    }
-    if (registered && produced && !streaming && terminal === "failed") {
+    const stalledPending =
+      pendingIdsNow.length > 0 ? pendingIdsNow.every((id) => rejectedIds.has(id)) : produced;
+    if (
+      terminal === null &&
+      rejectedAt !== null &&
+      quiescentPolls >= REJECT_QUIESCENT_POLLS &&
+      stalledPending
+    ) {
       const fallback =
         outcome === "failed" ? "turn failed" : "permission auto-rejected; turn did not continue";
+      try {
+        await interruptSession(opts.exec, opts.base, sessionId);
+      } catch {
+        void 0;
+      }
       return {
         status: "failed",
         sessionId,
@@ -562,21 +642,56 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
         error: turnErrorMessage(latestMessages) ?? fallback,
         contextTokens,
         ...(resolvedModel ? { model: resolvedModel } : {}),
+        settledBy: "permission_stalled",
+        anchorSeen,
+        promptMessageId: promptMessageID,
       };
     }
-    if (registered && produced && !streaming && terminal === "interrupted") {
-      return {
-        status: "interrupted",
-        sessionId,
-        usage,
-        error: "interrupted",
-        contextTokens,
-        ...(resolvedModel ? { model: resolvedModel } : {}),
-      };
+    if (produced && !streaming && terminal !== null) {
+      if (terminal === "succeeded") {
+        return {
+          status: "succeeded",
+          sessionId,
+          usage,
+          error: null,
+          contextTokens,
+          ...(resolvedModel ? { model: resolvedModel } : {}),
+          settledBy: settledBy ?? "outcome",
+          anchorSeen,
+          promptMessageId: promptMessageID,
+        };
+      }
+      if (terminal === "failed") {
+        const fallback =
+          outcome === "failed" ? "turn failed" : "permission auto-rejected; turn did not continue";
+        return {
+          status: "failed",
+          sessionId,
+          usage,
+          error: turnErrorMessage(latestMessages) ?? fallback,
+          contextTokens,
+          ...(resolvedModel ? { model: resolvedModel } : {}),
+          settledBy: settledBy ?? "outcome",
+          anchorSeen,
+          promptMessageId: promptMessageID,
+        };
+      }
+      if (terminal === "interrupted") {
+        return {
+          status: "interrupted",
+          sessionId,
+          usage,
+          error: "interrupted",
+          contextTokens,
+          ...(resolvedModel ? { model: resolvedModel } : {}),
+          settledBy: settledBy ?? "outcome",
+          anchorSeen,
+          promptMessageId: promptMessageID,
+        };
+      }
     }
     const nowTs = now();
     const waiting = waitStartedAt !== null;
-    const turnStarted = anchored === null || anchored.sawOurPrompt || promptMessageID === null;
     if (!waiting && opts.turnTimeoutMs !== undefined && opts.turnTimeoutMs > 0) {
       const executionMs = nowTs - startAt - waitAccumMs;
       if (executionMs >= opts.turnTimeoutMs) {
@@ -585,7 +700,6 @@ export async function runTurn(opts: TurnDriverOptions): Promise<TurnResult> {
     }
     if (
       !waiting &&
-      turnStarted &&
       opts.inactivityTimeoutMs !== undefined &&
       opts.inactivityTimeoutMs > 0 &&
       nowTs - lastActivityAt >= opts.inactivityTimeoutMs

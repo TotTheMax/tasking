@@ -96,7 +96,7 @@ opencode api session.interrupt --param sessionID=<ses_...>                  # �
 - **session 生命周期管理**:session 一经创建即写入 workspace sidecar 文件(`.tasking-session.json`,首轮中途重启也能被清扫发现);turn 2+ 复用同一 session;任务进入 terminal 状态触发工作区清理时,从 sidecar 读取 last session ID 删除会话。**失败重试不续用旧会话**——attempt 以 `failed`/`timed_out` 收场时,该 attempt 的会话立即 `session.remove`(孤儿清理,日志 `orphan session deleted`),下一次重试从全新会话开始。
 - **attempt 生命周期**:经历 `preparing_workspace` → `building_prompt` → `launching_agent` → `finishing`,终态为 `succeeded`/`failed`/`timed_out`/`stalled`/`canceled_by_reconciliation`。
 - **失败分类**:墙钟超时(`turn_timeout_ms`)→ `timed_out`(`turn_timeout`);不活跃超时(`inactivity_timeout_ms`)→ `timed_out`(`inactivity_timeout`);会话 failed 终态 → `failed`;停滞(scheduler 检测)→ `stalled`。
-- **计时器矩阵**:不活跃超时(10min,轮询周期无新消息)→ 墙钟超时(1h,执行预算)→ 停滞超时(2h,scheduler 层)。**等待审批期间不活跃与墙钟暂停**,由审批预算(30min)接管并自动拒绝。超时/中止走中断梯子(`session.interrupt` → 短宽限 → 清理残留 api 进程),不再有进程组击杀。
+- **计时器矩阵**:不活跃超时(10min,轮询周期无新消息)→ 墙钟超时(1h,执行预算)→ 停滞超时(2h,scheduler 层)。**等待审批期间不活跃与墙钟暂停**,由审批预算(30min)接管并自动拒绝;单轮累计审批等待达到该预算的 `2×` 时结算为 `permission_timeout`。不活跃计时的起点是 prompt 提交,因此即使 prompt 消息已被挤出分页消息列表也仍然有效。轮次完成由会话 idle 记录(`time.idle` 前进)加「本轮确有产出」护栏判定,而不是 prompt 消息在当前页的位置。超时/中止走中断梯子(`session.interrupt` → 短宽限 → 清理残留 api 进程),不再有进程组击杀。
 - **token 提取**:轮询到的消息与会话 tokens 累加(合计 = input+output+reasoning,cache 单列);不可用时回退到计时。
 - **daemon 重启清扫**:启动时对持久记录的会话经 `session.active` 过滤，仍在执行的补发 `interrupt`，任务按失败进正常重试。
 - **优雅停机 drain**:SIGINT/SIGTERM 时 `scheduler.stop()` 后有界等待(≤15s)在飞 attempt 结算——中断梯子先向服务端发 `interrupt` 杀掉服务端 turn,孤儿会话清理随之执行;超时才放弃退出。避免「daemon 死了、服务端 turn 还在烧 token」的僵尸窗口。

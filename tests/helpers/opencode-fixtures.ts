@@ -21,6 +21,7 @@ function load<T>(name: string): T {
 const TEMPLATES = {
   sessionCreate: load<Record<string, unknown>>("session-create"),
   sessionGet: load<Record<string, unknown>>("session-get-terminal"),
+  sessionGetRunning: load<Record<string, unknown>>("session-get-running"),
   messageList: load<Record<string, unknown>>("message-list-settled"),
   messageListTools: load<Record<string, unknown>>("message-list-tools"),
   messageListFailed: load<Record<string, unknown>>("message-list-failed"),
@@ -45,6 +46,10 @@ export function sessionCreateResponse(overrides: Record<string, unknown> = {}): 
 
 export function sessionGetResponse(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({ data: { ...dataOf(TEMPLATES.sessionGet), ...overrides } });
+}
+
+export function sessionGetRunningResponse(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({ data: { ...dataOf(TEMPLATES.sessionGetRunning), ...overrides } });
 }
 
 export function modelDefaultResponse(overrides: Record<string, unknown> = {}): string {

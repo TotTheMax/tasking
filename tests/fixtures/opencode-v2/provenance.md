@@ -22,7 +22,8 @@
 | 文件 | 内容 |
 |---|---|
 | `session-create.json` | `session.create` 响应：`data.{id,projectID,model{id,providerID,variant},cost,tokens{input,output,reasoning,cache{read,write}},time,...}` |
-| `session-get-running.json` / `session-get-terminal.json` | `session.get` 响应：运行中（`outcome:null`）与终态（`outcome:"succeeded"`） |
+| `session-get-running.json` | **turn 进行中**的 `session.get`（2026-11-20 真机重采集，v2.3.0）：`outcome` 仍是上一轮的 `"succeeded"`，`time.idle` 仍是上一轮的 idle 时间戳，只有 `time.updated`/`time.busy` 前进——证明会话级 `outcome` 不能当本轮完成信号，`time.idle` 前进才是 |
+| `session-get-terminal.json` | 终态 `session.get`：`outcome:"succeeded"`，`time.idle` 已前进到本轮结束时刻 |
 | `message-list-pending.json` | 待审批期间的消息列表：工具条目 `state.status:"running"` |
 | `message-list-tools.json` | 多工具真实条目（edit/write/read/glob/grep）：**v2 用 `path`**（read/write/edit），glob/grep 用 `pattern`（v1 的 read 用 `filePath`）——驱动 `toolSummary` 的面板摘要修复 |
 | `message-list-settled.json` | 完成后的消息列表：assistant 消息（`content[]` 含 `type:"tool"`，`name`、`state.{status,input,content[],metadata.{status,truncated,exit}}`、**条目级 `time.{created,ran,completed}`**）、`tokens`、`time.{created,streamed,completed}`；类型含 `idle/assistant/system/user` |

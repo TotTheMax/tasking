@@ -17,6 +17,7 @@ import {
   messageListFailedResponse,
   messageListResponse,
   modelRef,
+  permission,
   permissionListResponse,
   sessionCreateResponse,
   sessionGetResponse,
@@ -1103,7 +1104,7 @@ describe("runTurn timers and interrupt ladder", () => {
     expect(messageLists).toBe(3);
   });
 
-  it("does not run the inactivity clock while the prompt is still queued server-side", async () => {
+  it("arms the inactivity clock from prompt submission even when the prompt never registers", async () => {
     const old = () => [
       idleMessage({ id: "idle_q", outcome: "succeeded" }),
       assistantMessage({
@@ -1113,45 +1114,27 @@ describe("runTurn timers and interrupt ladder", () => {
         time: { created: 1, completed: 1 },
       }),
     ];
-    const done = () => [
-      idleMessage({ id: "idle_q2", outcome: "succeeded" }),
-      assistantMessage({
-        id: "msg_q_new",
-        content: [{ type: "text", text: "late" }],
-        tokens: { input: 2, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
-        time: { created: 2, completed: 3 },
-      }),
-      userMessage({ id: "msg_user_q" }),
-      ...old(),
-    ];
     let clock = 0;
-    let registered = false;
+    const calls: string[] = [];
     const exec: ApiExecFn = async (args) => {
       const op = args[2] ?? "";
+      calls.push(op);
       if (op === "session.prompt")
         return { exitCode: 0, stdout: '{"data":{"id":"msg_user_q"}}', stderr: "", timedOut: false };
       if (op === "session.get")
         return {
           exitCode: 0,
-          stdout: `{"data":{"id":"ses_x","outcome":${registered ? '"succeeded"' : '"succeeded"'}}}`,
+          stdout: '{"data":{"id":"ses_x","outcome":"succeeded"}}',
           stderr: "",
           timedOut: false,
         };
       if (op === "session.permission.list")
         return { exitCode: 0, stdout: '{"data":[]}', stderr: "", timedOut: false };
       if (op === "session.message.list")
-        return {
-          exitCode: 0,
-          stdout: messageListResponse(registered ? done() : old()),
-          stderr: "",
-          timedOut: false,
-        };
+        return { exitCode: 0, stdout: messageListResponse(old()), stderr: "", timedOut: false };
+      if (op === "session.interrupt")
+        return { exitCode: 0, stdout: interruptResponse(), stderr: "", timedOut: false };
       return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
-    };
-    const origSleep = (ms: number) => {
-      clock += ms;
-      if (clock > 900) registered = true;
-      return Promise.resolve();
     };
     const result = await runTurn({
       exec,
@@ -1165,31 +1148,55 @@ describe("runTurn timers and interrupt ladder", () => {
       inactivityTimeoutMs: 500,
       turnTimeoutMs: 60000,
       interruptGraceMs: 1,
-      sleep: origSleep,
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
       now: () => clock,
     });
-    expect(result.status).toBe("succeeded");
-    expect(clock).toBeGreaterThanOrEqual(900);
+    expect(result.status).toBe("timed_out");
+    expect(result.error).toBe("inactivity_timeout");
+    expect(calls).toContain("session.interrupt");
   });
 
   it("counts an advancing session.updatedAt as activity (long tool is not killed)", async () => {
     let calls = 0;
+    let listCalls = 0;
     let clock = 0;
     const exec: ApiExecFn = async (args) => {
       const op = args[2] ?? "";
       if (op === "session.prompt")
         return { exitCode: 0, stdout: '{"data":{}}', stderr: "", timedOut: false };
       if (op === "session.permission.list")
-        return { exitCode: 0, stdout: '{"data":[]}', stderr: "", timedOut: false };
-      if (op === "session.message.list")
-        return { exitCode: 0, stdout: '{"data":[]}', stderr: "", timedOut: false };
+        return { exitCode: 0, stdout: permissionListResponse([]), stderr: "", timedOut: false };
+      if (op === "session.message.list") {
+        listCalls += 1;
+        return {
+          exitCode: 0,
+          stdout:
+            listCalls === 1
+              ? messageListResponse([])
+              : messageListResponse([
+                  assistantMessage({
+                    id: "msg_activity",
+                    content: [{ type: "text", text: "working" }],
+                    tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+                    time: { created: 1, completed: 2 },
+                  }),
+                ]),
+          stderr: "",
+          timedOut: false,
+        };
+      }
       if (op === "session.get") {
         calls += 1;
         const done = calls >= 5;
         return {
           exitCode: 0,
-          stdout: JSON.stringify({
-            data: { id: "ses_x", outcome: done ? "succeeded" : null, time: { updated: clock + 1 } },
+          stdout: sessionGetResponse({
+            id: "ses_x",
+            outcome: done ? "succeeded" : null,
+            time: { updated: clock + 1 },
           }),
           stderr: "",
           timedOut: false,
@@ -1303,22 +1310,25 @@ describe("runTurn timers and interrupt ladder", () => {
   });
 
   it("a transient permission.list failure does not reconcile pendings away", async () => {
-    const pendingBody = JSON.stringify({
-      data: [{ id: "per_t", sessionID: "ses_x", action: "shell", resources: ["echo x"] }],
-    });
+    const pendingBody = permissionListResponse([
+      permission({ id: "per_t", sessionID: "ses_x", action: "shell", resources: ["echo x"] }),
+    ]);
     let listCalls = 0;
+    let messageCalls = 0;
     let clock = 0;
     const getCounter = { n: 0 };
     const exec: ApiExecFn = async (args) => {
       const op = args[2] ?? "";
       if (op === "session.prompt")
         return { exitCode: 0, stdout: '{"data":{}}', stderr: "", timedOut: false };
-      let getCalls = 0;
       if (op === "session.get") {
-        getCalls = ++getCounter.n;
+        const getCalls = ++getCounter.n;
         return {
           exitCode: 0,
-          stdout: `{"data":{"id":"ses_x","outcome":${getCalls >= 5 ? '"succeeded"' : "null"}}}`,
+          stdout: sessionGetResponse({
+            id: "ses_x",
+            outcome: getCalls >= 5 ? "succeeded" : null,
+          }),
           stderr: "",
           timedOut: false,
         };
@@ -1331,10 +1341,27 @@ describe("runTurn timers and interrupt ladder", () => {
         if (listCalls <= 4) {
           return { exitCode: 0, stdout: pendingBody, stderr: "", timedOut: false };
         }
-        return { exitCode: 0, stdout: '{"data":[]}', stderr: "", timedOut: false };
+        return { exitCode: 0, stdout: permissionListResponse([]), stderr: "", timedOut: false };
       }
-      if (op === "session.message.list")
-        return { exitCode: 0, stdout: '{"data":[]}', stderr: "", timedOut: false };
+      if (op === "session.message.list") {
+        messageCalls += 1;
+        return {
+          exitCode: 0,
+          stdout:
+            messageCalls === 1
+              ? messageListResponse([])
+              : messageListResponse([
+                  assistantMessage({
+                    id: "msg_perm",
+                    content: [{ type: "text", text: "after approval" }],
+                    tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+                    time: { created: 1, completed: 2 },
+                  }),
+                ]),
+          stderr: "",
+          timedOut: false,
+        };
+      }
       return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
     };
     const ingests: number[] = [];
@@ -1361,5 +1388,443 @@ describe("runTurn timers and interrupt ladder", () => {
     expect(ingests.length).toBeGreaterThanOrEqual(1);
     expect(ingests[0]).toBe(1);
     expect(result.status).toBe("succeeded");
+  });
+});
+
+describe("turn settlement without a stable prompt anchor", () => {
+  const oldHistory = () => [
+    idleMessage({ id: "idle_prev", outcome: "succeeded" }),
+    assistantMessage({
+      id: "msg_prev",
+      content: [{ type: "text", text: "prev" }],
+      tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+      time: { created: 1, completed: 2 },
+    }),
+    userMessage({ id: "msg_user_prev" }),
+  ];
+  const finishedTurn = () => [
+    idleMessage({ id: "idle_done", outcome: "succeeded" }),
+    assistantMessage({
+      id: "msg_done",
+      content: [{ type: "text", text: "answer" }],
+      tokens: { input: 3, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+      time: { created: 10, completed: 11 },
+    }),
+    userMessage({ id: "msg_user_new" }),
+    ...oldHistory(),
+  ];
+
+  it("settles after the prompt message falls out of the paged window", async () => {
+    let getCalls = 0;
+    let listCalls = 0;
+    let clock = 0;
+    const exec: ApiExecFn = async (args) => {
+      const op = args[2] ?? "";
+      if (op === "session.prompt")
+        return {
+          exitCode: 0,
+          stdout: '{"data":{"id":"msg_user_new"}}',
+          stderr: "",
+          timedOut: false,
+        };
+      if (op === "session.get") {
+        getCalls += 1;
+        return {
+          exitCode: 0,
+          stdout: sessionGetResponse({
+            id: "ses_x",
+            outcome: "succeeded",
+            time: { updated: getCalls * 100, idle: 50 + getCalls },
+          }),
+          stderr: "",
+          timedOut: false,
+        };
+      }
+      if (op === "session.permission.list")
+        return { exitCode: 0, stdout: permissionListResponse([]), stderr: "", timedOut: false };
+      if (op === "session.message.list") {
+        listCalls += 1;
+        const page =
+          listCalls === 1
+            ? oldHistory()
+            : listCalls === 2
+              ? [userMessage({ id: "msg_user_new" }), ...oldHistory()]
+              : finishedTurn().filter((m) => m.id !== "msg_user_new");
+        return { exitCode: 0, stdout: messageListResponse(page), stderr: "", timedOut: false };
+      }
+      return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+    };
+    const result = await runTurn({
+      exec,
+      base: { command: "opencode" },
+      directory: "/w",
+      prompt: "next",
+      sessionId: "ses_x",
+      createOptions: { autoApprove: false },
+      pollIntervalMs: 1,
+      permissionTimeoutMs: 60000,
+      turnTimeoutMs: 60000,
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      now: () => clock,
+    });
+    expect(result.status).toBe("succeeded");
+    expect(result.settledBy).toBe("baseline_idle");
+    expect(result.anchorSeen).toBe(true);
+    expect(result.promptMessageId).toBe("msg_user_new");
+  });
+
+  it("settles from a session idle advance when the prompt never appears in the page", async () => {
+    let getCalls = 0;
+    let listCalls = 0;
+    let clock = 0;
+    const exec: ApiExecFn = async (args) => {
+      const op = args[2] ?? "";
+      if (op === "session.prompt")
+        return {
+          exitCode: 0,
+          stdout: '{"data":{"id":"msg_user_hidden"}}',
+          stderr: "",
+          timedOut: false,
+        };
+      if (op === "session.get") {
+        getCalls += 1;
+        const running = getCalls === 1;
+        return {
+          exitCode: 0,
+          stdout: sessionGetResponse({
+            id: "ses_x",
+            outcome: "succeeded",
+            time: { updated: getCalls, idle: running ? 50 : 60 },
+          }),
+          stderr: "",
+          timedOut: false,
+        };
+      }
+      if (op === "session.permission.list")
+        return { exitCode: 0, stdout: permissionListResponse([]), stderr: "", timedOut: false };
+      if (op === "session.message.list") {
+        listCalls += 1;
+        const page =
+          listCalls === 1
+            ? oldHistory()
+            : [
+                assistantMessage({
+                  id: "msg_hidden_done",
+                  content: [{ type: "text", text: "done" }],
+                  tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+                  time: { created: 20, completed: 21 },
+                }),
+                ...oldHistory(),
+              ];
+        return { exitCode: 0, stdout: messageListResponse(page), stderr: "", timedOut: false };
+      }
+      return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+    };
+    const result = await runTurn({
+      exec,
+      base: { command: "opencode" },
+      directory: "/w",
+      prompt: "next",
+      sessionId: "ses_x",
+      createOptions: { autoApprove: false },
+      pollIntervalMs: 1,
+      permissionTimeoutMs: 60000,
+      turnTimeoutMs: 60000,
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      now: () => clock,
+    });
+    expect(result.status).toBe("succeeded");
+    expect(result.settledBy).toBe("outcome");
+    expect(result.anchorSeen).toBe(false);
+  });
+
+  it("does not settle on a late idle that has no fresh assistant", async () => {
+    let getCalls = 0;
+    let clock = 0;
+    const exec: ApiExecFn = async (args) => {
+      const op = args[2] ?? "";
+      if (op === "session.prompt")
+        return { exitCode: 0, stdout: '{"data":{"id":"msg_user_z"}}', stderr: "", timedOut: false };
+      if (op === "session.get") {
+        getCalls += 1;
+        return {
+          exitCode: 0,
+          stdout: sessionGetResponse({
+            id: "ses_x",
+            outcome: null,
+            time: { updated: 1, idle: getCalls === 1 ? 50 : 70 },
+          }),
+          stderr: "",
+          timedOut: false,
+        };
+      }
+      if (op === "session.permission.list")
+        return { exitCode: 0, stdout: permissionListResponse([]), stderr: "", timedOut: false };
+      if (op === "session.message.list")
+        return {
+          exitCode: 0,
+          stdout: messageListResponse([
+            idleMessage({ id: "idle_zombie", outcome: "succeeded" }),
+            ...oldHistory(),
+          ]),
+          stderr: "",
+          timedOut: false,
+        };
+      if (op === "session.interrupt")
+        return { exitCode: 0, stdout: interruptResponse(), stderr: "", timedOut: false };
+      return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+    };
+    const result = await runTurn({
+      exec,
+      base: { command: "opencode" },
+      directory: "/w",
+      prompt: "next",
+      sessionId: "ses_x",
+      createOptions: { autoApprove: false },
+      pollIntervalMs: 1,
+      permissionTimeoutMs: 60000,
+      turnTimeoutMs: 20,
+      interruptGraceMs: 1,
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      now: () => clock,
+    });
+    expect(result.status).toBe("timed_out");
+    expect(result.settledBy).toBe("turn_timeout");
+  });
+
+  it("does not settle while a fresh assistant is still streaming", async () => {
+    let clock = 0;
+    const exec: ApiExecFn = async (args) => {
+      const op = args[2] ?? "";
+      if (op === "session.prompt")
+        return { exitCode: 0, stdout: '{"data":{"id":"msg_user_s"}}', stderr: "", timedOut: false };
+      if (op === "session.get")
+        return {
+          exitCode: 0,
+          stdout: sessionGetResponse({
+            id: "ses_x",
+            outcome: "succeeded",
+            time: { updated: 1, idle: 99 },
+          }),
+          stderr: "",
+          timedOut: false,
+        };
+      if (op === "session.permission.list")
+        return { exitCode: 0, stdout: permissionListResponse([]), stderr: "", timedOut: false };
+      if (op === "session.message.list")
+        return {
+          exitCode: 0,
+          stdout: messageListResponse([
+            idleMessage({ id: "idle_s", outcome: "succeeded" }),
+            assistantMessage({
+              id: "msg_streaming",
+              content: [{ type: "text", text: "..." }],
+              tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+              time: { created: 5, streamed: 6 },
+            }),
+            ...oldHistory(),
+          ]),
+          stderr: "",
+          timedOut: false,
+        };
+      if (op === "session.interrupt")
+        return { exitCode: 0, stdout: interruptResponse(), stderr: "", timedOut: false };
+      return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+    };
+    const result = await runTurn({
+      exec,
+      base: { command: "opencode" },
+      directory: "/w",
+      prompt: "next",
+      sessionId: "ses_x",
+      createOptions: { autoApprove: false },
+      pollIntervalMs: 1,
+      permissionTimeoutMs: 60000,
+      turnTimeoutMs: 20,
+      interruptGraceMs: 1,
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      now: () => clock,
+    });
+    expect(result.status).toBe("timed_out");
+    expect(result.settledBy).toBe("turn_timeout");
+  });
+});
+
+describe("approval budget", () => {
+  it("settles with permission_timeout after the cumulative wait budget", async () => {
+    let clock = 0;
+    const calls: string[] = [];
+    const pendingBody = permissionListResponse([
+      permission({ id: "per_loop", sessionID: "ses_x", action: "shell", resources: ["echo x"] }),
+    ]);
+    const exec: ApiExecFn = async (args) => {
+      const op = args[2] ?? "";
+      calls.push(op);
+      if (op === "session.prompt")
+        return { exitCode: 0, stdout: '{"data":{"id":"msg_user_p"}}', stderr: "", timedOut: false };
+      if (op === "session.get")
+        return {
+          exitCode: 0,
+          stdout: sessionGetResponse({ id: "ses_x", outcome: null, time: { updated: 1 } }),
+          stderr: "",
+          timedOut: false,
+        };
+      if (op === "session.permission.list")
+        return { exitCode: 0, stdout: pendingBody, stderr: "", timedOut: false };
+      if (op === "session.permission.reply")
+        return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+      if (op === "session.message.list")
+        return { exitCode: 0, stdout: permissionListResponse([]), stderr: "", timedOut: false };
+      if (op === "session.interrupt")
+        return { exitCode: 0, stdout: interruptResponse(), stderr: "", timedOut: false };
+      return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+    };
+    const result = await runTurn({
+      exec,
+      base: { command: "opencode" },
+      directory: "/w",
+      prompt: "p",
+      sessionId: "ses_x",
+      createOptions: { autoApprove: false },
+      pollIntervalMs: 100,
+      permissionTimeoutMs: 100,
+      turnTimeoutMs: 60000,
+      interruptGraceMs: 1,
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      now: () => clock,
+    });
+    expect(result.status).toBe("timed_out");
+    expect(result.error).toBe("permission_timeout");
+    expect(result.settledBy).toBe("permission_cap");
+    expect(calls).toContain("session.interrupt");
+  });
+
+  it("settles a stuck pending list from the reject-quiescent fallback", async () => {
+    let clock = 0;
+    const pendingBody = permissionListResponse([
+      permission({ id: "per_stuck", sessionID: "ses_x", action: "shell", resources: ["echo x"] }),
+    ]);
+    const exec: ApiExecFn = async (args) => {
+      const op = args[2] ?? "";
+      if (op === "session.prompt")
+        return { exitCode: 0, stdout: '{"data":{"id":"msg_user_s"}}', stderr: "", timedOut: false };
+      if (op === "session.get")
+        return {
+          exitCode: 0,
+          stdout: sessionGetResponse({ id: "ses_x", outcome: null, time: { updated: 1 } }),
+          stderr: "",
+          timedOut: false,
+        };
+      if (op === "session.permission.list")
+        return { exitCode: 0, stdout: pendingBody, stderr: "", timedOut: false };
+      if (op === "session.permission.reply")
+        return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+      if (op === "session.message.list")
+        return { exitCode: 0, stdout: permissionListResponse([]), stderr: "", timedOut: false };
+      return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+    };
+    const result = await runTurn({
+      exec,
+      base: { command: "opencode" },
+      directory: "/w",
+      prompt: "p",
+      sessionId: "ses_x",
+      createOptions: { autoApprove: false },
+      pollIntervalMs: 1,
+      permissionTimeoutMs: 1000,
+      turnTimeoutMs: 60000,
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      now: () => clock,
+    });
+    expect(result.status).toBe("failed");
+    expect(result.settledBy).toBe("permission_stalled");
+  });
+});
+
+describe("approval wait and the inactivity clock", () => {
+  it("does not charge the approval wait against the inactivity budget", async () => {
+    let clock = 0;
+    let permissionCalls = 0;
+    let approvalClock = 0;
+    const pendingBody = permissionListResponse([
+      permission({ id: "per_slow", sessionID: "ses_x", action: "shell", resources: ["echo x"] }),
+    ]);
+    const exec: ApiExecFn = async (args) => {
+      const op = args[2] ?? "";
+      if (op === "session.prompt")
+        return { exitCode: 0, stdout: '{"data":{"id":"msg_user_w"}}', stderr: "", timedOut: false };
+      if (op === "session.get")
+        return {
+          exitCode: 0,
+          stdout: sessionGetResponse({ id: "ses_x", outcome: null, time: { updated: 1 } }),
+          stderr: "",
+          timedOut: false,
+        };
+      if (op === "session.permission.list") {
+        permissionCalls += 1;
+        if (permissionCalls <= 30) {
+          return { exitCode: 0, stdout: pendingBody, stderr: "", timedOut: false };
+        }
+        if (approvalClock === 0) approvalClock = clock;
+        return { exitCode: 0, stdout: permissionListResponse([]), stderr: "", timedOut: false };
+      }
+      if (op === "session.message.list") {
+        return {
+          exitCode: 0,
+          stdout: messageListResponse([
+            assistantMessage({
+              id: "msg_after_wait",
+              content: [{ type: "text", text: "working" }],
+              tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+              time: { created: 1, completed: 2 },
+            }),
+          ]),
+          stderr: "",
+          timedOut: false,
+        };
+      }
+      if (op === "session.interrupt")
+        return { exitCode: 0, stdout: interruptResponse(), stderr: "", timedOut: false };
+      return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false };
+    };
+    const result = await runTurn({
+      exec,
+      base: { command: "opencode" },
+      directory: "/w",
+      prompt: "p",
+      sessionId: "ses_x",
+      createOptions: { autoApprove: false },
+      pollIntervalMs: 10,
+      permissionTimeoutMs: 100000,
+      inactivityTimeoutMs: 200,
+      turnTimeoutMs: 100000,
+      interruptGraceMs: 1,
+      sleep: (ms) => {
+        clock += ms;
+        return Promise.resolve();
+      },
+      now: () => clock,
+    });
+    expect(result.status).toBe("timed_out");
+    expect(result.error).toBe("inactivity_timeout");
+    expect(clock - approvalClock).toBeGreaterThanOrEqual(200);
   });
 });

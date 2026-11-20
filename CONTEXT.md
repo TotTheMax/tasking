@@ -23,7 +23,16 @@ A single dispatch of a Task to a worker; `null` on first dispatch, incremented o
 _Avoid_: Run, iteration
 
 **Turn**:
-One prompt-driven unit within an attempt, submitted through the opencode v2 API; the worker loops turns up to `max_turns`, reusing the same opencode session between turns.
+One prompt-driven unit within an opencode session, submitted through the opencode v2 API — the Jira worker loops turns up to `max_turns`, while a direct session runs one turn per user message (or merged queue) and continues the same session.
+_Avoid_: Step, request, run
+
+**Turn settlement (轮次结算)**:
+Deciding a turn's final status and releasing its slot; exactly once per turn. A turn settles on a completion signal for that turn plus an output guard, or on a timeout/abort.
+_Avoid_: Completion detection, turn close
+
+**Idle record (idle 记录)**:
+The record opencode writes when a turn ends, carrying `outcome` (`succeeded`/`failed`/`interrupted`); the authoritative completion signal for that turn. It surfaces both as a `type: "idle"` entry in the session message list and as the session-level `time.idle` timestamp.
+_Avoid_: Status message, completion event
 
 **Workspace**:
 A per-task directory (a cloned repo) where the agent runs; preserved across review pauses, removed on terminal.
@@ -236,7 +245,7 @@ The process surface of one direct-session turn — that turn's assistant text an
 _Avoid_: 进度卡, session card, dashboard card
 
 **Segment card (分段卡片)**:
-The Feishu card that carries one continuous range of a turn's events. A turn may span several segment cards; only the newest is updated in place while the turn runs, the rest are sealed as history.
+The Feishu card that carries one continuous range of a turn's events. A turn may span several segment cards; only the newest is updated in place while the turn runs, the rest are sealed as history. A sealed segment is an immutable snapshot — including the session/turn status words in its header and body — and is never re-rendered.
 _Avoid_: 续卡, 子卡, 分片, chunk
 
 **Turn event (轮次事件)**:

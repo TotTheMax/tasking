@@ -59,6 +59,7 @@ export interface SessionInfo {
   outcome: string | null;
   tokens?: SessionTokens;
   updatedAt?: number | null;
+  idleAt?: number | null;
   model?: ResolvedModel;
 }
 
@@ -170,11 +171,13 @@ export async function getSession(
   const tokens = payload.tokens as SessionTokens | undefined;
   const time = payload.time as Record<string, unknown> | undefined;
   const updatedAt = typeof time?.updated === "number" ? time.updated : null;
+  const idleAt = typeof time?.idle === "number" ? time.idle : null;
   return {
     id: String(payload.id ?? sessionID),
     outcome: (payload.outcome as string | null) ?? null,
     ...(tokens ? { tokens } : {}),
     updatedAt,
+    idleAt,
     ...(payload.model !== undefined ? { model: parseResolvedModel(payload.model) } : {}),
   };
 }

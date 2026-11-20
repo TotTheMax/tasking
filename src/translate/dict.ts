@@ -315,6 +315,7 @@ export const EXACT: Record<string, string> = {
   "无事可做：tracker.kind 为 none 时评论镜像无 Jira 可用，而 feishu.direct 又被关闭 — 请启用 direct 或配置 Jira 源":
     "Nothing to do: with tracker.kind none the comment mirror has no Jira, and feishu.direct is disabled — enable direct or configure a Jira source",
   无输出超时: "no-output timeout",
+  审批超时: "approval timeout",
   "响应缺少 chat_id": "Response is missing chat_id",
   项目目录绝对路径: "Absolute path of the project directory",
   写入状态配置: "Write state config",
@@ -439,6 +440,7 @@ export const EXACT: Record<string, string> = {
   "删除失败（详见 daemon 日志）": "Delete failed (see daemon logs)",
   "再按一次 d 确认删除会话：": "Press d again to confirm deleting session: ",
   "本轮上下文已达 ≈": "This turn's context reached about",
+  "本轮已结束（卡片更新失败）": "This turn ended (card update failed)",
   "tokens；后续回复会明显变慢，建议发 /new 开新会话（目录不变、上下文清空）":
     "tokens; later replies will get much slower; send /new for a fresh session (same directory, context cleared)",
   已处理: "Handled",

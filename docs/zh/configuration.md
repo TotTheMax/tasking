@@ -143,10 +143,10 @@ worker 的 opencode v2 驱动配置（tasking 0.7 起要求 `opencode >=2.0 <3`�
 | `variant` | string\|null | `null` | 否 | provider 特定推理档位(如 `high`/`max`/`minimal`),映射 `Model.Ref.variant`。与 `model` 彼此独立 |
 | `turn_timeout_ms` | integer | `3600000`(1 小时) | 否 | 单次 turn 的执行墙钟超时（**等待审批期间暂停**）；超时走中断梯子并标记 `timed_out`(`turn_timeout`) |
 | `stall_timeout_ms` | integer | `7200000`(2 小时) | 否 | 停滞检测阈值(scheduler 层);`<= 0` 禁用。等待审批期间不判停滞 |
-| `inactivity_timeout_ms` | integer | `600000`(10 分钟) | 否 | 不活跃超时（轮询周期无新消息，**等待审批期间暂停**）；`<= 0` 禁用 |
+| `inactivity_timeout_ms` | integer | `600000`(10 分钟) | 否 | 不活跃超时（轮询周期无新消息）。计时自 prompt 提交起算——不等待 prompt 消息出现在分页消息列表里——**等待审批期间暂停**；`<= 0` 禁用 |
 | `auto_approve` | boolean | `true` | 否 | 会话级权限姿态：`true` 时建会话携带全放 ruleset（工作区 ask 规则被覆盖）；`false` 时听工作区规则——**`ask` 权限会挂起等待审批卡**（v1 的“自动拒绝”语义已废止，见 ADR 0036） |
 | `poll_interval_ms` | integer | `2000` | 否 | 轮询间隔（进度/审批/终态均由此节奏读取，见 ADR 0037） |
-| `permission_timeout_ms` | integer | `1800000`(30 分钟) | 否 | 审批等待预算；挂起期间接管计时，到点自动拒绝并盖章 |
+| `permission_timeout_ms` | integer | `1800000`(30 分钟) | 否 | 审批等待预算；挂起期间接管计时，到点自动拒绝并盖章。单轮**累计**审批等待达到该值的 `2×` 时同样结算为 `permission_timeout`（覆盖反复申请或服务端不理会 reject 的情况） |
 | `server_url` | string\|null | `null` | 否 | 逃生口：非空时所有 api 调用透传 `--server <url>`；默认自动发现机器共享后台服务 |
 
 worker 的 turn 经 `opencode api` 驱动：首 turn `session.create`（显式 location=工作区、`Model.Ref`、按需全放 ruleset）→ `session.prompt`；进度与终态由轮询 `session.get` / `session.permission.list` / `session.message.list` 取得；超时/中止经 `session.interrupt`。`agent` 每 turn 从任务的 `agent:<name>` 标签(若有)重新解析，回退到 `opencode.agent`，在 turn 边界经会话切换生效；详见 [飞书↔Jira 评论桥](./usage.md) 的 `/agent` 命令与 ADR 0011。

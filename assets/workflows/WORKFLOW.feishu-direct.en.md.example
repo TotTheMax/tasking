@@ -155,9 +155,9 @@ opencode:
   # Set above turn_timeout_ms so normal turns are not mis-killed.
   stall_timeout_ms: 7200000
 
-  # Inactivity timeout (ms). SIGTERM after stdout/stderr produces no data for this long.
+  # Inactivity timeout (ms). Interrupt the turn after this long with no new messages while polling.
   # Default 600000 = 10 minutes. Set 0 to disable the inactivity timeout.
-  # Subprocess level: checks raw bytes and resets the timer whenever data arrives.
+  # The clock starts at prompt submission and pauses while waiting for approval.
   inactivity_timeout_ms: 600000
 
 # ============================================================================

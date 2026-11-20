@@ -33,6 +33,7 @@ export interface DirectTurnRequest {
   onPendingPermissions?: (pending: PendingPermission[]) => void | Promise<void>;
   onPermissionReply?: (requestID: string, decision: "once" | "always" | "reject") => void;
   onWaitingForApproval?: (waiting: boolean) => void;
+  onAnchorLost?: () => void;
   signal?: AbortSignal;
 }
 
@@ -115,6 +116,7 @@ export function createDefaultTurnDriver(exec: ApiExecFn): DirectTurnDriver {
       onPendingPermissions: request.onPendingPermissions,
       onPermissionReply: request.onPermissionReply,
       onWaitingForApproval: request.onWaitingForApproval,
+      onAnchorLost: request.onAnchorLost,
       signal: request.signal,
     });
     return { ...result, postureOpened: postureOpen, agentSwitched, modelSwitched };

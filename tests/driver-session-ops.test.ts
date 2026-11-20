@@ -23,6 +23,7 @@ import {
   permissionListResponse,
   sessionCreateResponse,
   sessionGetResponse,
+  sessionGetRunningResponse,
   userMessage,
 } from "./helpers/opencode-fixtures.js";
 
@@ -74,6 +75,29 @@ describe("resolved model read-back", () => {
     ]);
     const session = await getSession(exec, base, "ses_1");
     expect(session.model).toBeUndefined();
+  });
+});
+
+describe("session idle timestamp", () => {
+  it("reads time.idle from the captured session.get payload", async () => {
+    const { exec } = recorder([sessionGetResponse()]);
+    const session = await getSession(exec, base, "ses_1");
+    expect(session.idleAt).toBe(1792142260321);
+  });
+
+  it("returns null when time.idle is absent", async () => {
+    const { exec } = recorder([sessionGetResponse({ time: { created: 1, updated: 2 } })]);
+    const session = await getSession(exec, base, "ses_1");
+    expect(session.idleAt).toBeNull();
+  });
+
+  it("keeps the previous turn's idle and outcome while a turn is running", async () => {
+    const { exec } = recorder([sessionGetRunningResponse()]);
+    const session = await getSession(exec, base, "ses_1");
+    expect(session.outcome).toBe("succeeded");
+    expect(session.idleAt).toBe(1795158315015);
+    expect(session.updatedAt).toBe(1795158318316);
+    expect(session.updatedAt).toBeGreaterThan(session.idleAt ?? 0);
   });
 });
 

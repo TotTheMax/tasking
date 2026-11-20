@@ -142,6 +142,7 @@ interface SessionRuntime {
   flushInFlight: boolean;
   flushQueued: boolean;
   flushPromise: Promise<void> | null;
+  lastCardError: "retryable" | "permanent" | null;
 }
 
 interface TurnStats {
@@ -1412,6 +1413,7 @@ export class DirectSessionManager {
         flushInFlight: false,
         flushQueued: false,
         flushPromise: null,
+        lastCardError: null,
       };
       this.runtime.set(rootId, rt);
     }
@@ -1541,6 +1543,7 @@ export class DirectSessionManager {
     const detailed = this.deps.config().feishu.direct.verbosity === "detailed";
     const replyCard = this.deps.feishu.replyCardInThread;
     rt.cardsAvailable = true;
+    rt.lastCardError = null;
     if (!detailed || !replyCard) {
       rt.cardsAvailable = false;
       return;
@@ -1611,12 +1614,16 @@ export class DirectSessionManager {
     );
   }
 
-  private async flushTurnCard(rootId: string): Promise<void> {
+  private async flushTurnCard(rootId: string, wait = false): Promise<void> {
     const rt = this.runtimeFor(rootId);
     if (rt.turn === null) return;
     if (rt.flushInFlight) {
       rt.flushQueued = true;
-      return;
+      if (!wait) return;
+      for (let i = 0; i < 5 && rt.flushInFlight; i++) {
+        await rt.flushPromise?.catch(() => {});
+      }
+      if (rt.turn === null) return;
     }
     rt.flushInFlight = true;
     const flight = this.flushTurnCardInner(rootId);
@@ -1689,6 +1696,7 @@ export class DirectSessionManager {
       };
       try {
         await updateCard.call(this.deps.feishu, rt.cardId, renderedCard);
+        rt.lastCardError = null;
         applySuccess();
         return;
       } catch (e) {
@@ -1698,6 +1706,7 @@ export class DirectSessionManager {
         });
         if (!isRetryableCardError(e)) {
           rt.cardsAvailable = false;
+          rt.lastCardError = "permanent";
         } else {
           const base = this.deps.cardRetryDelayMs ?? CARD_RETRY_DELAY_MS;
           const jitter = base <= 0 ? 0 : Math.floor(Math.random() * CARD_RETRY_JITTER_MS);
@@ -1705,14 +1714,16 @@ export class DirectSessionManager {
           if (rt.turn === turn && rt.cardId !== null) {
             try {
               await updateCard.call(this.deps.feishu, rt.cardId, renderedCard);
+              rt.lastCardError = null;
               applySuccess();
               return;
             } catch (retryError) {
-              this.deps.logger.warn("direct card update retry failed; falling back to text", {
+              this.deps.logger.warn("direct card update retry failed; will retry on next flush", {
                 root_id: rootId,
                 error: toTaskingError(retryError).message,
               });
-              rt.cardsAvailable = false;
+              rt.lastCardError = "retryable";
+              return;
             }
           }
         }
@@ -2030,7 +2041,18 @@ export class DirectSessionManager {
     if (!rt.turn) return;
     rt.turn.phase = phase;
     if (durationSec !== undefined) rt.turn.durationSec = durationSec;
-    await this.flushTurnCard(rootId);
+    await this.flushTurnCard(rootId, true);
+    if (phase === "running" || rt.cardId === null) return;
+    const base = this.deps.cardRetryDelayMs ?? CARD_RETRY_DELAY_MS;
+    for (let attempt = 0; attempt < 2 && rt.lastCardError === "retryable"; attempt++) {
+      await sleepUnrefed(base * (attempt + 1));
+      rt.cardsAvailable = true;
+      rt.lastCardError = null;
+      await this.flushTurnCard(rootId, true);
+    }
+    if (rt.lastCardError !== null) {
+      await this.replySafe(rootId, translate("本轮已结束（卡片更新失败）"));
+    }
   }
 
   private async acquireSlot(): Promise<void> {
@@ -2186,6 +2208,15 @@ export class DirectSessionManager {
           rt.waitingApproval = waiting;
           rt.waitingSince = waiting ? Date.now() : null;
         },
+        onAnchorLost: () => {
+          this.deps.logger.warn(
+            "direct turn anchor lost; settling by session idle / baseline output",
+            {
+              root_id: session.root_id,
+              session_id: sessionId ?? undefined,
+            },
+          );
+        },
         signal: abort.signal,
       });
     } catch (e) {
@@ -2241,6 +2272,12 @@ export class DirectSessionManager {
       root_id: session.root_id,
       status: result.status,
       resolved_model: resolvedModelKey,
+      error: result.error,
+      duration_ms: Date.now() - startedAt,
+      tools: stats.toolCalls,
+      settled_by: result.settledBy ?? null,
+      anchor_seen: result.anchorSeen ?? null,
+      prompt_message_id: result.promptMessageId ?? null,
     });
 
     const usage = result.usage;
@@ -2266,7 +2303,9 @@ export class DirectSessionManager {
     if (result.status === "timed_out") {
       const reason = result.error?.includes("inactivity_timeout")
         ? translate("无输出超时")
-        : translate("整体超时");
+        : result.error?.includes("permission_timeout")
+          ? translate("审批超时")
+          : translate("整体超时");
       this.deps.store.markDirectSessionStatus(session.root_id, "idle");
       await this.finalizeTurnCard(session.root_id, "failed", stats, durationSec);
       await this.replySafe(

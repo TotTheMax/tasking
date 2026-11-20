@@ -202,6 +202,7 @@ class FakeRunner {
     events: TurnDriverEvent[],
     exitCode = 0,
     model?: Record<string, unknown>,
+    extra: Partial<DirectTurnOutcome> = {},
   ): void {
     const call = this.calls[index];
     for (const evt of events) call?.onEvent?.(evt);
@@ -215,6 +216,7 @@ class FakeRunner {
       error: status === "succeeded" ? null : `exit ${exitCode}`,
       postureOpened: this.calls[index]?.request.autoApprove ?? false,
       ...(model ? { model } : {}),
+      ...extra,
     });
   }
 
@@ -2044,7 +2046,9 @@ function failingUpdatePort(feishu: FakeFeishu): DirectFeishuPort {
     replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
     replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
     updateCard: async () => {
-      throw new Error("card update failed");
+      throw new TaskingError("feishu_api_status", "feishu updateCard failed: 400", {
+        status: 400,
+      });
     },
   };
 }
@@ -2169,7 +2173,11 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
       replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
       updateCard: async (messageId, card) => {
-        if (failUpdates) throw new Error("card update failed");
+        if (failUpdates) {
+          throw new TaskingError("feishu_api_status", "feishu updateCard failed: 400", {
+            status: 400,
+          });
+        }
         await feishu.updateCard(messageId, card);
       },
     };
@@ -2211,7 +2219,11 @@ describe("DirectSessionManager turn cards (detailed)", () => {
         new Promise<void>((resolve, reject) => {
           updateCalls++;
           if (updateCalls > 1 || failUpdates) {
-            reject(new Error("card update failed"));
+            reject(
+              new TaskingError("feishu_api_status", "feishu updateCard failed: 400", {
+                status: 400,
+              }),
+            );
             return;
           }
           firstUpdate = resolve;
@@ -2278,15 +2290,17 @@ describe("DirectSessionManager turn cards (detailed)", () => {
     expect(feishu.sent("om_dr1").some((t) => t.includes("🔧"))).toBe(false);
   });
 
-  it("falls back to a single merged incremental text when the delayed retry also fails", async () => {
+  it("keeps the card alive after a retryable update failure instead of falling back to text", async () => {
     const feishu = new FakeFeishu();
     const runner = new FakeRunner();
     let failed = false;
+    let attempts = 0;
     const port: DirectFeishuPort = {
       replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
       replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
       replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
       updateCard: async (messageId, card) => {
+        attempts++;
         if (failed) {
           throw new TaskingError("feishu_api_status", "feishu updateCard failed: 504", {
             status: 504,
@@ -2310,12 +2324,17 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       timeout: 4000,
     });
     failed = true;
-    runner.finish(0, [toolEvent("降级增量"), textEvent("完成")]);
+    runner.calls[0]?.onEvent?.({ ...toolEvent("抖动期间"), exit: 1 });
+    await vi.waitFor(() => expect(attempts).toBeGreaterThanOrEqual(3), { timeout: 4000 });
+    failed = false;
+    runner.calls[0]?.onEvent?.({ ...toolEvent("恢复后"), exit: 1 });
+    await vi.waitFor(
+      () => expect(JSON.stringify(feishu.updates.at(-1)?.card)).toContain("恢复后"),
+      { timeout: 4000 },
+    );
+    expect(feishu.sent("om_dr2").some((t) => t.includes("🔧"))).toBe(false);
+    runner.finish(0, [textEvent("完成")]);
     await mgr.whenIdle();
-    const toolTexts = feishu.sent("om_dr2").filter((t) => t.includes("🔧"));
-    expect(toolTexts).toHaveLength(1);
-    expect(toolTexts[0]).toContain("降级增量");
-    expect(toolTexts[0]).not.toContain("已上卡");
   });
 
   it("recovers card mode on the next turn after a fallback turn", async () => {
@@ -2328,8 +2347,8 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
       updateCard: async (messageId, card) => {
         if (failed) {
-          throw new TaskingError("feishu_api_status", "feishu updateCard failed: 504", {
-            status: 504,
+          throw new TaskingError("feishu_api_status", "feishu updateCard failed: 400", {
+            status: 400,
           });
         }
         await feishu.updateCard(messageId, card);
@@ -2441,8 +2460,8 @@ describe("DirectSessionManager turn cards (detailed)", () => {
       replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
       updateCard: async () => {
         updateAttempts++;
-        throw new TaskingError("feishu_api_status", "feishu updateCard failed: 504", {
-          status: 504,
+        throw new TaskingError("feishu_api_status", "feishu updateCard failed: 400", {
+          status: 400,
         });
       },
     };
@@ -3274,6 +3293,68 @@ describe("DirectSessionManager card update resilience", () => {
     expect(store.getDirectSession("om_rt1")?.card_message_id).toBe("om_card_1");
   });
 
+  it("retries the terminal card update and lands on the completed card", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    let failTerminal = true;
+    const mgr = new DirectSessionManager({
+      feishu: {
+        replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+        replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+        replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
+        updateCard: async (messageId, card) => {
+          if (failTerminal && JSON.stringify(card).includes("✅ 完成")) {
+            failTerminal = false;
+            throw new TaskingError("feishu_api_status", "feishu updateCard failed: 504", {
+              status: 504,
+            });
+          }
+          await feishu.updateCard(messageId, card);
+        },
+      },
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_term1", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("答")]);
+    await mgr.whenIdle();
+    expect(feishu.updateJson().some((c) => c.includes("✅ 完成"))).toBe(true);
+    expect(feishu.sent("om_term1").some((t) => t.includes("卡片更新失败"))).toBe(false);
+  });
+
+  it("posts a text note when the terminal card update never lands", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu: {
+        replyInThread: (rootId, text) => feishu.replyInThread(rootId, text),
+        replyFlat: (rootId, text) => feishu.replyFlat(rootId, text),
+        replyCardInThread: (rootId, card) => feishu.replyCardInThread(rootId, card),
+        updateCard: async () => {
+          throw new TaskingError("feishu_api_status", "feishu updateCard failed: 504", {
+            status: 504,
+          });
+        },
+      },
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_term2", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("答")]);
+    await mgr.whenIdle();
+    expect(feishu.sent("om_term2").some((t) => t.includes("本轮已结束（卡片更新失败）"))).toBe(
+      true,
+    );
+  });
+
   it("flushes as soon as a tool fails, without waiting for the coalescing window", async () => {
     const feishu = new FakeFeishu();
     const runner = new FakeRunner();
@@ -3298,6 +3379,60 @@ describe("DirectSessionManager card update resilience", () => {
     expect(JSON.stringify(feishu.updates[0]?.card)).toContain("systemctl status jenkins");
     runner.finish(0, [textEvent("答")]);
     await mgr.whenIdle();
+  });
+});
+
+describe("DirectSessionManager settlement observability", () => {
+  it("logs the settlement path, prompt id and anchor loss", async () => {
+    const lines: string[] = [];
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(lines),
+      turnDriver: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_obs1", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.calls[0]?.request.onAnchorLost?.();
+    runner.finish(0, [textEvent("答")], 0, undefined, {
+      settledBy: "baseline_idle",
+      anchorSeen: true,
+      promptMessageId: "msg_prompt1",
+    });
+    await mgr.whenIdle();
+    expect(lines.find((l) => l.includes("direct turn anchor lost"))).toContain("om_obs1");
+    const finished = lines.find((l) => l.includes("direct turn finished")) ?? "";
+    expect(finished).toContain('"settled_by":"baseline_idle"');
+    expect(finished).toContain('"anchor_seen":true');
+    expect(finished).toContain('"prompt_message_id":"msg_prompt1"');
+    expect(finished).toContain('"error":null');
+    expect(finished).toContain('"tools":0');
+  });
+
+  it("labels a permission budget timeout as an approval timeout", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => directConfig({ verbosity: "detailed" }),
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+      cardRetryDelayMs: 0,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_obs2", text: "/chat tasking 干活" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [textEvent("等审批")], 124, undefined, {
+      status: "timed_out",
+      error: "permission_timeout",
+      settledBy: "permission_cap",
+    });
+    await mgr.whenIdle();
+    expect(feishu.sent("om_obs2").some((t) => t.includes("审批超时"))).toBe(true);
   });
 });
 
