@@ -1996,6 +1996,39 @@ describe("DirectSessionManager stop-then-continue regression", () => {
       store2.close();
     }
   });
+
+  it("runs a follow-up queued after /stop once the aborted turn finishes", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const store2 = new BindingStoreImpl(
+      join(mkdtempSync(join(tmpdir(), "tas-stop-reg2-")), "b.db"),
+    );
+    const mgr = new DirectSessionManager({
+      feishu,
+      store: store2,
+      config: directConfig,
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    try {
+      await mgr.handleIntakeMessage(msg({ message_id: "om_sq1", text: "/chat tasking 长" }));
+      await runner.waitForCall(1);
+      await mgr.handleThreadMessage(
+        msg({ message_id: "om_sq2", root_id: "om_sq1", text: "/stop", create_time: "1700000120" }),
+      );
+      await mgr.handleThreadMessage(
+        msg({ message_id: "om_sq3", root_id: "om_sq1", text: "继续", create_time: "1700000121" }),
+      );
+      runner.finish(0, [textEvent("部分")]);
+      await runner.waitForCall(2);
+      expect(runner.calls[1]?.cmd[runner.calls[1].cmd.length - 1]).toBe("继续");
+      runner.finish(1, [textEvent("继续答")]);
+      await mgr.whenIdle();
+      expect(feishu.sent("om_sq1").some((t) => t.includes("继续答"))).toBe(true);
+    } finally {
+      store2.close();
+    }
+  });
 });
 
 function noCardPort(feishu: FakeFeishu): DirectFeishuPort {

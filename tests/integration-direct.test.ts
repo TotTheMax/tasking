@@ -240,7 +240,7 @@ describe.skipIf(!enabled)("Direct session real API integration", () => {
         try {
           await waitFor(async () => {
             followUpReplies = await feishu.listThreadReplies(threadId, followUpAt);
-            return followUpReplies.some((m) => m.sender_type === "app" && m.text.trim() !== "");
+            return followUpReplies.some((m) => m.sender_type === "app" && m.text.includes("好的"));
           }, TURN_WAIT_MS);
         } catch (e) {
           logger.info(
@@ -248,7 +248,10 @@ describe.skipIf(!enabled)("Direct session real API integration", () => {
           );
           throw e;
         }
-        expect(bindings.getDirectSession(rootMsgId)?.status).toBe("idle");
+        await waitFor(
+          async () => bindings.getDirectSession(rootMsgId)?.status === "idle",
+          TURN_WAIT_MS,
+        );
       } finally {
         mgr.stop();
         bindings.close();

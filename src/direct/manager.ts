@@ -1477,12 +1477,18 @@ export class DirectSessionManager {
           this.releaseDir(session.path);
         }
         if (rt.queue.length === 0) break;
+        if (this.halted || rt.stopRequested) break;
         prompt = rt.queue.join("\n---\n");
         rt.queue = [];
         retriedFrom = undefined;
       }
     } finally {
       rt.turnInFlight = false;
+      const pending = rt.queue;
+      rt.queue = [];
+      if (pending.length > 0 && !this.halted) {
+        this.enqueueTurn(rootId, pending.join("\n---\n"));
+      }
     }
   }
 
