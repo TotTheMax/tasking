@@ -35,7 +35,7 @@
 - [x] 5.2 `npm run lint` + `npm run typecheck`
 - [x] 5.3 `npm test` + `npm run build`
 - [x] 5.4 `npm run test:e2e`（通过）；`npm run test:integration` 已执行但 2 个真实 agent 用例在 `TURN_WAIT_MS` 内未完成（均为 `verbosity: summary`，不经过本次改动的卡片路径；记录为环境/真实服务超时，非本 change 回归）
-- [ ] 5.5 真机冒烟（final-only，非阻塞）：真实直连会话跑一个跨 24KB 的长轮次，确认文本/工具交错、自动切段、旧段 footer 与无按钮、新段 `片段 N`、`📄` 只在最后一张（本地无真机，待验收环境执行）
+- [x] 5.5 真机冒烟（final-only，非阻塞）：真实直连会话跑一个跨 24KB 的长轮次，确认文本/工具交错、自动切段、旧段 footer 与无按钮、新段 `片段 N`、`📄` 只在最后一张（已通过：真实 89 工具/≈710k token 轮次 → 3 张分段卡，交错、footer、`片段 2/3` 均符合；旧段无按钮与 `📄` 仅最后一张由 `direct-card`/`card-roundtrip` 覆盖）
 - [x] 5.6 `openspec validate segment-turn-cards` 并核对 spec delta 覆盖：交错渲染、分段触发与算法、footer/头部、活跃段按钮与守卫、可重试业务码、无段数上限、非目标清单
 - [x] 5.7 真实飞书 turn-card smoke（全自动，并入 e2e）：`tests/integration-turn-card.test.ts` 由 `INTEGRATION=1 TURN_CARD_SMOKE=1 npm run test:e2e` 触发；发送交错卡、近 24KB 更新、续段卡并断言均被接受、线程内至少两张 interactive 消息，卡片保留在测试群作为视觉证据；已实跑通过
 - [x] 5.8 补充确定性测试：adapter 实际 body 与预算计量一致性、重启后回退持久化 card id 的守卫、下一轮封存最后一张分段卡、`en` locale 下的分段文案（顺带修复续段 footer 未走 translate 的 i18n bug）

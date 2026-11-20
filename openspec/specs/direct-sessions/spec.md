@@ -41,17 +41,6 @@ Feishu intake 群 `/chat` 直连 opencode 会话：绕过 Jira，在固定目录
 - **WHEN** 直连话题内收到用户消息
 - **THEN** 系统不向任何 Jira issue 发评论，也不查找 Jira binding
 
-### Requirement: 运行中追问排队、同目录串行
-同一会话同时最多一个在跑 turn；turn 运行期间到达的追问 SHALL 进入该会话的内存队列并在当前 turn 结束后按 FIFO 合并续跑（多条合并为一个 prompt，以 `\n---\n` 分隔）；同一目录同时最多一个 turn 在执行（跨会话排队）；daemon 全局同时执行的直连 turn 数 SHALL 不超过 `feishu.direct.max_concurrent`（默认 5，独立于 Jira 的 `max_concurrent_agents`）。
-
-#### Scenario: 运行中到达的追问被排队
-- **WHEN** 会话 turn 运行中话题内又到达两条消息
-- **THEN** 系统立即回复排队 ACK，当前 turn 结束后将两条消息合并为一个 prompt 续跑一次
-
-#### Scenario: 超出并发预算时等待
-- **WHEN** 已有 `max_concurrent` 个直连 turn 在跑，另一会话的新消息到达
-- **THEN** 该会话的 turn 等待有空位后执行，且不占用 Jira dispatch 的并发额度
-
 ### Requirement: 每 turn 子进程执行复用 worker 原语
 直连 turn SHALL 经 opencode-v2-driver 驱动（与 worker 层同一驱动器实例语义）：首 turn `session.create`（`location.directory`=固定目录、model/variant 映射、直连 `auto_approve` 生效时全放 ruleset）→ `session.prompt`；后续轮对同一 session 继续 prompt。超时/不活跃/审批等待语义 SHALL 与 worker 层一致（复用 `opencode.turn_timeout_ms` / `opencode.inactivity_timeout_ms` / `opencode.permission_timeout_ms`）。直连路径 SHALL 不执行 workspace 创建、hooks、MCP 注入或 Liquid 模板渲染，SHALL NOT 写入目标目录任何 `.opencode/` 配置。
 
@@ -69,21 +58,26 @@ Feishu intake 群 `/chat` 直连 opencode 会话：绕过 Jira，在固定目录
 - **THEN** 对 `ses_x` 继续 `session.prompt`
 
 ### Requirement: 每 turn 一条总结消息（verbosity 可选）
-用户消息入队时系统 SHALL 立即给出可见反馈；turn 结束后系统 SHALL 在话题内发送恰好一条结果：最后一刻 assistant 文本 + 一行统计（耗时、工具调用次数、token 用量）。`summary` 与 `quiet` 下结果 SHALL 为文本消息（quiet 省略统计行、仅正文 + 权限拒绝提示），超长时截断。`feishu.direct.verbosity: detailed`（**默认**）下系统 SHALL 为该 turn 创建并原地更新一张轮次卡片（见"每 turn 一张轮次卡片"），结果 SHALL 以**结果卡片**投递：完整 assistant 文本按 markdown 渲染（标题/粗体/表格/代码块）+ 统计行；结果超出卡片预算时 SHALL 改为把完整文本作为 `.md` 文件附件发到话题，附件不可用则降级为长文本，仍装不下则提示去 TUI 活动视图。任何 verbosity 下系统 SHALL NOT 再为单个工具调用单独发送文本消息；detailed 下轮次卡片 SHALL NOT 复述最终 assistant 文本（它由结果卡片承载），只保留中间步骤文本。轮次卡片的折叠面板需飞书/Lark 客户端 ≥ V7.9 渲染；更低版本显示「请升级」占位符（ SHALL NOT 崩溃或影响结果投递），该版本要求 SHALL 写入模板注释与双语文档，`verbosity: summary` 是显式回退。
+
+用户消息入队时系统 SHALL 立即给出可见反馈；turn 结束后系统 SHALL 在话题内发送恰好一条结果：最后一刻 assistant 文本 + 一行统计（耗时、工具调用次数、token 用量）。`summary` 与 `quiet` 下结果 SHALL 为文本消息（quiet 省略统计行、仅正文 + 权限拒绝提示），超长时截断。`feishu.direct.verbosity: detailed`（**默认**）下系统 SHALL 为该 turn 创建并原地更新一张或多张分段卡片（见"每 turn 一张轮次卡片"），结果 SHALL 以**结果卡片**投递：完整 assistant 文本按 markdown 渲染（标题/粗体/表格/代码块）+ 统计行；结果超出卡片预算时 SHALL 改为把完整文本作为 `.md` 文件附件发到话题，附件不可用则降级为长文本，仍装不下则提示去 TUI 活动视图。任何 verbosity 下系统 SHALL NOT 再为单个工具调用单独发送文本消息；detailed 下过程卡片 SHALL NOT 复述最终 assistant 文本（它由结果卡片承载），只保留中间步骤文本。轮次卡片声明卡片 JSON 2.0 结构，因此实际要求飞书/Lark 客户端 ≥ V7.20（折叠面板组件本身自 V7.9 提供）；低于该版本显示「请升级」占位符（SHALL NOT 崩溃或影响结果投递），该版本要求 SHALL 写入模板注释与双语文档，`verbosity: summary` 是显式回退。
 
 #### Scenario: summary 模式的交付形状
+
 - **WHEN** verbosity=summary 的会话完成一次成功的 turn
 - **THEN** 话题内只新增一条 bot 消息，含 assistant 最终文本与一行统计
 
 #### Scenario: detailed 模式的交付形状（含默认）
+
 - **WHEN** verbosity=detailed（含未配置 verbosity 的缺省情形）的会话完成一次含 3 个工具调用的 turn
-- **THEN** 话题内新增一张承载这 3 个工具明细的轮次卡片与一张 markdown 结果卡片，且不存在逐个工具的单条文本消息
+- **THEN** 话题内新增一张承载这 3 个工具明细的轮次卡片（或该轮最后一张分段卡片）与一张 markdown 结果卡片，且不存在逐个工具的单条文本消息
 
 #### Scenario: 超长回答改为文件投递
+
 - **WHEN** detailed 下某轮的回答超出卡片预算
 - **THEN** 完整回答以 `.md` 文件附件发到话题；附件不可用时降级为长文本
 
 #### Scenario: turn 超时
+
 - **WHEN** 某 turn 触发 wall_clock 或 inactivity 超时
 - **THEN** 系统在话题内报告中断原因，会话转入可继续追问状态
 
@@ -158,7 +152,7 @@ TUI SHALL 以独立区块列出活跃（`running`/`idle`）直连会话，数据
 - **THEN** 其状态变为 expired，话题内新消息收到终结提示，opencode session 被删除，最近的轮次卡片被收尾为已过期
 
 ### Requirement: feishu.direct 零配置默认可用
-`feishu.enabled` 为 true 时直连功能 SHALL 默认启用（`feishu.direct` 段缺失 = 全默认值；段内显式 `enabled: false` 关闭）。`projects` 可为空（path 模式即可用）。所有其他项 SHALL 有合理默认值：`path_roots: []`、`auto_approve: false`、`verbosity: detailed`、`max_concurrent: 5`、`idle_ttl_ms: 30 天`。
+`feishu.enabled` 为 true 时直连功能 SHALL 默认启用（`feishu.direct` 段缺失 = 全默认值；段内显式 `enabled: false` 关闭）。`projects` 可为空（path 模式即可用）。所有其他项 SHALL 有合理默认值：`path_roots: []`、`auto_approve: false`、`verbosity: detailed`、`max_concurrent: 5`、`max_concurrent_turns_per_dir: 1`、`idle_ttl_ms: 30 天`。
 
 #### Scenario: 零配置 path 模式可用
 - **WHEN** WORKFLOW.md 的 feishu 段不含 `direct` 子块（feishu.enabled: true）
@@ -173,109 +167,225 @@ TUI SHALL 以独立区块列出活跃（`running`/`idle`）直连会话，数据
 - **THEN** 直连不激活，`/chat` 按未知命令处理
 
 ### Requirement: 每 turn 一张轮次卡片
-`verbosity: detailed` 时，每个 turn SHALL 创建一张独立的交互卡片（卡片 JSON 2.0、`config.update_multi: true`），作为该轮的可见反馈与过程面；卡片 SHALL 在占用目标目录与并发额度**之前**创建，使排队期间也有可见状态。卡片头部 SHALL 显示会话名、状态（排队中/运行中/空闲/已结束/已过期）、累计 turns 与 token、队列深度。正文 SHALL 包含本轮**中间步骤**的 assistant 文本（最终文本由结果卡片承载，见上），以及每个已完成工具调用一个折叠面板：状态与退出码、耗时、工具名、命令或参数、输出**末尾 15 行**与 `… (N more lines)`/`… (opencode truncated)` 标记；失败（退出码非 0 或有 error）的面板 SHALL 默认展开并带失败视觉标识，成功面板 SHALL 默认折叠，最新面板 SHALL NOT 自动展开。卡片 SHALL 只有一层折叠（折叠面板 SHALL NOT 嵌套折叠面板）。更新 SHALL 合并到最多每 1.5 秒一次，并在终态（完成/失败/超时/中断）、`/stop`、`/done` 与任一失败事件时立即刷新。单次更新失败 SHALL 按错误类别处理：**可重试错误**（HTTP 5xx、429、网络层错误）SHALL 延迟约 2 秒（含抖动）后重试一次，成功则卡片原地继续；**不可重试错误**（4xx，429 除外）SHALL 立即放弃、不等待。重试仍失败时 SHALL 发生**卡片降级**：本 turn 剩余更新改以**单条合并文本**投递，仅包含尚未成功渲染上卡的工具（增量，不重发卡片已有内容），并只记 WARN；降级 SHALL 仅覆盖本 turn 剩余部分；若降级期间仍有工具未投递，下一 turn 开始前 SHALL 恰好补发一次该剩余增量（不重发已上卡内容）；下一 turn SHALL 重新尝试创建卡片（不设跨 turn 的永久禁用）。下一轮开始时系统 SHALL 封存上一轮的卡片：把其按钮行替换为一行统计，卡片其余内容（工具面板、文本、展开状态）保持不变。卡片体积 SHALL 维持在工作预算 24KB 内；超预算时 SHALL 按"最旧面板输出降到 3 行 → 去掉其输出只留标题行 → 该面板替换为一行'还有 N 个工具调用未展示'"的顺序从最旧开始降级。
+
+（标题保留历史名称；本需求现定义「一轮 = 一张或多张分段卡片」。本 delta 基于 `segment-turn-cards` 已生效后的行为。）`verbosity: detailed` 时，每个 turn SHALL 由一张或多张分段卡片（卡片 JSON 2.0、`config.update_multi: true`）组成，作为该轮的可见反馈与过程面；首张卡片 SHALL 在占用目标目录与并发额度**之前**创建，使排队期间也有可见状态。每张卡片 SHALL 显示会话状态头部（会话名、状态（排队中/运行中/空闲/已结束/已过期）、累计 turns 与 token、ctx、队列深度、权限姿态）；第二轮及以后的分段卡片 SHALL 在头部追加 `· 片段 N`（N 为本轮内从 1 开始的段号），其余头部字段保持不变。正文 SHALL 把本轮**中间步骤**的 assistant 文本与工具调用按**事件源顺序**交错渲染（最终文本由结果卡片承载，见上）：文本为 markdown 元素；每个已完成工具调用一个折叠面板：状态与退出码、耗时、工具名、命令或参数、输出**末尾 15 行**与 `… (N more lines)`/`… (opencode truncated)` 标记；失败（退出码非 0 或有 error）的面板 SHALL 默认展开并带失败视觉标识，成功面板 SHALL 默认折叠，最新面板 SHALL NOT 自动展开。卡片 SHALL 只有一层折叠（折叠面板 SHALL NOT 嵌套折叠面板）。文本事件 SHALL NOT 按固定字符数截断；仅当单条文本自身超过整卡预算时，才截断到预算内。
+
+**降级优先于分段。** 卡片超预算时，SHALL 按最旧优先降级工具面板的输出：15 行 → 3 行 → 去掉 Output（**始终保留 Args/Command**）；单个面板的 Command/Args 在 level 2 下 SHALL 限制在约 2KB，若整卡仍超则继续截断到刚好放下。SHALL NOT 丢弃任何工具面板，SHALL NOT 输出「… 还有 N 个工具调用未展示」标记。降级 SHALL 从最旧面板开始，最新面板尽可能保留细节；SHALL NOT 为了保证最新面板完整而切出多张短历史卡——只有整组降到无输出仍装不下才分段。若渲染后仍超限（异常情况），SHALL 走既有 Card fallback（整轮合并文本），而不是丢面板。
+
+更新 SHALL 合并到最多每 1.5 秒一次，并在终态（完成/失败/超时/中断）、`/stop`、`/done` 与任一失败事件时立即刷新。单次更新失败 SHALL 按错误类别处理：**可重试错误**（HTTP 5xx、429、网络层错误，以及业务码 `230020` 群维度限流与 `200810` 卡片交互中无法更新）SHALL 延迟约 2 秒（含抖动）后重试一次，成功则卡片原地继续；**不可重试错误**（其余 4xx）SHALL 立即放弃、不等待。重试仍失败时 SHALL 发生**卡片降级**：本 turn 剩余更新改以**单条合并文本**投递，仅包含尚未成功渲染上卡的工具（增量，不重发卡片已有内容），并只记 WARN；降级 SHALL 仅覆盖本 turn 剩余部分；下一 turn SHALL 重新尝试创建卡片。
+
+卡片预算 SHALL 按实际发送请求体的 UTF-8 字节计量（`translate` 出口翻译 + JSON 转义后的 envelope），工作预算为 24KB；同时 SHALL 估算元素数（固定开销 + 每个文本事件 1 + 每个工具面板 3），上限 180。任一条件超出时，SHALL 按以下顺序处理：
+
+1. 整组事件按完整明细（level 0）试；装得下则一张卡。
+2. 否则先尝试整组按全局分轮降到 ≤2（必要时按共享上限继续截断输入）；装得下则一张卡，不分段。
+3. 整组降到无输出仍装不下时才分段：找到**最大的完整尾部** S（最新事件中能按 level 0 装下的最大后缀），前缀 P = 其余事件；P 按密集容量（level ≤2）**均衡**装箱为一张或多张历史卡（避免最后一张出现只有 1–3 个工具的短卡），每张封存、footer 为「— 本段结束，续见下一条卡片 —」，S 作为最后一张完整明细卡（活跃）；一次 flush SHALL 可以创建多张历史卡；SHALL NOT 产生空段；段数 SHALL NOT 设上限。
+
+单条事件自身完整装不下时，SHALL 就地降级（工具去掉 Output 并截断输入；文本截断到预算内）；其后续事件 MAY 继续留在同一张卡，只要降级后的整体仍装得下。只有该事件降级后仍无法与后续事件一起装下时，才让它独占一个分段。下一轮开始时系统 SHALL 封存上一轮最后一张（活跃）卡片：把其按钮行替换为一行统计，卡片其余内容保持不变。
+
+多段轮次的正文第一行 SHALL 显示 `🔧 本段 X · 本轮 Y`（X 为该卡实际渲染的工具数，Y 为该卡最后一次渲染时的整轮工具数；历史卡是封存时的快照；英文 `X this card · Y turn`）；单卡轮次 SHALL 保持 `🔧 Y`。
 
 #### Scenario: detailed 新一轮创建卡片并充当 ACK
+
 - **WHEN** verbosity=detailed 的会话开始新一轮
-- **THEN** 话题内出现该轮卡片（头部含会话名与状态），且不再有独立的"会话已创建/已排队"文本消息
+- **THEN** 话题内出现该轮首张卡片（头部含会话名与状态），且不再有独立的"会话已创建/已排队"文本消息
 
 #### Scenario: 排队期间卡片已存在并显示状态
+
 - **WHEN** 新一轮因目录占用或并发额度需等待
-- **THEN** 该轮卡片已创建，头部显示排队中状态与队列深度
+- **THEN** 该轮首张卡片已创建，头部显示排队中状态与队列深度
+
+#### Scenario: 文本与工具按源顺序交错
+
+- **WHEN** 一轮内驱动依次产出文本 A、工具 T1、文本 B、工具 T2
+- **THEN** 卡片正文按 A、T1、B、T2 的顺序渲染，而不是全部文本在前、全部工具在后
 
 #### Scenario: 工具面板内容与折叠默认值
+
 - **WHEN** 一轮内某工具成功完成
 - **THEN** 其面板默认折叠，展开可见状态/退出码/耗时、工具名、命令或参数、输出末尾 15 行
 
 #### Scenario: 失败工具默认展开
+
 - **WHEN** 某工具以非 0 退出码完成
 - **THEN** 其面板默认展开并带失败视觉标识
 
 #### Scenario: 更新合并与终态立即刷新
+
 - **WHEN** 1.5 秒内连续完成多个工具，随后该轮结束
 - **THEN** 过程中的多次事件被合并为更少的卡片更新，且终态变化立即反映到卡片
 
 #### Scenario: 可重试错误延迟重试成功
-- **WHEN** 一次卡片更新返回 5xx/429 或网络层错误，延迟重试时网络已恢复
+
+- **WHEN** 一次卡片更新返回 5xx/429/网络层错误/业务码 `230020`/`200810`，延迟重试时已恢复
 - **THEN** 重试成功后卡片原地继续更新，本 turn 不发生文本降级，不重发任何工具
 
 #### Scenario: 重试仍败降级为增量文本
+
 - **WHEN** 延迟重试仍失败，且此前已有工具成功渲染上卡
 - **THEN** 本 turn 剩余工具以单条合并文本消息投递，其中不包含卡片上已有的工具
 
 #### Scenario: 下一 turn 自动恢复卡片
+
 - **WHEN** 某 turn 因更新连败发生卡片降级，用户继续追问开启下一 turn
 - **THEN** 下一 turn 正常创建新的轮次卡片，无需重启或重新建会话
 
 #### Scenario: 不可重试错误快速降级
-- **WHEN** 一次卡片更新返回 429 之外的 4xx 错误
+
+- **WHEN** 一次卡片更新返回 429、`230020`、`200810` 之外的 4xx 错误
 - **THEN** 不做延迟等待与重试，立即进入本 turn 的文本降级
 
-#### Scenario: 下一轮开始封存上一轮
-- **WHEN** 新一轮开始且上一轮卡片仍带按钮行
-- **THEN** 上一轮卡片的按钮行被替换为一行统计，其工具面板与文本保持不变（仍可展开）
+#### Scenario: 下一轮开始封存上一轮最后一张卡
 
-#### Scenario: 超预算时从最旧面板降级
-- **WHEN** 单轮累积使卡片逼近 24KB
-- **THEN** 系统从最旧的面板开始降级（输出降到 3 行 → 去掉输出 → 整面板压成一行提示），直到回到预算内
+- **WHEN** 新一轮开始且上一轮最后一张卡片仍带按钮行
+- **THEN** 该卡片的按钮行被替换为一行统计，其工具面板与文本保持不变（仍可展开）
+
+#### Scenario: 超预算时先降旧面板输出
+
+- **WHEN** 当前卡加入新事件后超过 24KB 或 180 元素，且最旧面板仍保留输出
+- **THEN** 系统按最旧优先把面板输出降到 3 行、再降到无输出（保留 Args/Command），而不是立即分段
+
+#### Scenario: 旧面板保留输入、去掉输出
+
+- **WHEN** 一张历史卡处于密集状态
+- **THEN** 每个工具面板仍显示工具名、状态、耗时和 Args/Command，但不再显示 Output 块
+
+#### Scenario: 整组降到无输出能装下时不得分段
+
+- **WHEN** 一轮有 30+ 个工具面板，完整明细超预算，但降到「只有输入」后能装进一张卡
+- **THEN** 系统保持一张卡，不产生 `片段 2`；旧面板降级、最新面板尽可能保留细节
+
+#### Scenario: 最新面板尽量保留细节
+
+- **WHEN** 一张卡同时包含旧面板和新面板并需要降级
+- **THEN** 降级从最旧开始，最新面板保留尽可能高的明细级别；不强制要求最新面板始终完整
+
+#### Scenario: 装不下才分段且可产生多张历史卡
+
+- **WHEN** 旧前缀降到无输出后仍超预算
+- **THEN** 系统把前缀按密集容量**均衡**装箱为一张或多张历史卡（避免 1–3 个工具的短卡），最新完整尾部作为最后一张卡；历史卡在创建时即封存且无按钮
+
+#### Scenario: 永不丢面板
+
+- **WHEN** 任意长的轮次超过单卡预算
+- **THEN** 所有工具面板都出现在某张卡片上（历史卡为密集形式，最新卡为完整明细），不出现「还有 N 个工具调用未展示」
+
+#### Scenario: 单条事件自身超预算时才兜底
+
+- **WHEN** 单条事件自身超过 24KB/180 元素预算
+- **THEN** 该事件就地降级（工具去掉 Output 并截断输入；文本截断到预算内）；若降级后仍无法与后续事件一起装下，才让它独占一个分段，而不是产生空段或无限开卡
+
+#### Scenario: 分段 footer 区分中途与轮末
+
+- **WHEN** 一张卡片因切段被中途封存，或该轮的最后一张卡片在轮末封存
+- **THEN** 前者 footer 为「— 本段结束，续见下一条卡片 —」，后者为「— 该轮已结束 · Ns · ≈N —」
+
+#### Scenario: 头部显示片段序号
+
+- **WHEN** 一轮产生第二张及以后的分段卡片
+- **THEN** 其头部追加 `· 片段 N`（N 从 1 开始），其余会话状态字段不变
+
+#### Scenario: 多段轮次显示本段/本轮计数
+
+- **WHEN** 一轮被分成多张卡片
+- **THEN** 每张卡片正文第一行显示 `🔧 本段 X · 本轮 Y`；单卡轮次仍只显示 `🔧 Y`
+
+#### Scenario: 多段轮次即使某卡包含全部工具也显示本段/本轮
+
+- **WHEN** 一轮被分成多张卡片，但最后一张恰好包含全部工具（X == Y）
+- **THEN** 该卡仍显示 `🔧 本段 Y · 本轮 Y`，以多段轮次标识为准，而不是退化为 `🔧 Y`
+
+#### Scenario: 预算按实际请求体字节计量
+
+- **WHEN** 一段以中文文本为主的正文按字符数看似未超 24KB，但按 translate + JSON 转义后的 UTF-8 字节超过
+- **THEN** 系统判定超预算并降级/分段，而不是把卡片发出去等飞书拒绝
+
+#### Scenario: 密集卡仍受元素上限约束
+
+- **WHEN** 一张密集历史卡的工具面板估算元素数超过 180（约 56 个工具）
+- **THEN** 系统在该卡装满前切段，不把超过 200 元素/组件的卡片发给飞书
 
 ### Requirement: 轮次卡片按钮与卡片动作
-轮次卡片 SHALL 提供控制按钮：`⏹ 中断`（仅出现在运行中的卡片）、`🔁 重试`（仅最近一轮）、`📄 完整输出`（仅最近一轮）、`🛑 结束`（运行中与最近一轮）。按钮 SHALL 与斜杠命令并存，权限模型 SHALL 与命令一致（群成员皆可操作）。`🛑 结束` SHALL 走两步确认：先返回同一个卡片、把按钮行替换为警告文案与 `确认结束`/`取消`，确认后才结束会话；`⏹ 中断` SHALL 一步即时。按钮 value SHALL 为对象，至少包含 root_id 与 turn。卡片动作 SHALL 经事件通道的 `card.action.trigger` 接收，SHALL NOT 进入消息入站队列，并 SHALL 在 3 秒内以 `toast + 新卡片` 响应；处理函数内 SHALL 只做快速内存状态变更，删除 opencode session、发送完成文本、上传文件等慢操作 SHALL 在响应之后异步执行。重复投递的同一动作（同一 message_id + 操作人 + 动作）SHALL 被去重，不重复执行。对已封存或非当前轮的卡片点击 `⏹ 中断`/`📄 完整输出` SHALL 只回 toast 提示、不改变会话状态。`🔁 重试` SHALL 以该轮 prompt（持久化于 `direct_sessions.last_prompt`）发起新一轮，并在新卡片头部标注重试来源。
+
+轮次卡片 SHALL 提供控制按钮：`⏹ 中断`（仅出现在运行中的卡片）、`🔁 重试`（仅最近一轮的最后一张分段卡片）、`📄 完整输出`（仅最近一轮的最后一张分段卡片）、`🛑 结束`（运行中与最近一轮）。分段卡片中只有**活跃段**（最新一张）SHALL 带控制按钮；已封存的旧段 SHALL NOT 带任何按钮。按钮 SHALL 与斜杠命令并存，权限模型 SHALL 与命令一致（群成员皆可操作）。`🛑 结束` SHALL 走两步确认：先返回同一个卡片、把按钮行替换为警告文案与 `确认结束`/`取消`，确认后才结束会话；`⏹ 中断` SHALL 一步即时。按钮 value SHALL 为对象，至少包含 root_id 与 turn。卡片动作 SHALL 经事件通道的 `card.action.trigger` 接收，SHALL NOT 进入消息入站队列，并 SHALL 在 3 秒内以 `toast + 新卡片` 响应；处理函数内 SHALL 只做快速内存状态变更，删除 opencode session、发送完成文本、上传文件等慢操作 SHALL 在响应之后异步执行。重复投递的同一动作（同一 message_id + 操作人 + 动作）SHALL 被去重，不重复执行。对已封存、非当前轮、或**非该轮活跃分段**的卡片点击 `⏹ 中断`/`🔁 重试`/`📄 完整输出` SHALL 只回 toast 提示、不改变会话状态。`🔁 重试` SHALL 以该轮 prompt（持久化于 `direct_sessions.last_prompt`）发起新一轮，并在新卡片头部标注重试来源。
 
 #### Scenario: 运行中点击中断
+
 - **WHEN** 某轮运行中用户点击 `⏹ 中断`
 - **THEN** 该轮子进程被终止，卡片变为已中断，且该轮完成文本说明中断原因与操作人
 
 #### Scenario: 结束需要两步确认
+
 - **WHEN** 用户点击 `🛑 结束`
 - **THEN** 卡片原地变为确认态（含"确认结束/取消"），会话尚未结束
 - **AND** 点击"确认结束"后会话结束、卡片收尾为已结束，并发送带操作人的结束文本
 
 #### Scenario: 重复点击只执行一次
+
 - **WHEN** 同一按钮点击被事件通道重复投递
 - **THEN** 该动作只被执行一次
 
 #### Scenario: 旧卡片上的按钮只提示
+
 - **WHEN** 用户在一张已封存（或非当前轮）的卡片上点击 `⏹ 中断`
 - **THEN** 仅收到 toast 提示，会话状态与会话卡片均不改变
 
+#### Scenario: 同一轮旧分段卡片上的按钮只提示
+
+- **WHEN** 用户在同一轮的旧分段卡片上点击 `⏹ 中断`/`🔁 重试`/`📄 完整输出`
+- **THEN** 仅收到「该片段已结束」toast，活跃段与整个会话状态均不改变
+
 #### Scenario: 重试最近一轮
+
 - **WHEN** 用户点击 `🔁 重试`
 - **THEN** 系统以该轮 prompt 发起新一轮，新卡片头部标注重试来源
 
 #### Scenario: 回调在 3 秒内返回
+
 - **WHEN** 卡片动作触发会话结束（需删除 opencode session 与发送文本）
 - **THEN** 响应在 3 秒内以 toast + 新卡片返回，删除与发送在其后异步完成
 
 ### Requirement: 完整输出按需投递
-`📄 完整输出` SHALL 把最近一轮所有工具事件的完整明细（含命令/参数/完整输出，体积上限 1MB，超出时先丢弃最旧工具的明细并注明）打包为 Markdown 文件，上传后以文件消息发送到该话题。上传失败（缺 `im:resource` 权限、超限、网络等）SHALL 降级为一条长文本消息（截断到约 140KB）并在末尾说明降级原因；若连文本也装不下 SHALL 只回一条指向 TUI 活动视图的提示。任一降级 SHALL 记 WARN。该按钮 SHALL 只出现在最近一轮的卡片上。
+
+`📄 完整输出` SHALL 把最近一轮所有工具事件的完整明细（含命令/参数/完整输出，体积上限 1MB，超出时先丢弃最旧工具的明细并注明）打包为 Markdown 文件，上传后以文件消息发送到该话题。上传失败（缺 `im:resource` 权限、超限、网络等）SHALL 降级为一条长文本消息（截断到约 140KB）并在末尾说明降级原因；若连文本也装不下 SHALL 只回一条指向 TUI 活动视图的提示。任一降级 SHALL 记 WARN。该按钮 SHALL 只出现在最近一轮**最后一张分段卡片**上；导出的明细 SHALL 始终是整轮的工具明细，而非单段。
 
 #### Scenario: 正常以文件发送
-- **WHEN** 用户对最近一轮点击 `📄 完整输出` 且上传可用
+
+- **WHEN** 用户对最近一轮的最后一张分段卡片点击 `📄 完整输出` 且上传可用
 - **THEN** 话题内出现一个包含该轮完整工具明细的 Markdown 文件附件
 
 #### Scenario: 上传失败降级为文本
+
 - **WHEN** 上传因缺少权限而失败
 - **THEN** 系统改为发送一条含完整明细的长文本消息，并在末尾说明文件上传不可用，同时记 WARN
 
 #### Scenario: 体积过大只指向 TUI
+
 - **WHEN** 该轮明细超过文本消息上限
 - **THEN** 系统只回复一条提示，指向 TUI 活动视图查看完整明细
 
-#### Scenario: 历史卡片不提供该按钮
-- **WHEN** 查看一张已封存的轮次卡片
+#### Scenario: 旧分段卡片不提供该按钮
+
+- **WHEN** 查看一张已封存的分段卡片
 - **THEN** 其中不出现 `📄 完整输出` 按钮
 
 ### Requirement: 卡片不可用时的文本降级
-当轮次卡片创建失败，或该轮卡片更新连续失败时，系统 SHALL 把该轮 flush 的输出改为合并文本消息（每次 flush 发送一条，SHALL NOT 退回"每个工具一条"），并记 WARN；SHALL NOT 因此中断 turn，完成文本 SHALL 照常发送。
+
+当轮次卡片创建失败（含中途为分段新建卡片失败），或该轮卡片更新连续失败时，系统 SHALL 把该轮 flush 的输出改为合并文本消息（每次 flush 发送一条，SHALL NOT 退回"每个工具一条"），并记 WARN；SHALL NOT 因此中断 turn，完成文本 SHALL 照常发送。
 
 #### Scenario: 建卡失败降级为合并文本
+
 - **WHEN** 某轮卡片创建失败
 - **THEN** 该轮的工具过程以合并文本消息呈现（每次刷新一条），turn 正常跑完并发送完成文本，日志有 WARN
 
 #### Scenario: 中途更新失败切换为文本
+
 - **WHEN** 卡片创建成功但该轮中途更新连续失败
 - **THEN** 从失败点起该轮改以合并文本消息呈现，turn 不被中断
+
+#### Scenario: 中途新建分段失败切换为文本
+
+- **WHEN** 切段时新建分段卡片失败
+- **THEN** 该轮剩余事件改以合并文本消息呈现（不丢事件），旧段保持封存状态，turn 不被中断
 
 ### Requirement: 生命周期消息以显示名标注操作人
 直连会话的生命周期消息（`/stop` 的中断说明、`/done` 的结束统计、卡片按钮触发的中断/结束）SHALL 以操作人的**显示名**标注；显示名 SHALL 按 `operator.name`（回调自带）→ 本次会话所在群（`chat_id`）的成员表缓存 → 群成员表实时查询 → open_id 的顺序解析。群成员表查询 SHALL 通过 `GET /im/v1/chats/:chat_id/members`（`member_id_type=open_id`，必要时分页）进行，结果 SHALL 按 chat_id 缓存（TTL 1 小时），并在会话创建时预取一次。解析 SHALL NOT 出现在卡片回调动画的响应路径上（回调 SHALL 仍然立即返回）；解析失败（非群成员、接口失败、缺权限）SHALL 记 debug 并回落显示 open_id，SHALL NOT 影响消息发送与会话状态。
@@ -462,4 +572,72 @@ turn 运行期间系统 SHALL 至少每 5 秒刷新一次该轮卡片（复用�
 #### Scenario: 直连审批卡在会话话题出现
 - **WHEN** 直连 turn 因 ask 规则挂起
 - **THEN** 会话话题出现审批卡，允许/拒绝后轮次卡片恢复运行状态
+
+### Requirement: direct 路径解析模型观测与漂移告警
+
+direct 会话路径 SHALL 记录每个 turn 实际使用的解析模型（driver 返回值）到日志，供事后追溯；同一 opencode 会话相邻 turn 的解析模型不一致时 SHALL 记录一条 `warn` 日志（含 root_id、session ID、旧值与新值，形如 `A → B`），连续 turn 模型相同 SHALL 不重复告警。
+
+#### Scenario: turn 的解析模型记入日志
+
+- **WHEN** 一个 direct turn 以解析模型 `zhipuai-coding-plan/glm-5.3` 完成
+- **THEN** 日志中该 turn 的记录含此解析模型
+
+#### Scenario: 相邻 turn 模型变化告警一次
+
+- **WHEN** 同一 direct 会话 turn N 解析模型为 A、turn N+1 解析模型为 B
+- **THEN** 记录一条含 `A → B` 的 warn 日志，且后续 turn 仍为 B 时不重复告警
+
+### Requirement: 运行中追问排队、同目录并发预算
+同一会话同时最多一个在跑 turn；turn 运行期间到达的追问 SHALL 进入该会话的内存队列并在当前 turn 结束后按 FIFO 合并续跑（多条合并为一个 prompt，以 `\n---\n` 分隔）；同一目录同时执行的 turn 数 SHALL 不超过 `feishu.direct.max_concurrent_turns_per_dir`（整数 ≥1，默认 1；1 表示串行，2+ 表示用户显式放开同目录并行）；daemon 全局同时执行的直连 turn 数 SHALL 不超过 `feishu.direct.max_concurrent`（默认 5，独立于 Jira 的 `max_concurrent_agents`）；实际并发 SHALL 取两者更严者。超出目录上限的 turn SHALL 按 FIFO 排队，SHALL NOT 抢占正在执行的 turn；等待权限审批的 turn SHALL 继续占用其目录槽位。`max_concurrent_turns_per_dir > 1` 时 daemon SHALL 记一条 WARN（含 `auto_approve` 提醒），热重载把值从 ≤1 变为 >1 时 SHALL 再记一次；每轮 `direct turn starting` 日志 SHALL 携带生效的 `max_concurrent_turns_per_dir`。
+
+#### Scenario: 运行中到达的追问被排队
+- **WHEN** 会话 turn 运行中话题内又到达两条消息
+- **THEN** 系统立即回复排队 ACK，当前 turn 结束后将两条消息合并为一个 prompt 续跑一次
+
+#### Scenario: 超出并发预算时等待
+- **WHEN** 已有 `max_concurrent` 个直连 turn 在跑，另一会话的新消息到达
+- **THEN** 该会话的 turn 等待有空位后执行，且不占用 Jira dispatch 的并发额度
+
+#### Scenario: 默认同目录串行
+- **WHEN** 未配置 `max_concurrent_turns_per_dir`（默认 1），同一目录已有 turn 在跑，另一会话在同一目录发起 turn
+- **THEN** 后一个 turn 等待前一个结束后开始，其轮次卡片显示排队中
+
+#### Scenario: 显式放开同目录并行
+- **WHEN** `max_concurrent_turns_per_dir: 2`，同一目录有三个会话同时发起 turn
+- **THEN** 前两个 turn 并行执行，第三个按 FIFO 等待；任一 turn 结束后第三个开始
+
+#### Scenario: 全局并发上限仍生效
+- **WHEN** `max_concurrent_turns_per_dir: 5` 且 `max_concurrent: 1`
+- **THEN** 同一目录的 turn 仍串行执行（取更严的全局预算）
+
+#### Scenario: 审批等待继续占槽
+- **WHEN** 某目录的 turn 因权限 `ask` 挂起等待审批，同时该目录又到达新 turn 且已无目录槽位
+- **THEN** 新 turn 排队等待，不因审批挂起而释放槽位
+
+#### Scenario: 放开同目录并发时告警
+- **WHEN** 启动或热重载后生效的 `max_concurrent_turns_per_dir` 从 ≤1 变为 >1
+- **THEN** daemon 记录一条 WARN，包含生效值与共享工作树的竞态提醒
+
+#### Scenario: 热重载只影响之后进入的 turn
+- **WHEN** turn 运行中把 `max_concurrent_turns_per_dir` 从 1 改为 2
+- **THEN** 正在跑的 turn 不受影响，之后在同一目录发起的新 turn 可按新上限并行
+
+### Requirement: 直连目录占用可观测
+`GET /api/v1/state` 的快照 SHALL 始终包含顶层数组 `direct_dirs`（无活动目录时为 `[]`），每个元素为 `{ path, active, limit, waiters }`：`path` 为该目录的 realpath；`active` 为已占用该目录槽位的 turn 数（包含已占槽但在等待全局 `max_concurrent` 名额的 turn）；`waiters` 为因该目录上限已满而排队等待槽位的 turn 数（不含等待全局名额的）；`limit` 为该目录生效的 `max_concurrent_turns_per_dir`。数组 SHALL 只包含有活动的目录（`active > 0` 或 `waiters > 0`），按 `path` 升序输出；无活动的目录 SHALL 从内部占用表中清理。TUI SHALL NOT 被要求消费该字段；`tasking status` 的行为不变。
+
+#### Scenario: 目录占用出现在快照中
+- **WHEN** 某目录有 2 个 turn 正在执行、1 个因目录上限排队
+- **THEN** `/api/v1/state` 的 `direct_dirs` 含该目录，`active: 2`、`waiters: 1`、`limit` 等于生效配置
+
+#### Scenario: 等待全局名额仍计入 active
+- **WHEN** 某 turn 已占用目录槽位但正在等待全局 `max_concurrent` 名额
+- **THEN** 该 turn 计入对应目录的 `active`，不计入 `waiters`
+
+#### Scenario: 空闲目录不出现
+- **WHEN** 某目录的 turn 已全部结束且无排队者
+- **THEN** 该目录不出现在 `direct_dirs`，内部占用表中被清理
+
+#### Scenario: 无任何活动目录
+- **WHEN** 当前没有正在执行或排队的直连 turn
+- **THEN** 快照仍输出 `"direct_dirs": []`
 

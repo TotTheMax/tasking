@@ -114,7 +114,7 @@ per-task 工作区管理：创建、安全不变式、hook 执行、清理。
 - **THEN** 记录警告日志,继续删除工作区目录
 
 ### Requirement: Workspace sidecar session 文件
-工作区管理器 SHALL 支持 workspace 级 sidecar 文件 `.tasking-session.json`,用于记录 last opencode session ID。`runAttempt` 在提取 session ID 后 SHALL 以原子方式写入该文件(含 `session_id` 与 `updated_at` 字段)。`removeWorkspace` 在删除工作区前 SHALL 从该文件读取 session ID;非空时执行 `opencode session delete`;读取失败或文件缺失时跳过 session 清理并记录警告。
+工作区管理器 SHALL 支持 workspace 级 sidecar 文件 `.tasking-session.json`,用于记录 last opencode session ID。`runAttempt` 在提取 session ID 后 SHALL 以原子方式写入该文件(含 `session_id`、`updated_at` 与可选的 `resolved_model` 字段——该会话最近 turn 观察到的解析模型)。`removeWorkspace` 在删除工作区前 SHALL 从该文件读取 session ID;非空时执行 `opencode session delete`;读取失败或文件缺失时跳过 session 清理并记录警告。读取 SHALL 兼容不含 `resolved_model` 的旧版文件(得 undefined,不报错)。
 
 #### Scenario: sidecar 写入
 - **WHEN** turn 1 提取到 session ID
@@ -123,6 +123,14 @@ per-task 工作区管理：创建、安全不变式、hook 执行、清理。
 #### Scenario: sidecar 更新
 - **WHEN** 后续 turn 提取到相同 session ID
 - **THEN** 更新 sidecar 的 `updated_at` 字段
+
+#### Scenario: sidecar 记录解析模型
+- **WHEN** 一个 turn 观察到解析模型并更新 sidecar
+- **THEN** sidecar 的 `resolved_model` 字段为该解析模型
+
+#### Scenario: 旧版 sidecar 读取兼容
+- **WHEN** 读取不含 `resolved_model` 字段的旧版 sidecar 文件
+- **THEN** 读取成功且 `resolved_model` 为 undefined,不报错
 
 #### Scenario: removeWorkspace 从 sidecar 读取
 - **WHEN** `removeWorkspace` 执行且 sidecar 文件存在
