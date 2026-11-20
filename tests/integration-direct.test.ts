@@ -39,6 +39,7 @@ function directConfig(targetDir: string, verbosity: DirectVerbosity = "detailed"
         direct: {
           projects: { itdirect: targetDir },
           verbosity,
+          auto_approve: true,
         },
       },
     },
