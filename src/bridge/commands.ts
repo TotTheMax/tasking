@@ -1,3 +1,5 @@
+import { AUTO_CONTINUE_BUDGET_MAX, AUTO_CONTINUE_BUDGET_MIN } from "../config/config-types.js";
+
 export const SENTINEL = "via Feishu";
 const LEGACY_SENTINEL = "via 飞书";
 const SENTINEL_PREFIX = new RegExp(`^💬 [^\\n]* (?:${LEGACY_SENTINEL}|${SENTINEL}):\\n`);
@@ -206,7 +208,11 @@ export function parseLoop(text: string): ParsedLoop | null {
     }
     const raw = tail[0] ?? "";
     const budget = Number(raw);
-    if (!Number.isInteger(budget) || budget < 1 || budget > 20) {
+    if (
+      !Number.isInteger(budget) ||
+      budget < AUTO_CONTINUE_BUDGET_MIN ||
+      budget > AUTO_CONTINUE_BUDGET_MAX
+    ) {
       return { kind: "invalid", reason: "预算 N 必须是 1–20 的整数" };
     }
     return { kind: verb, budget };

@@ -4967,6 +4967,7 @@ describe("DirectSessionManager auto-continue", () => {
     budget?: number;
     streak?: number;
     prompt?: string;
+    logs?: string[];
   };
 
   async function setupLoopSession(opts: LoopOptions = {}) {
@@ -5241,5 +5242,78 @@ describe("DirectSessionManager auto-continue edge cases", () => {
     runner.finish(3, [toolEvent("edit x.ts"), textEvent("自动第二轮完成")]);
     await mgr.whenIdle();
     expect(feishu.sent("om_q0").some((t) => t.includes("预算用完"))).toBe(true);
+  });
+});
+
+describe("DirectSessionManager auto-continue telemetry and user timeout", () => {
+  it("retries a timed-out user turn while armed", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const cfg = directConfig({
+      verbosity: "summary",
+      auto_continue: { budget: 1, no_progress_streak: 2, prompt: "继续未完成的部分。" },
+    });
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => cfg,
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_ut0", text: "/chat tasking 初始任务" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [toolEvent("edit x.ts"), textEvent("初始完成")]);
+    await mgr.whenIdle();
+
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_ut1", root_id: "om_ut0", text: "/loop on" }),
+    );
+    await mgr.handleThreadMessage(
+      msg({
+        message_id: "om_ut2",
+        root_id: "om_ut0",
+        text: "用户新任务",
+        create_time: "1700000001",
+      }),
+    );
+    await runner.waitForCall(2);
+    runner.finish(1, [], 124);
+    await runner.waitForCall(3);
+    expect(runner.calls[2]?.request.prompt).toBe("继续未完成的部分。");
+    runner.finish(2, [toolEvent("edit x.ts"), textEvent("超时重试完成")]);
+    await mgr.whenIdle();
+
+    expect(feishu.sent("om_ut0").some((t) => t.includes("预算用完"))).toBe(true);
+  });
+
+  it("logs auto_continue_turn and auto_continue_stop metrics", async () => {
+    const logs: string[] = [];
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const cfg = directConfig({
+      verbosity: "summary",
+      auto_continue: { budget: 1, no_progress_streak: 2, prompt: "继续未完成的部分。" },
+    });
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => cfg,
+      logger: fakeLogger(logs),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_log0", text: "/chat tasking 初始任务" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [toolEvent("edit x.ts"), textEvent("初始完成")]);
+    await mgr.whenIdle();
+
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_log1", root_id: "om_log0", text: "/loop start 1" }),
+    );
+    await runner.waitForCall(2);
+    runner.finish(1, [toolEvent("edit x.ts"), textEvent("自动轮完成")]);
+    await mgr.whenIdle();
+
+    expect(logs.some((l) => l.includes("auto_continue_turn"))).toBe(true);
+    expect(logs.some((l) => l.includes("auto_continue_stop"))).toBe(true);
   });
 });

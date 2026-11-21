@@ -76,6 +76,7 @@ describe("low work / repetition / question signals", () => {
     expect(looksLikeQuestion("要保留旧 API 吗？")).toBe(true);
     expect(looksLikeQuestion("Should I keep the old API?")).toBe(true);
     expect(looksLikeQuestion("需要你确认一下迁移策略")).toBe(true);
+    expect(looksLikeQuestion("Confirm the migration plan before proceeding.")).toBe(true);
     expect(looksLikeQuestion("已完成。接下来继续补测试。")).toBe(false);
     expect(looksLikeQuestion("中途提到是否要迁移，但最后给出了结论。")).toBe(false);
   });

@@ -1,6 +1,7 @@
 import { cardMessageBody } from "../shared/card-payload.js";
 import { redactSecrets } from "../shared/redact.js";
 import { translate } from "../translate/locale.js";
+import type { AutoTurnMarker } from "./auto-continue.js";
 
 export type TurnCardPhase =
   | "running"
@@ -52,7 +53,7 @@ export interface TurnCardState {
   continued?: boolean;
   renderSeq?: number;
   autoPosture?: "off" | "on" | "once";
-  autoContinue?: { index: number; max: number };
+  autoContinue?: AutoTurnMarker;
   agentOverride?: string | null;
   confirmPermission?: boolean;
 }

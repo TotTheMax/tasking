@@ -916,7 +916,7 @@ export class CommentBridge {
         );
         return;
       }
-      if (parseLoop(m.text) !== null) {
+      if (config.feishu.direct.enabled && parseLoop(m.text) !== null) {
         await this.deps.feishu.replyFlat(m.message_id, "请在 /chat 话题内使用 /loop。");
         return;
       }

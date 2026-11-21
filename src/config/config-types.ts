@@ -67,6 +67,10 @@ export interface DirectProjectConfig {
 
 export type DirectVerbosity = "quiet" | "summary" | "detailed";
 
+export const AUTO_CONTINUE_BUDGET_MIN = 1;
+export const AUTO_CONTINUE_BUDGET_MAX = 20;
+export const AUTO_CONTINUE_PROMPT_MAX_CHARS = 2000;
+
 export interface AutoContinueConfig {
   budget: number;
   no_progress_streak: number;

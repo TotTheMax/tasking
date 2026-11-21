@@ -15,6 +15,11 @@ export type AutoContinuePauseReason = "question" | "repetition" | "low_work";
 
 export type AutoContinueStopReason = "failed" | "permission_timeout" | "interrupted" | "budget";
 
+export interface AutoTurnMarker {
+  index: number;
+  max: number;
+}
+
 export interface AutoContinueState {
   used: number;
   lowWorkRun: number;
@@ -47,7 +52,7 @@ const FILE_MUTATION_TOOLS = new Set(["write", "edit", "patch", "apply_patch", "m
 
 const PUNCTUATION = /[，。！？；：、,.!?;:"'“”‘’()（）\[\]{}<>《》…—\-]/g;
 const QUESTION_MARKERS =
-  /(请确认|需要你|是否|要不要|等你确认|please confirm|should i|do you want)/i;
+  /(请确认|需要你|是否|要不要|等你确认|please confirm|should i|do you want|\bconfirm\b)/i;
 
 export function freshAutoContinueState(): AutoContinueState {
   return {

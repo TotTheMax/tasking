@@ -44,7 +44,7 @@
 
 ### 2. 两个动词：`/loop on` 只 arm，`/loop start` 立即开干
 
-`/loop on [N]` 只开启/恢复模式，等下一条用户任务；`/loop start [N]` 立即用当前续跑提示词发一轮。这样“先 `/loop on`，再发任务”成立，不会在旧上下文上自动跑；救急用 `/loop start`（或 `/loop start 1`）。
+`/loop on [N]` 只开启/恢复模式：空闲时等下一个用户任务，已有用户轮在跑时在该轮结束后继续；它本身不提交 turn。`/loop start [N]` 立即用当前续跑提示词发一轮。这样“先 `/loop on`，再发任务”成立，正常流程（`/chat` 首轮运行中再 `/loop on`）也能续上；救急用 `/loop start`（或 `/loop start 1`）。
 
 被否决：`/loop on` 空闲时立即发一轮（会在旧上下文上自动跑，和“先开启再发任务”冲突）；只保留 `/loop on` 并靠用户消息恢复（救急需要再发一句话）；`/loop once`（与 `/loop start 1` 重复）。
 
@@ -68,8 +68,8 @@
 | 3 | 超时重试 | `turn_timeout` / `inactivity_timeout`，预算允许 | 普通自动轮重试 |
 | 4 | 预算用完 | `used >= budget` | 硬停（优先于暂停信号） |
 | 5 | 提问 | 最后文本以 `?`/`？` 结尾，或最后一句/分句含「请确认/需要你/是否/要不要/等你确认」或英文 `confirm/should I/do you want` | 暂停 |
-| 6 | 重复 | 3-gram Dice ≥ 0.9 + 两轮无文件写操作，连续 2 轮 | 暂停 |
-| 7 | 低产出 | `toolCalls === 0` + `outputTokens < 500` + `textChars < 600`，连续 2 轮 | 暂停 |
+| 6 | 重复 | 3-gram Dice ≥ 0.9 + 两轮无文件写操作，连续 `no_progress_streak` 轮 | 暂停 |
+| 7 | 低产出 | `toolCalls === 0` + `outputTokens < 500` + `textChars < 600`，连续 `no_progress_streak` 轮 | 暂停 |
 | 8 | 其他 | — | 继续 |
 
 指标定义：
@@ -202,6 +202,10 @@ autoContinueBudget: number | null; // 会话偏好；null = 配置默认
 🔄 自动续跑已停止：预算用完（5/5）
 /loop start 重新开干，或 /loop on N 设置新预算。
 ```
+
+### 12. 回访路径
+
+`/loop` 是命令兜底：`/loop` 状态卡可随时召回当前状态（开启/暂停/关闭、预算、计数、提示词、上次暂停原因）；`/loop on|start|off|prompt` 在任何时候重发即可。暂停/停止文本是一次性通知，不依赖常驻卡片或按钮；关闭卡片后仍可用 `/loop` 重新拉取状态。无需新增常驻/召回型卡片。
 
 ## Risks / Trade-offs
 

@@ -2,6 +2,9 @@ import { homedir } from "node:os";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 import { TaskingError } from "../shared/errors.js";
 import {
+  AUTO_CONTINUE_BUDGET_MAX,
+  AUTO_CONTINUE_BUDGET_MIN,
+  AUTO_CONTINUE_PROMPT_MAX_CHARS,
   type AgentConfig,
   type AutoContinueConfig,
   DEFAULTS,
@@ -82,8 +85,8 @@ function resolveAutoContinueConfig(raw: unknown): AutoContinueConfig {
     budgetRaw !== undefined &&
     (typeof budgetRaw !== "number" ||
       !Number.isInteger(budgetRaw) ||
-      budgetRaw < 1 ||
-      budgetRaw > 20)
+      budgetRaw < AUTO_CONTINUE_BUDGET_MIN ||
+      budgetRaw > AUTO_CONTINUE_BUDGET_MAX)
   ) {
     throw new TaskingError(
       "config_validation",
@@ -109,7 +112,7 @@ function resolveAutoContinueConfig(raw: unknown): AutoContinueConfig {
       );
     }
     prompt = a.prompt.trim();
-    if (prompt === "" || prompt.length > 2000) {
+    if (prompt === "" || prompt.length > AUTO_CONTINUE_PROMPT_MAX_CHARS) {
       throw new TaskingError(
         "config_validation",
         "feishu.direct.auto_continue.prompt must be a non-empty string of at most 2000 characters",

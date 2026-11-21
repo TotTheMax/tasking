@@ -5,7 +5,7 @@
 直连会话 SHALL 支持以下 `/loop` 命令，且仅在直连话题内生效：
 
 - `/loop`：返回状态信息卡。
-- `/loop on [N]`：为**下一条用户任务**开启/恢复 Auto-continue；SHALL NOT 自己提交 turn。带 N SHALL 设置会话预算偏好并把已用计数归零；不带 N SHALL 沿用会话偏好，否则用配置默认。
+- `/loop on [N]`：为**当前或下一条用户任务**开启/恢复 Auto-continue；SHALL NOT 自己提交 turn。若已有用户轮在跑，则在该轮结束后继续。带 N SHALL 设置会话预算偏好并把已用计数归零；不带 N SHALL 沿用会话偏好，否则用配置默认。
 - `/loop start [N]`：立即提交一个 Auto-continue turn；当前有 turn 在跑时 SHALL 等该 turn 结束后开始。带 N SHALL 重置预算；不带 N SHALL 在 armed/paused 时使用剩余预算，否则使用会话偏好/配置默认。会话还没有任何任务（`turns === 0` 且 `last_prompt == null`）时 SHALL 拒绝并提示先发任务。
 - `/loop off`：软关闭；SHALL NOT 中断当前 turn，当前 turn 结束后不再续。
 - `/loop prompt`：显示当前生效提示词与来源。
@@ -63,7 +63,7 @@
 - **软暂停**：连续低产出、连续重复、最后文本像提问。SHALL 保持 armed，不提交下一轮；用户下一次“会启动用户轮”的动作（普通文本/附件、`/send`、卡片重试）执行完后 SHALL 自动恢复；纯查看/控制命令（`/status`、`/help`、`/loop prompt`、`/loop` 查看、`/collect` 仅收集）SHALL NOT 恢复；`/loop start` SHALL 立即恢复。
 - **硬停**：`/stop`、`/loop off`、预算用完、会话结束、本轮 `failed`、`permission_timeout`、用户或 daemon 触发的 `interrupted`。硬停 SHALL 清空 Auto-continue 状态并发送原因文本。
 
-`turn_timeout` 与 `inactivity_timeout` SHALL 作为普通 Auto-continue turn 重试：使用同一份续跑提示词，消耗一个预算名额；不新增专用提示词或独立重试计数器。`permission_timeout`、`failed`、用户/daemon 中断 SHALL NOT 重试。
+`turn_timeout` 与 `inactivity_timeout` SHALL 作为普通 Auto-continue turn 重试：使用同一份续跑提示词，消耗一个预算名额；不新增专用提示词或独立重试计数器。若用户轮在 Auto-continue armed 状态下以这两种超时结束，也 SHALL 按普通自动轮重试（消耗预算）。`permission_timeout`、`failed`、用户/daemon 中断 SHALL NOT 重试。
 
 优先级 SHALL 为：用户硬停 > 失败/审批超时/用户中断 > 超时重试（预算允许） > 预算用完 > 提问 > 重复 > 低产出 > 继续。预算用完 SHALL 优先于暂停信号：预算为 0 时即使最后文本像提问也 SHALL 硬停。
 
@@ -123,8 +123,8 @@
 
 系统 SHALL 使用以下行为信号判定暂停：
 
-- **低产出**：`toolCalls === 0` 且 `outputTokens < 500` 且 `textChars < 600`；连续 2 轮 → 暂停。`textChars` SHALL 为本轮所有可见 assistant text 的总字符数（不是只取最后一段）；`outputTokens` SHALL 为 turn usage 的 output（不含 input/context、不含 reasoning）；任意 ≥1 个工具调用的 turn SHALL NOT 判为低产出。
-- **重复**：当前 Auto-continue turn 的最后一段文本与上一个 Auto-continue turn 的最后一段文本，归一化（NFKC、小写、去代码块、去空白与标点）后字符 3-gram Sørensen–Dice ≥ 0.9；且两轮 `fileMutations === 0`（`write`/`edit`/`patch`/`apply_patch`/`multiedit`；`bash` 不算文件写操作）；连续 2 轮 → 暂停。空文本 SHALL NOT 参与重复判定。
+- **低产出**：`toolCalls === 0` 且 `outputTokens < 500` 且 `textChars < 600`；连续 `no_progress_streak` 轮 → 暂停。`textChars` SHALL 为本轮所有可见 assistant text 的总字符数（不是只取最后一段）；`outputTokens` SHALL 为 turn usage 的 output（不含 input/context、不含 reasoning）；任意 ≥1 个工具调用的 turn SHALL NOT 判为低产出。
+- **重复**：当前 Auto-continue turn 的最后一段文本与上一个 Auto-continue turn 的最后一段文本，归一化（NFKC、小写、去代码块、去空白与标点）后字符 3-gram Sørensen–Dice ≥ 0.9；且两轮 `fileMutations === 0`（`write`/`edit`/`patch`/`apply_patch`/`multiedit`；`bash` 不算文件写操作）；连续 `no_progress_streak` 轮 → 暂停。空文本 SHALL NOT 参与重复判定。
 - **提问**：最后一段文本以 `?` 或 `？` 结尾，或最后一句/分句含“请确认 / 需要你 / 是否 / 要不要 / 等你确认”或英文 `confirm` / `should I` / `do you want` → 暂停。
 
 低产出、重复计数 SHALL 在用户轮、文件写操作、非重复文本、`/loop on N`、`/loop start`、超时重试时重置。`prevLastText` SHALL 只跨连续的 Auto-continue turns 保留，用户轮或重新 arm 时清空。轮次时长 SHALL 只记录、不参与判定。
