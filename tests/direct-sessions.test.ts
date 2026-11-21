@@ -4967,7 +4967,6 @@ describe("DirectSessionManager auto-continue", () => {
     budget?: number;
     streak?: number;
     prompt?: string;
-    logs?: string[];
   };
 
   async function setupLoopSession(opts: LoopOptions = {}) {
@@ -5315,5 +5314,125 @@ describe("DirectSessionManager auto-continue telemetry and user timeout", () => 
 
     expect(logs.some((l) => l.includes("auto_continue_turn"))).toBe(true);
     expect(logs.some((l) => l.includes("auto_continue_stop"))).toBe(true);
+  });
+});
+
+describe("DirectSessionManager auto-continue primary flow and lifecycle guards", () => {
+  it("arms while the first /chat turn is running and continues after it", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const cfg = directConfig({
+      verbosity: "detailed",
+      auto_continue: { budget: 1, no_progress_streak: 2, prompt: "继续未完成的部分。" },
+    });
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => cfg,
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(
+      msg({ message_id: "om_mid0", text: "/chat tasking 初始任务", create_time: "100" }),
+    );
+    await runner.waitForCall(1);
+    // The first turn is still running; arm for it now.
+    await mgr.handleThreadMessage(
+      msg({
+        message_id: "om_mid1",
+        root_id: "om_mid0",
+        text: "/loop on 1",
+        create_time: "101",
+      }),
+    );
+    expect(runner.calls).toHaveLength(1);
+
+    runner.finish(0, [toolEvent("edit x.ts"), textEvent("初始完成")]);
+    await runner.waitForCall(2);
+    expect(runner.calls[1]?.request.prompt).toBe("继续未完成的部分。");
+    expect(feishu.cardTexts("om_mid0").some((t) => t.includes("🔄 自动 1/1"))).toBe(true);
+
+    runner.finish(1, [toolEvent("edit x.ts"), textEvent("自动完成")]);
+    await mgr.whenIdle();
+    expect(feishu.sent("om_mid0").some((t) => t.includes("预算用完"))).toBe(true);
+  });
+
+  it("queues /loop start until the current user turn finishes", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const cfg = directConfig({
+      verbosity: "summary",
+      auto_continue: { budget: 1, no_progress_streak: 2, prompt: "继续未完成的部分。" },
+    });
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => cfg,
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(
+      msg({ message_id: "om_s0", text: "/chat tasking 初始任务", create_time: "100" }),
+    );
+    await runner.waitForCall(1);
+    runner.finish(0, [toolEvent("edit x.ts"), textEvent("初始完成")]);
+    await mgr.whenIdle();
+
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_s1", root_id: "om_s0", text: "用户任务", create_time: "101" }),
+    );
+    await runner.waitForCall(2);
+    await mgr.handleThreadMessage(
+      msg({
+        message_id: "om_s2",
+        root_id: "om_s0",
+        text: "/loop start 1",
+        create_time: "102",
+      }),
+    );
+    expect(feishu.sent("om_s0").some((t) => t.includes("当前轮结束后立即开始"))).toBe(true);
+
+    runner.finish(1, [toolEvent("edit x.ts"), textEvent("用户任务完成")]);
+    await runner.waitForCall(3);
+    expect(runner.calls[2]?.request.prompt).toBe("继续未完成的部分。");
+    runner.finish(2, [toolEvent("edit x.ts"), textEvent("自动完成")]);
+    await mgr.whenIdle();
+  });
+
+  it("/new disarms auto-continue", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const cfg = directConfig({
+      verbosity: "summary",
+      auto_continue: { budget: 3, no_progress_streak: 2, prompt: "继续未完成的部分。" },
+    });
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => cfg,
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(
+      msg({ message_id: "om_new0", text: "/chat tasking 初始任务", create_time: "100" }),
+    );
+    await runner.waitForCall(1);
+    runner.finish(0, [toolEvent("edit x.ts"), textEvent("初始完成")]);
+    await mgr.whenIdle();
+
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_new1", root_id: "om_new0", text: "/loop on", create_time: "101" }),
+    );
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_new2", root_id: "om_new0", text: "/new", create_time: "102" }),
+    );
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_new3", root_id: "om_new0", text: "新任务", create_time: "103" }),
+    );
+    await runner.waitForCall(2);
+    runner.finish(1, [toolEvent("edit x.ts"), textEvent("新任务完成")]);
+    await mgr.whenIdle();
+
+    expect(runner.calls).toHaveLength(2);
   });
 });
