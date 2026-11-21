@@ -28,7 +28,11 @@ if (enabled) assertE2ECredsComplete(CREDS);
 
 const TURN_WAIT_MS = 240000;
 
-function directConfig(targetDir: string, verbosity: DirectVerbosity = "detailed"): EffectiveConfig {
+function directConfig(
+  targetDir: string,
+  verbosity: DirectVerbosity = "detailed",
+  autoContinue?: { budget: number; no_progress_streak: number; prompt: string },
+): EffectiveConfig {
   return resolveConfig(
     {
       feishu: {
@@ -40,6 +44,7 @@ function directConfig(targetDir: string, verbosity: DirectVerbosity = "detailed"
           projects: { itdirect: targetDir },
           verbosity,
           auto_approve: true,
+          ...(autoContinue === undefined ? {} : { auto_continue: autoContinue }),
         },
       },
     },
@@ -404,6 +409,97 @@ describe.skipIf(!enabled)("Direct session real API integration", () => {
           expect(sent.message_id).not.toBe("");
         }
       } finally {
+        rmSync(repo, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
+    "auto-continue submits a real second turn after /loop on and stops with a reason",
+    { timeout: TURN_WAIT_MS * 2 + 120000 },
+    async () => {
+      const repo = mkdtempSync(join(tmpdir(), "tasking-direct-loop-"));
+      execSync("git init -q", { cwd: repo });
+      const root = mkdtempSync(join(tmpdir(), "tasking-direct-loop-state-"));
+      const bindings = new BindingStore(join(root, "b.db"));
+      const config = directConfig(repo, "summary", {
+        budget: 3,
+        no_progress_streak: 2,
+        prompt: "继续未完成的部分。不要重复已完成的内容，也不要总结。",
+      });
+      const feishu = new FeishuSource(config.feishu, logger);
+      const mgr = new DirectSessionManager({
+        feishu,
+        store: bindings,
+        config: () => config,
+        logger,
+      });
+      mgr.start();
+      try {
+        const rootMsgId = await feishu.postMessage(
+          CREDS.feishuIntakeChatId,
+          `[integration-direct] auto-continue ${Date.now()}`,
+        );
+        if (!rootMsgId) throw new Error("postMessage root failed");
+        await mgr.handleIntakeMessage(
+          makeMsg({
+            message_id: rootMsgId,
+            text: "/chat itdirect 请直接回复两个字：好的。不要读取文件，不要调用任何工具，不要做其他事。",
+          }),
+        );
+
+        // Arm while the first turn is actually running; this is the primary
+        // `/chat` -> `/loop on` flow.
+        await waitFor(
+          async () => bindings.getDirectSession(rootMsgId)?.status === "running",
+          TURN_WAIT_MS,
+        );
+        await mgr.handleThreadMessage(
+          makeMsg({
+            message_id: `om_loop_${Date.now()}`,
+            root_id: rootMsgId,
+            text: "/loop on 3",
+            create_time: String(Math.floor(Date.now() / 1000) + 1),
+          }),
+        );
+
+        let replies: FeishuPolledMessage[] = [];
+        await waitFor(async () => {
+          const session = bindings.getDirectSession(rootMsgId);
+          if (!session?.thread_id) return false;
+          replies = await feishu.listThreadReplies(session.thread_id, null);
+          const completions = replies.filter(
+            (m) => m.sender_type === "app" && m.text.includes("⏱"),
+          );
+          const stopped = replies.some(
+            (m) => m.sender_type === "app" && /自动续跑已(暂停|停止)/.test(m.text),
+          );
+          return completions.length >= 2 && stopped;
+        }, TURN_WAIT_MS * 2);
+
+        const appTexts = replies.filter((m) => m.sender_type === "app").map((m) => m.text);
+        expect(
+          appTexts.filter((t) => t.includes("⏱")).length,
+          "the first user turn plus at least one auto turn must have completed",
+        ).toBeGreaterThanOrEqual(2);
+        expect(
+          appTexts.some((t) => t.includes("自动续跑已") && /(预算用完|低产出|重复|已暂停)/.test(t)),
+          `expected a budget/low-work/repetition stop, got: ${appTexts.join("\n---\n")}`,
+        ).toBe(true);
+
+        await mgr.handleThreadMessage(
+          makeMsg({
+            message_id: `om_loop_done_${Date.now()}`,
+            root_id: rootMsgId,
+            text: "/done",
+            create_time: String(Math.floor(Date.now() / 1000) + 2),
+          }),
+        );
+        expect(bindings.getDirectSession(rootMsgId)?.status).toBe("done");
+      } finally {
+        mgr.stop();
+        bindings.close();
+        rmSync(root, { recursive: true, force: true });
         rmSync(repo, { recursive: true, force: true });
       }
     },
