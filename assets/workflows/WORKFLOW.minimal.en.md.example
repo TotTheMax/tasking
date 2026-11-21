@@ -246,6 +246,14 @@ feishu:
     # Idle time before a session is marked expired (ms; it does not delete the opencode session on disk). Default 2592000000 = 30 days.
     idle_ttl_ms: 2592000000
 
+    # Auto-continue: off by default; enable explicitly with /loop in the thread.
+    auto_continue:
+      # Auto-continue turns per /loop arming (1–20); auto turns only
+      budget: 5
+      # Consecutive low-output/repeated turns before pausing
+      no_progress_streak: 2
+      prompt: "继续未完成的部分。不要重复已完成的内容，也不要总结。"
+
 # ============================================================================
 # server: HTTP dashboard (optional)
 # ============================================================================

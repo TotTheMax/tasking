@@ -691,6 +691,60 @@ describe("feishu.direct config", () => {
     expect(cfg.feishu.direct.max_concurrent).toBe(5);
     expect(cfg.feishu.direct.max_concurrent_turns_per_dir).toBe(1);
     expect(cfg.feishu.direct.idle_ttl_ms).toBe(30 * 24 * 60 * 60 * 1000);
+    expect(cfg.feishu.direct.auto_continue).toEqual({
+      budget: 5,
+      no_progress_streak: 2,
+      prompt: "继续未完成的部分。不要重复已完成的内容，也不要总结。",
+    });
+  });
+
+  it("resolves feishu.direct.auto_continue and rejects invalid values", () => {
+    const cfg = resolveConfig(
+      {
+        feishu: {
+          direct: {
+            auto_continue: {
+              budget: 8,
+              no_progress_streak: 3,
+              prompt: "  继续实现并跑测试  ",
+            },
+          },
+        },
+      },
+      "/tmp",
+      "p",
+    );
+    expect(cfg.feishu.direct.auto_continue).toEqual({
+      budget: 8,
+      no_progress_streak: 3,
+      prompt: "继续实现并跑测试",
+    });
+
+    for (const budget of [0, 21, 1.5, Number.NaN]) {
+      expect(() =>
+        resolveConfig(
+          { feishu: { direct: { auto_continue: { budget }, projects: {} } } },
+          "/tmp",
+          "p",
+        ),
+      ).toThrow(TaskingError);
+    }
+    expect(() =>
+      resolveConfig(
+        { feishu: { direct: { auto_continue: { no_progress_streak: 0 }, projects: {} } } },
+        "/tmp",
+        "p",
+      ),
+    ).toThrow(TaskingError);
+    for (const prompt of ["", "   ", "x".repeat(2001)]) {
+      expect(() =>
+        resolveConfig(
+          { feishu: { direct: { auto_continue: { prompt }, projects: {} } } },
+          "/tmp",
+          "p",
+        ),
+      ).toThrow(TaskingError);
+    }
   });
 
   it("resolves max_concurrent_turns_per_dir and floors fractional values", () => {

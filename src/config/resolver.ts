@@ -3,6 +3,7 @@ import { isAbsolute, resolve as resolvePath } from "node:path";
 import { TaskingError } from "../shared/errors.js";
 import {
   type AgentConfig,
+  type AutoContinueConfig,
   DEFAULTS,
   type DirectProjectConfig,
   type EffectiveConfig,
@@ -70,12 +71,73 @@ function asEnvString(value: unknown): string | null {
 
 const TRACKERLESS_HINT =
   "this deployment runs Feishu direct sessions only; set kind: jira and fill the fields to re-enable the Jira source";
+
+function resolveAutoContinueConfig(raw: unknown): AutoContinueConfig {
+  if (typeof raw !== "object" || raw === null) {
+    return { ...DEFAULTS.feishu.direct.auto_continue };
+  }
+  const a = raw as Record<string, unknown>;
+  const budgetRaw = a.budget;
+  if (
+    budgetRaw !== undefined &&
+    (typeof budgetRaw !== "number" ||
+      !Number.isInteger(budgetRaw) ||
+      budgetRaw < 1 ||
+      budgetRaw > 20)
+  ) {
+    throw new TaskingError(
+      "config_validation",
+      "feishu.direct.auto_continue.budget must be an integer between 1 and 20",
+    );
+  }
+  const streakRaw = a.no_progress_streak;
+  if (
+    streakRaw !== undefined &&
+    (typeof streakRaw !== "number" || !Number.isInteger(streakRaw) || streakRaw < 1)
+  ) {
+    throw new TaskingError(
+      "config_validation",
+      "feishu.direct.auto_continue.no_progress_streak must be a positive integer",
+    );
+  }
+  let prompt: string = DEFAULTS.feishu.direct.auto_continue.prompt;
+  if (a.prompt !== undefined) {
+    if (typeof a.prompt !== "string") {
+      throw new TaskingError(
+        "config_validation",
+        "feishu.direct.auto_continue.prompt must be a non-empty string of at most 2000 characters",
+      );
+    }
+    prompt = a.prompt.trim();
+    if (prompt === "" || prompt.length > 2000) {
+      throw new TaskingError(
+        "config_validation",
+        "feishu.direct.auto_continue.prompt must be a non-empty string of at most 2000 characters",
+      );
+    }
+  }
+  return {
+    budget:
+      budgetRaw === undefined ? DEFAULTS.feishu.direct.auto_continue.budget : (budgetRaw as number),
+    no_progress_streak:
+      streakRaw === undefined
+        ? DEFAULTS.feishu.direct.auto_continue.no_progress_streak
+        : (streakRaw as number),
+    prompt,
+  };
+}
+
 function resolveDirectConfig(
   raw: unknown,
   workflowDir: string,
 ): EffectiveConfig["feishu"]["direct"] {
   if (typeof raw !== "object" || raw === null) {
-    return { ...DEFAULTS.feishu.direct, projects: {}, path_roots: [] };
+    return {
+      ...DEFAULTS.feishu.direct,
+      projects: {},
+      path_roots: [],
+      auto_continue: { ...DEFAULTS.feishu.direct.auto_continue },
+    };
   }
   const d = raw as Record<string, unknown>;
   const enabled = typeof d.enabled === "boolean" ? d.enabled : true;
@@ -156,6 +218,7 @@ function resolveDirectConfig(
     max_concurrent: asNumber(maxConcurrentRaw, DEFAULTS.feishu.direct.max_concurrent, 1),
     max_concurrent_turns_per_dir: maxConcurrentTurnsPerDir,
     idle_ttl_ms: asNumber(idleTtlRaw, DEFAULTS.feishu.direct.idle_ttl_ms, 1),
+    auto_continue: resolveAutoContinueConfig(d.auto_continue),
   };
 }
 

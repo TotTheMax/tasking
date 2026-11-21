@@ -52,6 +52,7 @@ export interface TurnCardState {
   continued?: boolean;
   renderSeq?: number;
   autoPosture?: "off" | "on" | "once";
+  autoContinue?: { index: number; max: number };
   agentOverride?: string | null;
   confirmPermission?: boolean;
 }
@@ -343,6 +344,9 @@ function renderCard(
     state.retryFromTurn !== undefined ? translate(` · 🔁 重试自 Turn ${state.retryFromTurn}`) : "";
   const segmentPart =
     state.segment !== undefined && state.segment > 1 ? translate(` · 片段 ${state.segment}`) : "";
+  const autoPart = state.autoContinue
+    ? translate(` · 🔄 自动 ${state.autoContinue.index}/${state.autoContinue.max}`)
+    : "";
   const durationPart = state.durationSec > 0 ? ` · ${state.durationSec}s` : "";
   const toolPart = state.segmented
     ? translate(`🔧 本段 ${state.segmentToolCalls ?? 0} · 本轮 ${state.toolCalls}`)
@@ -378,7 +382,7 @@ function renderCard(
       template: "blue",
       title: {
         tag: "plain_text",
-        content: `📁 ${state.sessionName} · ${translate(SESSION_STATUS_LABEL[state.sessionStatus])} · ${state.turns} turn${state.turns === 1 ? "" : "s"} · ≈${formatTokens(state.totalTokens)}${renderContextMarker(state)}${queuePart}${renderWaitingMarker(state)}${renderPostureMarker(state)}${segmentPart}`,
+        content: `📁 ${state.sessionName} · ${translate(SESSION_STATUS_LABEL[state.sessionStatus])} · ${state.turns} turn${state.turns === 1 ? "" : "s"} · ≈${formatTokens(state.totalTokens)}${renderContextMarker(state)}${queuePart}${renderWaitingMarker(state)}${renderPostureMarker(state)}${autoPart}${segmentPart}`,
       },
     },
     body: { elements },

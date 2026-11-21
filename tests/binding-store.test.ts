@@ -359,6 +359,22 @@ describe("DirectSessionStore (direct_sessions table)", () => {
     expect(s?.last_prompt).toBe("帮我跑测试");
   });
 
+  it("persists the auto-continue prompt override", () => {
+    store.upsertDirectSession({
+      root_id: "om_loop",
+      chat_id: "oc_c",
+      project: null,
+      path: "/x",
+      session_id: null,
+      status: "idle",
+    });
+    expect(store.getDirectSession("om_loop")?.loop_prompt).toBeNull();
+    store.updateDirectSession("om_loop", { loop_prompt: "继续写报告" });
+    expect(store.getDirectSession("om_loop")?.loop_prompt).toBe("继续写报告");
+    store.updateDirectSession("om_loop", { loop_prompt: null });
+    expect(store.getDirectSession("om_loop")?.loop_prompt).toBeNull();
+  });
+
   it("persists per-session agent/model/auto overrides", () => {
     store.upsertDirectSession({
       root_id: "om_ov",
@@ -448,6 +464,7 @@ describe("BindingStore direct_sessions migration", () => {
       expect(updated?.total_tokens).toBe(3);
       expect(updated?.card_message_id).toBeNull();
       expect(updated?.last_prompt).toBeNull();
+      expect(updated?.loop_prompt).toBeNull();
       expect(updated?.agent_override).toBeNull();
       expect(updated?.auto_approve_override).toBeNull();
     } finally {

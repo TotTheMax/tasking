@@ -56,6 +56,8 @@ Card buttons (interrupt / retry / full output / end) arrive as `card.action.trig
 
 Data-plane boundary: the card is the **in-Feishu view of a turn** (one per turn, trimmed to the 30KB budget) while the TUI activity view (`direct:<root_id>`) is the **local full event stream** (an in-memory ring buffer); the two are independent. `📄 Full output` reads the turn's in-memory accumulator and delivers it as a file attachment.
 
+**Auto-continue** is an explicit direct-session mode; it changes neither the turn-driver nor the Jira worker. `/loop on [N]` only arms the next task; `/loop start` submits a turn immediately. The budget counts only Auto-continue turns (default 5, 1–20); user turns do not consume it. Stops are behavior-driven — two consecutive turns with no tools and short output, two repeated summaries with no file writes, or a final message that asks a question → soft pause; budget exhaustion, failure, permission timeout, and `/stop` are hard stops. `turn_timeout`/`inactivity_timeout` retry as ordinary auto turns, capped only by the budget. Process-card headers show `🔄 自动 n/N`; the result message stays pure text; pauses/stops post a separate text. Jira-bound topics reply "direct sessions only" and never bridge. See `src/direct/auto-continue.ts` and ADR 0044.
+
 ## Shared Task Model
 
 Regardless of source, all tasks are normalized into a unified `Task` entity:

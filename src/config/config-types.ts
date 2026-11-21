@@ -67,6 +67,12 @@ export interface DirectProjectConfig {
 
 export type DirectVerbosity = "quiet" | "summary" | "detailed";
 
+export interface AutoContinueConfig {
+  budget: number;
+  no_progress_streak: number;
+  prompt: string;
+}
+
 export interface DirectConfig {
   enabled: boolean;
   projects: Record<string, DirectProjectConfig>;
@@ -76,6 +82,7 @@ export interface DirectConfig {
   max_concurrent: number;
   max_concurrent_turns_per_dir: number;
   idle_ttl_ms: number;
+  auto_continue: AutoContinueConfig;
 }
 
 export type FeishuEdition = "feishu" | "lark";
@@ -188,6 +195,11 @@ export const DEFAULTS = {
       max_concurrent: 5,
       max_concurrent_turns_per_dir: 1,
       idle_ttl_ms: 30 * 24 * 60 * 60 * 1000,
+      auto_continue: {
+        budget: 5,
+        no_progress_streak: 2,
+        prompt: "继续未完成的部分。不要重复已完成的内容，也不要总结。",
+      },
     },
   },
   server: {

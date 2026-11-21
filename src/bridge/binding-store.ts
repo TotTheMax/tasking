@@ -31,6 +31,7 @@ export interface DirectSession {
   seen_ids: string[];
   card_message_id: string | null;
   last_prompt: string | null;
+  loop_prompt: string | null;
   agent_override: string | null;
   model_override: string | null;
   auto_approve_override: string | null;
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS direct_sessions (
   last_msg_id TEXT,
   card_message_id TEXT,
   last_prompt TEXT,
+  loop_prompt TEXT,
   agent_override TEXT,
   model_override TEXT,
   auto_approve_override TEXT,
@@ -114,6 +116,7 @@ export class BindingStore {
       for (const col of [
         "card_message_id TEXT",
         "last_prompt TEXT",
+        "loop_prompt TEXT",
         "agent_override TEXT",
         "model_override TEXT",
         "auto_approve_override TEXT",
@@ -302,6 +305,7 @@ export class BindingStore {
       thread_id?: string | null;
       card_message_id?: string | null;
       last_prompt?: string | null;
+      loop_prompt?: string | null;
       name?: string | null;
       agent_override?: string | null;
       model_override?: string | null;
@@ -339,6 +343,11 @@ export class BindingStore {
       this.db
         .prepare("UPDATE direct_sessions SET last_prompt = ?, updated_at = ? WHERE root_id = ?")
         .run(patch.last_prompt, Date.now(), rootId);
+    }
+    if (patch.loop_prompt !== undefined) {
+      this.db
+        .prepare("UPDATE direct_sessions SET loop_prompt = ?, updated_at = ? WHERE root_id = ?")
+        .run(patch.loop_prompt, Date.now(), rootId);
     }
     for (const [column, value] of [
       ["agent_override", patch.agent_override],
@@ -461,6 +470,7 @@ function rowToDirectSession(row: Record<string, unknown>): DirectSession {
     seen_ids: parseSeenIds(row.seen_ids),
     card_message_id: typeof row.card_message_id === "string" ? row.card_message_id : null,
     last_prompt: typeof row.last_prompt === "string" ? row.last_prompt : null,
+    loop_prompt: typeof row.loop_prompt === "string" ? row.loop_prompt : null,
     agent_override: typeof row.agent_override === "string" ? row.agent_override : null,
     model_override: typeof row.model_override === "string" ? row.model_override : null,
     auto_approve_override:

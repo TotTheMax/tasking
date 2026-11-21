@@ -32,6 +32,7 @@ import {
   parseAgent,
   parseChat,
   parseIssue,
+  parseLoop,
   parseState,
   renderForwardedComment,
   threadCommandsFor,
@@ -915,6 +916,10 @@ export class CommentBridge {
         );
         return;
       }
+      if (parseLoop(m.text) !== null) {
+        await this.deps.feishu.replyFlat(m.message_id, "请在 /chat 话题内使用 /loop。");
+        return;
+      }
       if (parseChat(m.text)) {
         if (this.deps.direct) {
           const handled = await this.deps.direct.handleIntakeMessage(m);
@@ -1157,6 +1162,10 @@ export class CommentBridge {
   ): Promise<void> {
     if (isHelp(text)) {
       await this.replyThreadCard(b.root_id, this.helpCard("thread"), this.helpText("thread"));
+      return;
+    }
+    if (parseLoop(text) !== null) {
+      await this.deps.feishu.replyFlat(b.root_id, "仅直连会话支持 /loop。");
       return;
     }
     if (text.trim().startsWith("/issue")) {

@@ -24,7 +24,7 @@ const CHAT_HELP_LINES = [
   "/chat <project> <msg> 在已配置项目目录创建 opencode 会话（仅 intake 群）",
   "/chat /abs/path <msg> 在指定目录创建 opencode 会话",
   "/chat                 列出可用项目",
-  "/chat 内: 直接回复续聊，/stop 中断当前任务，/done 结束会话",
+  "/chat 内: 直接回复续聊，/loop 自动续跑，/stop 中断当前任务，/done 结束会话",
 ];
 const STATE_HELP_LINES = [
   "/state                查看当前状态 + 可用转移编号（已绑话题内）",
@@ -172,6 +172,47 @@ export function parseIssue(text: string): ParsedIssue | null {
     };
   }
   return { kind: "create", title, description, typeOverride, agentOverride };
+}
+
+export type ParsedLoop =
+  | { kind: "status" }
+  | { kind: "off" }
+  | { kind: "on"; budget: number | null }
+  | { kind: "start"; budget: number | null }
+  | { kind: "prompt"; text: string | null; reset: boolean }
+  | { kind: "invalid"; reason: string };
+
+export function parseLoop(text: string): ParsedLoop | null {
+  const trimmed = text.trim();
+  if (trimmed === "/loop") return { kind: "status" };
+  if (!trimmed.startsWith("/loop ")) return null;
+  const rest = trimmed.slice("/loop ".length).trim();
+  if (rest === "") return { kind: "status" };
+  if (rest === "off") return { kind: "off" };
+
+  const promptPrefix = "prompt";
+  if (rest === promptPrefix || rest.startsWith(`${promptPrefix} `)) {
+    const promptText = rest.slice(promptPrefix.length).trim();
+    if (promptText === "") return { kind: "prompt", text: null, reset: false };
+    if (promptText === "reset") return { kind: "prompt", text: null, reset: true };
+    return { kind: "prompt", text: promptText, reset: false };
+  }
+
+  const [verb, ...tail] = rest.split(/\s+/);
+  if (verb === "on" || verb === "start") {
+    if (tail.length === 0) return { kind: verb, budget: null };
+    if (tail.length > 1) {
+      return { kind: "invalid", reason: `用法：/loop ${verb} [N]（N 为 1–20 的整数）` };
+    }
+    const raw = tail[0] ?? "";
+    const budget = Number(raw);
+    if (!Number.isInteger(budget) || budget < 1 || budget > 20) {
+      return { kind: "invalid", reason: "预算 N 必须是 1–20 的整数" };
+    }
+    return { kind: verb, budget };
+  }
+
+  return { kind: "invalid", reason: "用法：/loop [on [N]|start [N]|off|prompt [文本|reset]]" };
 }
 
 export interface ParsedState {

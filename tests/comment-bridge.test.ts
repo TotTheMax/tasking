@@ -1517,6 +1517,35 @@ describe("CommentBridge sync", () => {
     expect(rec.replies.some((r) => r.text.includes("已收到"))).toBe(false);
   });
 
+  it("thread /loop replies direct-only and does not bridge a Jira comment", async () => {
+    const items = [
+      {
+        message_id: "om_cmd_loop",
+        root_id: "om_root",
+        msg_type: "text",
+        create_time: "9",
+        sender: { sender_id: { open_id: "h2" }, sender_name: "Bob", sender_type: "user" },
+        body: { content: JSON.stringify({ text: "/loop on" }) },
+      },
+    ];
+    server = await createMockJiraServer(() => ({ status: 200, body: {} }));
+    const config = baseConfig();
+    const tracker = new JiraTracker(config.tracker);
+    const rec = feishuRecorder({ om_root: items });
+    const feishu = new FeishuSource(config.feishu, logger, rec.fetchImpl);
+    bindings.upsertBinding({
+      issue_id: "1",
+      issue_key: "ENG-1",
+      chat_id: "oc_intake",
+      root_id: "om_root",
+      thread_id: "om_root",
+    });
+    bridge = new CommentBridge({ tracker, feishu, bindings, config: () => config, logger });
+    await bridge.bridgeMessages(getOrFail(bindings, "1"), config);
+    expect(rec.replies.some((r) => r.text.includes("仅直连会话支持"))).toBe(true);
+    expect(rec.replies.some((r) => r.text.includes("已同步"))).toBe(false);
+  });
+
   it("thread unknown command replies the thread-scoped list", async () => {
     const items = [
       {

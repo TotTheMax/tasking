@@ -101,6 +101,13 @@ describe("buildTurnCard structure", () => {
     expect(asCard(buildTurnCard(state({ queued: 2 }))).header.title.content).toContain("队列 2");
   });
 
+  it("marks auto-continue turns in the header", () => {
+    const marked = asCard(buildTurnCard(state({ autoContinue: { index: 2, max: 5 } }))).header.title
+      .content;
+    expect(marked).toContain("🔄 自动 2/5");
+    expect(asCard(buildTurnCard(state())).header.title.content).not.toContain("🔄 自动");
+  });
+
   it("marks continuation segments in the header", () => {
     expect(asCard(buildTurnCard(state({ segment: 1 }))).header.title.content).not.toContain("片段");
     expect(asCard(buildTurnCard(state({ segment: 2 }))).header.title.content).toContain("片段 2");

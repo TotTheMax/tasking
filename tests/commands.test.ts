@@ -8,6 +8,7 @@ import {
   parseAgent,
   parseChat,
   parseIssue,
+  parseLoop,
   parseState,
   renderForwardedComment,
 } from "../src/bridge/commands.js";
@@ -34,6 +35,44 @@ describe("command parsing", () => {
   it("HELP_TEXT documents /agent usage", () => {
     expect(HELP_TEXT).toContain("/agent");
     expect(HELP_TEXT).toContain("--agent");
+  });
+});
+
+describe("parseLoop", () => {
+  it("parses status/off/on/start", () => {
+    expect(parseLoop("/loop")).toEqual({ kind: "status" });
+    expect(parseLoop("/loop   ")).toEqual({ kind: "status" });
+    expect(parseLoop("/loop off")).toEqual({ kind: "off" });
+    expect(parseLoop("/loop on")).toEqual({ kind: "on", budget: null });
+    expect(parseLoop("/loop on 8")).toEqual({ kind: "on", budget: 8 });
+    expect(parseLoop("/loop start")).toEqual({ kind: "start", budget: null });
+    expect(parseLoop("/loop start 3")).toEqual({ kind: "start", budget: 3 });
+  });
+
+  it("rejects invalid budget values", () => {
+    for (const text of ["/loop on 0", "/loop on 21", "/loop on 1.5", "/loop on 5 6"]) {
+      expect(parseLoop(text)).toMatchObject({ kind: "invalid" });
+    }
+  });
+
+  it("parses prompt view/set/reset", () => {
+    expect(parseLoop("/loop prompt")).toEqual({ kind: "prompt", text: null, reset: false });
+    expect(parseLoop("/loop prompt reset")).toEqual({
+      kind: "prompt",
+      text: null,
+      reset: true,
+    });
+    expect(parseLoop("/loop prompt 继续实现\n并跑测试")).toEqual({
+      kind: "prompt",
+      text: "继续实现\n并跑测试",
+      reset: false,
+    });
+  });
+
+  it("ignores non-loop text and reports unknown verbs", () => {
+    expect(parseLoop("hello")).toBeNull();
+    expect(parseLoop("/state 1")).toBeNull();
+    expect(parseLoop("/loop wat")).toMatchObject({ kind: "invalid" });
   });
 });
 

@@ -204,6 +204,16 @@ route agent 同一时刻最多一个运行(除非另行配置),不阻塞结构�
 | `max_concurrent_turns_per_dir` | integer | `1` | 否 | 同一目录可同时执行的 turn 数。`1` = 串行（默认，保持原有安全行为）；`2+` = 显式放开同目录并行，需自行承担共享工作树的文件/git 竞态风险。实际并发与 `max_concurrent` 取更严者；等待审批的 turn 继续占用槽位 |
 | `idle_ttl_ms` | integer | `2592000000`(30 天) | 否 | 空闲多久后把会话标记为 expired（不删除 opencode 磁盘上的 session） |
 
+#### `feishu.direct.auto_continue` 子块（自动续跑）
+
+| 字段 | 类型 | 默认值 | 必需 | 说明 |
+|------|------|--------|------|------|
+| `budget` | integer | `5`（1–20） | 否 | 一次 `/loop` 的自动轮预算；只计自动轮，用户轮不消耗 |
+| `no_progress_streak` | integer | `2` | 否 | 连续多少轮低产出或重复后暂停 |
+| `prompt` | string | `继续未完成的部分。不要重复已完成的内容，也不要总结。` | 否 | 续跑提示词，≤2000 字；会话可用 `/loop prompt <文本>` 覆盖 |
+
+自动续跑默认关闭，需 `/loop` 显式开启；`agent.max_turns` 仍是 Jira worker 专属，不受本块影响。
+
 直连 turn 继承操作者级的 `opencode.agent`、`opencode.model`、`opencode.variant`（非空时映射会话 agent 与 `Model.Ref`），与 Jira worker 一致；目标目录自身的 `.opencode/` 配置仍治理权限/LSP/formatter。
 
 零配置即可用（path 模式）：`feishu.enabled: true` 且无 `direct` 子块时，群里 `/chat /绝对路径 <消息>` 直接可用。要按项目名使用，加两行：

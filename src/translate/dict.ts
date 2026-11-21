@@ -454,6 +454,91 @@ export const EXACT: Record<string, string> = {
   "已放开本会话权限（立即生效）": "Session permissions unlocked (effective now)",
   "未在 PATH 找到 opencode（tasking 0.7 需要 opencode >=2.0 <3）——安装见 https://opencode.ai":
     "opencode not found on PATH (tasking 0.7 needs opencode >=2.0 <3) — see https://opencode.ai",
+  "/chat 内: 直接回复续聊，/loop 自动续跑，/stop 中断当前任务，/done 结束会话":
+    "In /chat: reply to continue; /loop auto-continues; /stop interrupts; /done ends the session",
+  "预算 N 必须是 1–20 的整数": "Budget N must be an integer from 1 to 20",
+  "用法：/loop [on [N]|start [N]|off|prompt [文本|reset]]":
+    "Usage: /loop [on [N]|start [N]|off|prompt [text|reset]]",
+  "请在 /chat 话题内使用 /loop。": "Use /loop inside a /chat topic.",
+  "仅直连会话支持 /loop。": "/loop is only supported in direct sessions.",
+  "继续未完成的部分。不要重复已完成的内容，也不要总结。":
+    "Continue the unfinished work. Do not repeat what is already done, and do not summarize.",
+  "`/loop on [N]` → 为下一条任务开启自动续跑；`/loop start` 立即继续；`/loop off` 关闭":
+    "`/loop on [N]` → arm auto-continue for the next task; `/loop start` continues now; `/loop off` disables",
+  "`/loop prompt <文本>` → 设置续跑提示词（`reset` 恢复默认）":
+    "`/loop prompt <text>` → set the continuation prompt (`reset` restores the default)",
+  "未知命令。直连会话支持：直接回复续聊、/collect、/send、/cancel、/auto、/agent、/model、/loop、/new、/name、/status、/stop、/done、/help":
+    "Unknown command. Direct sessions support: reply to continue, /collect, /send, /cancel, /auto, /agent, /model, /loop, /new, /name, /status, /stop, /done, /help",
+  "🔄 自动续跑已暂停：模型在提问": "🔄 Auto-continue paused: the model is asking a question",
+  "🔄 自动续跑已暂停：连续 2 轮回复重复且没有文件改动":
+    "🔄 Auto-continue paused: the last two replies repeated with no file changes",
+  "🔄 自动续跑已暂停：连续 2 轮低产出": "🔄 Auto-continue paused: two consecutive low-output turns",
+  "/loop start 重新开干，或 /loop on N 设置新预算。":
+    "/loop start to resume, or /loop on N to set a new budget.",
+  "🔄 自动续跑已停止：本轮审批超时":
+    "🔄 Auto-continue stopped: this turn timed out waiting for approval",
+  "/loop start 重新开干。": "/loop start to resume.",
+  "🔄 自动续跑已停止：本轮失败": "🔄 Auto-continue stopped: this turn failed",
+  "🔄 自动续跑已停止：本轮已中断": "🔄 Auto-continue stopped: this turn was interrupted",
+  模型在提问: "model is asking a question",
+  回复重复且无文件改动: "repeated reply with no file changes",
+  连续低产出: "consecutive low-output turns",
+  配置默认: "config default",
+  会话设置: "session setting",
+  配置: "Config",
+  会话: "Session",
+  暂停: "Paused",
+  开启: "On",
+  关闭状态: "Off",
+  状态: "Status",
+  预算: "Budget",
+  剩余: "Remaining",
+  下一次自动轮: "Next auto turn",
+  低产出: "Low output",
+  重复计数: "Repetition",
+  提示词: "Prompt",
+  规则: "Rules",
+  连续: "Consecutive",
+  "轮低产出 / 重复；提问暂停；预算/失败/审批超时硬停":
+    " low-output / repetition turns; questions pause; budget/failure/approval timeout stops",
+  上次暂停: "Last pause",
+  "用法：/loop on [N]｜/loop start [N]｜/loop off｜/loop prompt [文本|reset]":
+    "Usage: /loop on [N] | /loop start [N] | /loop off | /loop prompt [text|reset]",
+  "🔄 自动续跑": "🔄 Auto-continue",
+  "⚠️ /loop 用法": "⚠️ /loop usage",
+  自动续跑状态见下: "Auto-continue status below",
+  "🔄 自动续跑已关闭。当前轮会跑完；预算偏好保留，重新开启用 /loop on。":
+    "🔄 Auto-continue disabled. The current turn will finish; the budget preference is kept — use /loop on to re-enable.",
+  "🔄 自动续跑已关闭": "🔄 Auto-continue disabled",
+  "已开启，最多 ": "Enabled; up to ",
+  " 轮 Auto-continue。": " auto-continue turns.",
+  "下一条任务开始后生效；/loop start 可立即开干。":
+    "Takes effect on the next task; /loop start continues immediately.",
+  "关闭：/loop off｜中断：/stop": "Disable: /loop off | Interrupt: /stop",
+  "🔄 自动续跑已开启": "🔄 Auto-continue enabled",
+  "还没有任务。请先发送任务消息，再 /loop start。":
+    "No task yet. Send a task message first, then /loop start.",
+  "⚠️ 无法开始": "⚠️ Cannot start",
+  "已开始，最多 ": "Started; up to ",
+  "中断：/stop｜关闭：/loop off": "Interrupt: /stop | Disable: /loop off",
+  "🔄 自动续跑已开始": "🔄 Auto-continue started",
+  "当前轮结束后立即开始。": "Starts right after the current turn.",
+  "已恢复配置默认提示词。": "Restored the default continuation prompt.",
+  "✍️ 续跑提示词已恢复默认": "✍️ Continuation prompt reset",
+  当前: "Current",
+  "设置：/loop prompt <文本>｜恢复默认：/loop prompt reset":
+    "Set: /loop prompt <text> | Reset: /loop prompt reset",
+  "✍️ 续跑提示词": "✍️ Continuation prompt",
+  "续跑提示词必须是 1–2000 字。": "The continuation prompt must be 1–2000 characters.",
+  "⚠️ 无法设置": "⚠️ Cannot set",
+  "已更新，下一轮生效。": "Updated; applies to the next turn.",
+  "✍️ 续跑提示词已更新": "✍️ Continuation prompt updated",
+  "会话创建后：在本话题内直接回复即续聊；/loop 自动续跑；/stop 中断当前任务；/done 结束会话":
+    "After the session is created: reply in this topic to continue; /loop auto-continues; /stop interrupts; /done ends the session",
+  "/loop on [N] → 为下一条任务开启自动续跑；/loop start 立即继续；/loop off 关闭":
+    "/loop on [N] → arm auto-continue for the next task; /loop start continues now; /loop off disables",
+  "/loop prompt <文本> → 设置续跑提示词（/loop prompt reset 恢复默认）":
+    "/loop prompt <text> → set the continuation prompt (/loop prompt reset restores the default)",
 };
 
 export const PATTERNS: PatternRule[] = [
@@ -1318,6 +1403,38 @@ export const PATTERNS: PatternRule[] = [
       `^${normalizeTemplate('🔐 等待审批：${request.action} ${request.resources.join("、")}（当前客户端不支持卡片，30 分钟未处理将自动拒绝）')}$`,
     ),
     en: "🔐 Waiting for approval: $1 $2 (this client does not support cards; auto-reject in 30 minutes)",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate(" · 🔄 自动 ${state.autoContinue.index}/${state.autoContinue.max}")}$`,
+    ),
+    en: " · 🔄 auto $1/$2",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("（工具 ${metrics.toolCalls} · 输出 ${metrics.outputTokens} tokens · 文本 ${metrics.textChars} 字）")}$`,
+    ),
+    en: "($1 tools · $2 output tokens · $3 chars)",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("预算：${used}/${budget} · 回复任意消息自动继续，或 /loop off 关闭。")}$`,
+    ),
+    en: "Budget: $1/$2 · reply any message to resume automatically, or /loop off to disable.",
+  },
+  {
+    re: new RegExp(
+      `^${normalizeTemplate("🔄 自动续跑已停止：本轮超时且预算用完（${used}/${budget}）")}$`,
+    ),
+    en: "🔄 Auto-continue stopped: this turn timed out and the budget is exhausted ($1/$2)",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate("🔄 自动续跑已停止：预算用完（${used}/${budget}）")}$`),
+    en: "🔄 Auto-continue stopped: budget exhausted ($1/$2)",
+  },
+  {
+    re: new RegExp(`^${normalizeTemplate("用法：/loop ${verb} [N]（N 为 1–20 的整数）")}$`),
+    en: "Usage: /loop $1 [N] (N is an integer from 1 to 20)",
   },
   {
     re: new RegExp(`^${normalizeTemplate('${style.bold("任务来源")}')}$`),

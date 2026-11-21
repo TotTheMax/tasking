@@ -7,7 +7,7 @@ import {
   toSecondsStr,
 } from "../adapters/feishu/source.js";
 import type { BindingStore, DirectSession } from "../bridge/binding-store.js";
-import { parseChat } from "../bridge/commands.js";
+import { parseChat, parseLoop } from "../bridge/commands.js";
 import { readTaskingVersion } from "../cli/version.js";
 import type { DirectConfig, EffectiveConfig } from "../config/config-types.js";
 import { type ApiExecFn, defaultApiExec, describeApiCommand } from "../driver/api-client.js";
@@ -26,6 +26,16 @@ import type { Logger } from "../observability/logger.js";
 import { TaskingError, toTaskingError } from "../shared/errors.js";
 import { redactSecrets } from "../shared/redact.js";
 import type { RuntimeDirectDir, RuntimeDirectSession } from "../shared/types.js";
+import {
+  type AutoContinuePauseReason,
+  type AutoContinueState,
+  type AutoContinueStopReason,
+  type AutoTurnMetrics,
+  classifyAutoTurn,
+  freshAutoContinueState,
+  isFileMutationTool,
+  resetAutoContinueRuns,
+} from "./auto-continue.js";
 import {
   CARD_BUDGET_BYTES,
   type TurnCardEvent,
@@ -143,15 +153,25 @@ interface SessionRuntime {
   flushQueued: boolean;
   flushPromise: Promise<void> | null;
   lastCardError: "retryable" | "permanent" | null;
+  autoContinue: AutoContinueState | null;
+  autoContinueBudget: number | null;
 }
 
 interface TurnStats {
   toolCalls: number;
+  fileMutations: number;
   permissionRejections: number;
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  textChars: number;
   lastText: string;
+}
+
+interface TurnOutcome {
+  status: AutoTurnMetrics["status"];
+  error: string | null;
+  metrics: AutoTurnMetrics;
 }
 
 export function isDirectEnabled(config: EffectiveConfig): boolean {
@@ -718,6 +738,8 @@ export class DirectSessionManager {
         "**命令**",
         "`/collect` → 收集多条消息；`/send` 提交为一轮；`/cancel` 丢弃",
         "`/auto [on|once|off|reset]` → 本会话权限姿态（下一轮生效）",
+        "`/loop on [N]` → 为下一条任务开启自动续跑；`/loop start` 立即继续；`/loop off` 关闭",
+        "`/loop prompt <文本>` → 设置续跑提示词（`reset` 恢复默认）",
         "`/name <文本>` → 会话改名（卡片头部与 TUI）",
         "`/agent <name>` · `/model <name>` → 切换 agent/model（`reset` 恢复）",
         "`/new` → 清空上下文开启新会话",
@@ -929,6 +951,7 @@ export class DirectSessionManager {
 
   private async enqueueRetry(rootId: string, prompt: string, fromTurn: number): Promise<void> {
     const rt = this.runtimeFor(rootId);
+    this.resumeAutoContinueForUserTurn(rt);
     if (rt.turnInFlight) {
       rt.queue.push(prompt);
       return;
@@ -944,6 +967,10 @@ export class DirectSessionManager {
   async handleIntakeMessage(m: FeishuPolledMessage): Promise<boolean> {
     const config = this.deps.config();
     if (!isDirectEnabled(config)) return false;
+    if (parseLoop(m.text) !== null) {
+      await this.deps.feishu.replyFlat(m.message_id, "请在 /chat 话题内使用 /loop。");
+      return true;
+    }
     const parsed = parseChat(m.text);
     if (!parsed) return false;
     try {
@@ -1087,10 +1114,14 @@ export class DirectSessionManager {
       await this.executeModel(session, trimmed);
       return true;
     }
+    if (trimmed === "/loop" || trimmed.startsWith("/loop ")) {
+      await this.executeLoop(session, trimmed);
+      return true;
+    }
     if (trimmed.startsWith("/")) {
       await this.replySafe(
         m.root_id,
-        "未知命令。直连会话支持：直接回复续聊、/collect、/send、/cancel、/auto、/agent、/model、/new、/name、/status、/stop、/done、/help",
+        "未知命令。直连会话支持：直接回复续聊、/collect、/send、/cancel、/auto、/agent、/model、/loop、/new、/name、/status、/stop、/done、/help",
       );
       return true;
     }
@@ -1414,14 +1445,22 @@ export class DirectSessionManager {
         flushQueued: false,
         flushPromise: null,
         lastCardError: null,
+        autoContinue: null,
+        autoContinueBudget: null,
       };
       this.runtime.set(rootId, rt);
     }
     return rt;
   }
 
+  private resumeAutoContinueForUserTurn(rt: SessionRuntime): void {
+    if (rt.autoContinue === null) return;
+    rt.autoContinue = resetAutoContinueRuns(rt.autoContinue);
+  }
+
   private enqueueTurn(rootId: string, message: string): void {
     const rt = this.runtimeFor(rootId);
+    this.resumeAutoContinueForUserTurn(rt);
     if (rt.turnInFlight) {
       rt.queue.push(message);
       if (this.cardsLive(rt)) {
@@ -1440,10 +1479,84 @@ export class DirectSessionManager {
     );
   }
 
+  private autoBudget(rt: SessionRuntime): number {
+    return rt.autoContinueBudget ?? this.deps.config().feishu.direct.auto_continue.budget;
+  }
+
+  private autoPrompt(session: DirectSession): string {
+    return session.loop_prompt ?? this.deps.config().feishu.direct.auto_continue.prompt;
+  }
+
+  private beginAutoTurn(rt: SessionRuntime): { index: number; max: number } | null {
+    if (rt.autoContinue === null) return null;
+    const budget = this.autoBudget(rt);
+    if (rt.autoContinue.used >= budget) return null;
+    rt.autoContinue.used += 1;
+    return { index: rt.autoContinue.used, max: budget };
+  }
+
+  private async sendAutoPause(
+    rootId: string,
+    reason: AutoContinuePauseReason,
+    metrics: AutoTurnMetrics,
+    rt: SessionRuntime,
+  ): Promise<void> {
+    const budget = this.autoBudget(rt);
+    const used = rt.autoContinue?.used ?? 0;
+    const lines: string[] = [];
+    if (reason === "question") {
+      lines.push(translate("🔄 自动续跑已暂停：模型在提问"));
+    } else if (reason === "repetition") {
+      lines.push(translate("🔄 自动续跑已暂停：连续 2 轮回复重复且没有文件改动"));
+    } else {
+      lines.push(translate("🔄 自动续跑已暂停：连续 2 轮低产出"));
+      lines.push(
+        translate(
+          `（工具 ${metrics.toolCalls} · 输出 ${metrics.outputTokens} tokens · 文本 ${metrics.textChars} 字）`,
+        ),
+      );
+    }
+    lines.push(translate(`预算：${used}/${budget} · 回复任意消息自动继续，或 /loop off 关闭。`));
+    await this.replySafe(rootId, lines.join("\n"));
+  }
+
+  private async sendAutoStop(
+    rootId: string,
+    reason: AutoContinueStopReason,
+    metrics: AutoTurnMetrics | null,
+    rt: SessionRuntime,
+    detail?: string,
+  ): Promise<void> {
+    const budget = this.autoBudget(rt);
+    const used = rt.autoContinue?.used ?? 0;
+    const lines: string[] = [];
+    if (reason === "budget") {
+      lines.push(
+        translate(
+          detail === "timeout"
+            ? `🔄 自动续跑已停止：本轮超时且预算用完（${used}/${budget}）`
+            : `🔄 自动续跑已停止：预算用完（${used}/${budget}）`,
+        ),
+      );
+      lines.push(translate("/loop start 重新开干，或 /loop on N 设置新预算。"));
+    } else if (reason === "permission_timeout") {
+      lines.push(translate("🔄 自动续跑已停止：本轮审批超时"));
+      lines.push(translate("/loop start 重新开干。"));
+    } else if (reason === "failed") {
+      const detailText = metrics?.error ? ` (${metrics.error})` : "";
+      lines.push(translate("🔄 自动续跑已停止：本轮失败") + detailText);
+      lines.push(translate("/loop start 重新开干。"));
+    } else {
+      lines.push(translate("🔄 自动续跑已停止：本轮已中断"));
+    }
+    await this.replySafe(rootId, lines.join("\n"));
+  }
+
   private async runTurnLoop(
     rootId: string,
     firstMessage: string,
     retryFromTurn?: number,
+    startAuto = false,
   ): Promise<void> {
     const rt = this.runtimeFor(rootId);
     rt.turnInFlight = true;
@@ -1451,15 +1564,32 @@ export class DirectSessionManager {
     try {
       let prompt = firstMessage;
       let retriedFrom = retryFromTurn;
+      let auto = startAuto;
       for (;;) {
         const session = this.deps.store.getDirectSession(rootId);
-        if (!session || session.status === "done" || session.status === "expired") break;
+        if (!session || session.status === "done" || session.status === "expired") {
+          rt.autoContinue = null;
+          break;
+        }
         if (this.halted || rt.stopRequested) break;
+        if (auto && (rt.autoContinue === null || rt.autoContinue.pausedReason !== null)) break;
+
+        let autoMeta: { index: number; max: number } | undefined;
+        if (auto) {
+          const meta = this.beginAutoTurn(rt);
+          if (meta === null) {
+            await this.sendAutoStop(rootId, "budget", null, rt);
+            rt.autoContinue = null;
+            break;
+          }
+          autoMeta = meta;
+        }
+
         await this.sealTurnCard(rt);
         const max = this.deps.config().feishu.direct.max_concurrent;
         const busy =
           this.activeTurns >= max || this.dirActiveFor(session.path) >= this.dirConcurrencyLimit();
-        await this.startTurnCard(session, rt, busy, retriedFrom);
+        await this.startTurnCard(session, rt, busy, retriedFrom, autoMeta);
         if (busy && !this.cardsLive(rt)) {
           await this.replySafe(
             rootId,
@@ -1467,22 +1597,83 @@ export class DirectSessionManager {
           );
         }
         await this.acquireDir(session.path);
+        let outcome: TurnOutcome;
         try {
           await this.acquireSlot();
           try {
             if (this.halted || rt.stopRequested) break;
-            await this.executeTurn(session, prompt, rt);
+            outcome = await this.executeTurn(session, prompt, rt, auto);
           } finally {
             this.releaseSlot();
           }
         } finally {
           this.releaseDir(session.path);
         }
-        if (rt.queue.length === 0) break;
         if (this.halted || rt.stopRequested) break;
-        prompt = rt.queue.join("\n---\n");
-        rt.queue = [];
-        retriedFrom = undefined;
+        if (auto && rt.autoContinue === null) break;
+
+        const fresh = this.deps.store.getDirectSession(rootId);
+        if (!fresh || fresh.status === "done" || fresh.status === "expired") {
+          rt.autoContinue = null;
+          break;
+        }
+
+        if (rt.queue.length > 0) {
+          if (rt.autoContinue) rt.autoContinue = resetAutoContinueRuns(rt.autoContinue);
+          prompt = rt.queue.join("\n---\n");
+          rt.queue = [];
+          retriedFrom = undefined;
+          auto = false;
+          continue;
+        }
+
+        if (!auto) {
+          if (rt.autoContinue) rt.autoContinue = resetAutoContinueRuns(rt.autoContinue);
+          if (outcome.status !== "succeeded") {
+            if (rt.autoContinue !== null) {
+              const reason: AutoContinueStopReason =
+                outcome.status === "interrupted"
+                  ? "interrupted"
+                  : outcome.error?.includes("permission_timeout")
+                    ? "permission_timeout"
+                    : "failed";
+              await this.sendAutoStop(rootId, reason, outcome.metrics, rt);
+              rt.autoContinue = null;
+            }
+            break;
+          }
+          if (rt.autoContinue === null) break;
+          if (rt.autoContinue.used >= this.autoBudget(rt)) {
+            await this.sendAutoStop(rootId, "budget", outcome.metrics, rt);
+            rt.autoContinue = null;
+            break;
+          }
+          prompt = this.autoPrompt(fresh);
+          retriedFrom = undefined;
+          auto = true;
+          continue;
+        }
+
+        const decision = classifyAutoTurn({
+          metrics: outcome.metrics,
+          state: rt.autoContinue as AutoContinueState,
+          budget: this.autoBudget(rt),
+          streakThreshold: this.deps.config().feishu.direct.auto_continue.no_progress_streak,
+        });
+        rt.autoContinue = decision.state;
+        if (decision.action === "continue" || decision.action === "retry") {
+          prompt = this.autoPrompt(fresh);
+          retriedFrom = undefined;
+          auto = true;
+          continue;
+        }
+        if (decision.action === "pause") {
+          await this.sendAutoPause(rootId, decision.reason, outcome.metrics, rt);
+          break;
+        }
+        rt.autoContinue = null;
+        await this.sendAutoStop(rootId, decision.reason, outcome.metrics, rt, decision.detail);
+        break;
       }
     } finally {
       rt.turnInFlight = false;
@@ -1503,6 +1694,7 @@ export class DirectSessionManager {
     rt: SessionRuntime,
     busy: boolean,
     retryFromTurn: number | undefined,
+    autoMeta?: { index: number; max: number },
   ): Promise<void> {
     const fresh = this.deps.store.getDirectSession(session.root_id) ?? session;
     await rt.flushPromise?.catch(() => {});
@@ -1530,6 +1722,7 @@ export class DirectSessionManager {
       segment: 1,
     };
     if (retryFromTurn !== undefined) state.retryFromTurn = retryFromTurn;
+    if (autoMeta !== undefined) state.autoContinue = autoMeta;
     rt.turn = state;
     rt.turnUsedOnce = false;
     rt.turnStartedAt = 0;
@@ -2077,7 +2270,8 @@ export class DirectSessionManager {
     session: DirectSession,
     prompt: string,
     rt: SessionRuntime,
-  ): Promise<void> {
+    auto = false,
+  ): Promise<TurnOutcome> {
     const config = this.deps.config();
     const sessionId = session.session_id;
     const isFirstTurn = sessionId === null;
@@ -2107,7 +2301,9 @@ export class DirectSessionManager {
       message: truncate(prompt, 60),
     });
     this.deps.store.updateDirectSession(session.root_id, { status: "running" });
-    this.deps.store.updateDirectSession(session.root_id, { last_prompt: prompt });
+    if (!auto) {
+      this.deps.store.updateDirectSession(session.root_id, { last_prompt: prompt });
+    }
     rt.stopRequested = false;
 
     rt.turnStartedAt = Date.now();
@@ -2125,18 +2321,38 @@ export class DirectSessionManager {
     );
     const stats: TurnStats = {
       toolCalls: 0,
+      fileMutations: 0,
       permissionRejections: 0,
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
+      textChars: 0,
       lastText: "",
     };
+    const buildOutcome = (
+      status: AutoTurnMetrics["status"],
+      error: string | null,
+    ): TurnOutcome => ({
+      status,
+      error,
+      metrics: {
+        status,
+        error,
+        toolCalls: stats.toolCalls,
+        fileMutations: stats.fileMutations,
+        outputTokens: stats.outputTokens,
+        textChars: stats.textChars,
+        lastText: stats.lastText,
+        durationMs: Date.now() - startedAt,
+      },
+    });
     const abort = new AbortController();
     rt.abort = abort;
 
     const onEvent = (evt: TurnDriverEvent): void => {
       if (evt.type === "tool_use") {
         stats.toolCalls++;
+        if (isFileMutationTool(evt.tool)) stats.fileMutations++;
         if (
           evt.status === "error" &&
           typeof evt.error === "string" &&
@@ -2152,6 +2368,7 @@ export class DirectSessionManager {
       }
       if (evt.type === "text" && typeof evt.text === "string" && evt.text.trim() !== "") {
         stats.lastText = evt.text;
+        stats.textChars += evt.text.length;
         rt.turn?.events.push({ kind: "text", text: evt.text });
         this.scheduleFlush(session.root_id);
       }
@@ -2220,19 +2437,17 @@ export class DirectSessionManager {
         signal: abort.signal,
       });
     } catch (e) {
+      const message = toTaskingError(e).message;
       rt.abort = null;
       rt.queue = [];
       this.deps.store.markDirectSessionStatus(session.root_id, "idle");
       this.deps.logger.error("direct turn spawn failed", {
         root_id: session.root_id,
-        error: toTaskingError(e).message,
+        error: message,
       });
       await this.finalizeTurnCard(session.root_id, "failed", stats, 0);
-      await this.replySafe(
-        session.root_id,
-        `⚠️ 本轮未能启动（${toTaskingError(e).message}）。请重发消息重试。`,
-      );
-      return;
+      await this.replySafe(session.root_id, `⚠️ 本轮未能启动（${message}）。请重发消息重试。`);
+      return buildOutcome("failed", message);
     } finally {
       rt.abort = null;
       this.stopHeartbeat(rt);
@@ -2242,7 +2457,9 @@ export class DirectSessionManager {
 
     const durationSec = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
     const fresh = this.deps.store.getDirectSession(session.root_id);
-    if (!fresh || fresh.status === "done" || fresh.status === "expired") return;
+    if (!fresh || fresh.status === "done" || fresh.status === "expired") {
+      return buildOutcome("interrupted", "session ended");
+    }
     rt.postureOpen = result.postureOpened;
     if (result.contextTokens !== undefined && result.contextTokens > rt.contextTokens) {
       rt.contextTokens = result.contextTokens;
@@ -2275,6 +2492,7 @@ export class DirectSessionManager {
       error: result.error,
       duration_ms: Date.now() - startedAt,
       tools: stats.toolCalls,
+      auto_continue: auto,
       settled_by: result.settledBy ?? null,
       anchor_seen: result.anchorSeen ?? null,
       prompt_message_id: result.promptMessageId ?? null,
@@ -2298,7 +2516,7 @@ export class DirectSessionManager {
     if (result.status === "interrupted" || rt.stopRequested) {
       this.deps.store.markDirectSessionStatus(session.root_id, "idle");
       await this.finalizeTurnCard(session.root_id, "interrupted", stats, durationSec);
-      return;
+      return buildOutcome("interrupted", result.error ?? "interrupted");
     }
     if (result.status === "timed_out") {
       const reason = result.error?.includes("inactivity_timeout")
@@ -2312,7 +2530,7 @@ export class DirectSessionManager {
         session.root_id,
         `⚠️ 本轮${reason}被中止（${durationSec}s）。可用更小的任务描述重试。`,
       );
-      return;
+      return buildOutcome("timed_out", result.error ?? "turn_timeout");
     }
     if (result.status === "failed" || result.status === "error") {
       this.deps.store.markDirectSessionStatus(session.root_id, "idle");
@@ -2321,7 +2539,7 @@ export class DirectSessionManager {
         session.root_id,
         `⚠️ 本轮未完成（${result.error ?? result.status}，${durationSec}s）。${stats.lastText ? `\n\n${truncate(stats.lastText)}` : ""}`.trim(),
       );
-      return;
+      return buildOutcome("failed", result.error ?? result.status);
     }
 
     this.deps.store.markDirectSessionStatus(session.root_id, "idle");
@@ -2347,6 +2565,7 @@ export class DirectSessionManager {
       statsLine: statsLine.trim(),
       note: rejectionNote.trim(),
     });
+    return buildOutcome("succeeded", null);
   }
 
   private dirConcurrencyLimit(): number {
@@ -2552,6 +2771,222 @@ export class DirectSessionManager {
     );
   }
 
+  private effectiveLoopPrompt(session: DirectSession): string {
+    return session.loop_prompt ?? this.deps.config().feishu.direct.auto_continue.prompt;
+  }
+
+  private displayLoopPrompt(session: DirectSession): string {
+    if (session.loop_prompt !== null) return session.loop_prompt;
+    return translate(this.deps.config().feishu.direct.auto_continue.prompt);
+  }
+
+  private loopPauseLabel(reason: AutoContinuePauseReason | null): string {
+    if (reason === "question") return translate("模型在提问");
+    if (reason === "repetition") return translate("回复重复且无文件改动");
+    if (reason === "low_work") return translate("连续低产出");
+    return "";
+  }
+
+  private loopStatusCard(session: DirectSession, rt: SessionRuntime): unknown {
+    const config = this.deps.config();
+    const state = rt.autoContinue;
+    const streak = config.feishu.direct.auto_continue.no_progress_streak;
+    const budget = this.autoBudget(rt);
+    const used = state?.used ?? 0;
+    const prompt = this.displayLoopPrompt(session);
+    const budgetSource =
+      rt.autoContinueBudget === null ? translate("配置默认") : translate("会话设置");
+    const promptSource = session.loop_prompt === null ? translate("配置") : translate("会话");
+    const paused =
+      state?.pausedReason === null || state?.pausedReason === undefined
+        ? ""
+        : ` (${this.loopPauseLabel(state.pausedReason)})`;
+    const mode =
+      state === null
+        ? translate("关闭状态")
+        : state.pausedReason !== null
+          ? `${translate("暂停")}${paused}`
+          : translate("开启");
+    const lines = [
+      `${translate("状态")}: ${mode}`,
+      `${translate("预算")}: ${used}/${budget} (${translate("剩余")} ${Math.max(0, budget - used)}, ${budgetSource})`,
+      `${translate("下一次自动轮")}: ${Math.min(budget, used + 1)}/${budget}`,
+      `${translate("低产出")}: ${state?.lowWorkRun ?? 0}/${streak} · ${translate("重复计数")}: ${state?.repeatRun ?? 0}/${streak}`,
+      `${translate("提示词")} (${promptSource}): ${truncate(prompt, 200)}`,
+      `${translate("规则")}: ${translate("连续")} ${streak} ${translate("轮低产出 / 重复；提问暂停；预算/失败/审批超时硬停")}`,
+      ...(state?.pausedReason === null || state?.pausedReason === undefined
+        ? []
+        : [`${translate("上次暂停")}: ${this.loopPauseLabel(state.pausedReason)}`]),
+      "",
+      translate("用法：/loop on [N]｜/loop start [N]｜/loop off｜/loop prompt [文本|reset]"),
+    ];
+    return buildInfoCard({ title: "🔄 自动续跑", lines });
+  }
+
+  private async executeLoop(session: DirectSession, text: string): Promise<void> {
+    const parsed = parseLoop(text);
+    if (parsed === null) return;
+    const rt = this.runtimeFor(session.root_id);
+
+    if (parsed.kind === "invalid") {
+      await this.replyInfoCard(
+        session,
+        buildInfoCard({
+          title: "⚠️ /loop 用法",
+          lines: [parsed.reason],
+        }),
+        parsed.reason,
+      );
+      return;
+    }
+
+    if (parsed.kind === "status") {
+      const fallback = [
+        translate("自动续跑状态见下"),
+        translate("用法：/loop on [N]｜/loop start [N]｜/loop off｜/loop prompt [文本|reset]"),
+      ].join("\n");
+      await this.replyInfoCard(session, this.loopStatusCard(session, rt), fallback);
+      return;
+    }
+
+    if (parsed.kind === "off") {
+      rt.autoContinue = null;
+      const textOut = translate(
+        "🔄 自动续跑已关闭。当前轮会跑完；预算偏好保留，重新开启用 /loop on。",
+      );
+      await this.replyInfoCard(
+        session,
+        buildInfoCard({ title: "🔄 自动续跑已关闭", lines: [textOut] }),
+        textOut,
+      );
+      return;
+    }
+
+    if (parsed.kind === "on") {
+      if (parsed.budget !== null) rt.autoContinueBudget = parsed.budget;
+      if (rt.autoContinue === null) {
+        rt.autoContinue = freshAutoContinueState();
+      } else {
+        const keepUsed = parsed.budget === null ? rt.autoContinue.used : 0;
+        rt.autoContinue = { ...resetAutoContinueRuns(rt.autoContinue), used: keepUsed };
+      }
+      const budget = this.autoBudget(rt);
+      const lines = [
+        `${translate("已开启，最多 ")}${budget}${translate(" 轮 Auto-continue。")}`,
+        translate("下一条任务开始后生效；/loop start 可立即开干。"),
+        `${translate("提示词")}: ${truncate(this.displayLoopPrompt(session), 200)}`,
+        translate("关闭：/loop off｜中断：/stop"),
+      ];
+      await this.replyInfoCard(
+        session,
+        buildInfoCard({ title: "🔄 自动续跑已开启", lines }),
+        lines.join("\n"),
+      );
+      return;
+    }
+
+    if (parsed.kind === "start") {
+      const hasTask =
+        session.turns > 0 || session.last_prompt !== null || rt.turnInFlight || rt.queue.length > 0;
+      if (!hasTask) {
+        const msg = translate("还没有任务。请先发送任务消息，再 /loop start。");
+        await this.replyInfoCard(
+          session,
+          buildInfoCard({ title: "⚠️ 无法开始", lines: [msg] }),
+          msg,
+        );
+        return;
+      }
+      if (parsed.budget !== null) rt.autoContinueBudget = parsed.budget;
+      if (rt.autoContinue === null) {
+        rt.autoContinue = freshAutoContinueState();
+      } else {
+        rt.autoContinue = {
+          ...resetAutoContinueRuns(rt.autoContinue),
+          used: parsed.budget === null ? rt.autoContinue.used : 0,
+        };
+      }
+      const budget = this.autoBudget(rt);
+      const lines = [
+        `${translate("已开始，最多 ")}${budget}${translate(" 轮 Auto-continue。")}`,
+        `${translate("提示词")}: ${truncate(this.displayLoopPrompt(session), 200)}`,
+        translate("中断：/stop｜关闭：/loop off"),
+      ];
+      await this.replyInfoCard(
+        session,
+        buildInfoCard({ title: "🔄 自动续跑已开始", lines }),
+        lines.join("\n"),
+      );
+      if (rt.turnInFlight) {
+        const queued = translate("当前轮结束后立即开始。");
+        await this.replySafe(session.root_id, queued);
+        return;
+      }
+      void this.runTurnLoop(
+        session.root_id,
+        this.effectiveLoopPrompt(session),
+        undefined,
+        true,
+      ).catch((e) =>
+        this.deps.logger.error("direct auto-continue start failed", {
+          root_id: session.root_id,
+          error: toTaskingError(e).message,
+        }),
+      );
+      return;
+    }
+
+    if (parsed.kind === "prompt") {
+      if (parsed.reset) {
+        this.deps.store.updateDirectSession(session.root_id, { loop_prompt: null });
+        const lines = [
+          translate("已恢复配置默认提示词。"),
+          `${translate("当前")}: ${truncate(translate(this.deps.config().feishu.direct.auto_continue.prompt), 200)}`,
+        ];
+        await this.replyInfoCard(
+          session,
+          buildInfoCard({ title: "✍️ 续跑提示词已恢复默认", lines }),
+          lines.join("\n"),
+        );
+        return;
+      }
+      if (parsed.text === null) {
+        const prompt = this.displayLoopPrompt(session);
+        const source = session.loop_prompt === null ? translate("配置") : translate("会话");
+        const lines = [
+          `${translate("当前")} (${source}): ${truncate(prompt, 200)}`,
+          translate("设置：/loop prompt <文本>｜恢复默认：/loop prompt reset"),
+        ];
+        await this.replyInfoCard(
+          session,
+          buildInfoCard({ title: "✍️ 续跑提示词", lines }),
+          lines.join("\n"),
+        );
+        return;
+      }
+      const prompt = parsed.text.trim();
+      if (prompt === "" || prompt.length > 2000) {
+        const msg = translate("续跑提示词必须是 1–2000 字。");
+        await this.replyInfoCard(
+          session,
+          buildInfoCard({ title: "⚠️ 无法设置", lines: [msg] }),
+          msg,
+        );
+        return;
+      }
+      this.deps.store.updateDirectSession(session.root_id, { loop_prompt: prompt });
+      const lines = [
+        translate("已更新，下一轮生效。"),
+        `${translate("当前")} (${translate("会话")}): ${truncate(prompt, 200)}`,
+      ];
+      await this.replyInfoCard(
+        session,
+        buildInfoCard({ title: "✍️ 续跑提示词已更新", lines }),
+        lines.join("\n"),
+      );
+    }
+  }
+
   private async executeAuto(session: DirectSession, text: string): Promise<void> {
     const rt = this.runtimeFor(session.root_id);
     const arg = text.slice("/auto".length).trim().toLowerCase();
@@ -2736,6 +3171,7 @@ export class DirectSessionManager {
 
   private async executeStop(session: DirectSession, operator?: string): Promise<void> {
     const rt = this.runtimeFor(session.root_id);
+    rt.autoContinue = null;
     const queued = rt.queue.length;
     rt.queue = [];
     if (rt.turnInFlight && rt.abort) {
@@ -2922,7 +3358,7 @@ function renderChatHelp(scope: "intake" | "thread"): string {
       "直连会话用法:",
       "/chat <项目名|绝对路径> <消息>  在指定目录创建 opencode 会话",
       "/chat                             列出可用项目",
-      "会话创建后：在本话题内直接回复即续聊；/stop 中断当前任务；/done 结束会话",
+      "会话创建后：在本话题内直接回复即续聊；/loop 自动续跑；/stop 中断当前任务；/done 结束会话",
     ].join("\n");
   }
   return [
@@ -2931,6 +3367,8 @@ function renderChatHelp(scope: "intake" | "thread"): string {
     "直接发图片/文件 → 下载到工作区并把路径交给 agent",
     "/collect → 进入多消息收集模式（发完用 /send 提交为一轮，/cancel 丢弃）",
     "/auto [on|once|off] → 查看/切换本会话权限姿态（下一轮生效）",
+    "/loop on [N] → 为下一条任务开启自动续跑；/loop start 立即继续；/loop off 关闭",
+    "/loop prompt <文本> → 设置续跑提示词（/loop prompt reset 恢复默认）",
     "/name <文本> → 给本会话改名（卡片头部与 TUI 显示）",
     "/agent <name> → 切换本会话 agent（/agent reset 恢复）",
     "/model <name> → 切换本会话 model（/model reset 恢复）",

@@ -204,6 +204,16 @@ Feishu direct-to-opencode session configuration. When `feishu.enabled` is true, 
 | `max_concurrent_turns_per_dir` | integer | `1` | no | Maximum turns allowed to occupy one directory at once. `1` serializes the directory (the default and the previous safe behavior); `2+` explicitly opts into same-directory parallelism and the user assumes the shared-worktree file/git race risk. The stricter of this and `max_concurrent` wins; a turn waiting for approval keeps its directory slot |
 | `idle_ttl_ms` | integer | `2592000000` (30 days) | no | How long an idle session stays alive before being marked expired (the opencode session on disk is not deleted) |
 
+#### `feishu.direct.auto_continue` Sub-block (Auto-continue)
+
+| Field | Type | Default | Required | Description |
+|------|------|--------|------|------|
+| `budget` | integer | `5` (1–20) | no | Auto-continue turn budget per `/loop` arming; only auto turns count, user turns do not |
+| `no_progress_streak` | integer | `2` | no | Consecutive low-output or repeated turns before pausing |
+| `prompt` | string | `继续未完成的部分。不要重复已完成的内容，也不要总结。` | no | Continuation prompt, ≤2000 chars; a session can override it with `/loop prompt <text>` |
+
+Auto-continue is off by default and must be enabled explicitly with `/loop`; `agent.max_turns` remains Jira-worker-only and is unaffected by this block.
+
 Direct turns inherit the operator-level `opencode.agent`, `opencode.model`, and `opencode.variant` (appended as `--agent`/`--model`/`--variant` when non-empty), exactly like the Jira worker; the target directory's own `.opencode/` config still governs permissions/LSP/formatters.
 
 Zero-config works (path mode): with `feishu.enabled: true` and no `direct` sub-block, `/chat /abs/path <msg>` in the group just works. To use project names, add two lines:

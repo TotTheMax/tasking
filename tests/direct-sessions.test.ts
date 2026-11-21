@@ -4934,10 +4934,14 @@ describe("en lifecycle outbound sweep", () => {
       for (const [n, text] of [
         [1, "/status"],
         [2, "/auto"],
-        [3, "/collect"],
-        [4, "/cancel"],
-        [5, "/stop"],
-        [6, "/done"],
+        [3, "/loop"],
+        [4, "/loop on 2"],
+        [5, "/loop prompt"],
+        [6, "/loop off"],
+        [7, "/collect"],
+        [8, "/cancel"],
+        [9, "/stop"],
+        [10, "/done"],
       ] as const) {
         await mgr.handleThreadMessage(threadMsg(n, text));
         await mgr.whenIdle();
@@ -4954,5 +4958,288 @@ describe("en lifecycle outbound sweep", () => {
     } finally {
       setLocale("zh");
     }
+  });
+});
+
+describe("DirectSessionManager auto-continue", () => {
+  type LoopOptions = {
+    verbosity?: "quiet" | "summary" | "detailed";
+    budget?: number;
+    streak?: number;
+    prompt?: string;
+  };
+
+  async function setupLoopSession(opts: LoopOptions = {}) {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const cfg = directConfig({
+      verbosity: opts.verbosity ?? "detailed",
+      auto_continue: {
+        budget: opts.budget ?? 5,
+        no_progress_streak: opts.streak ?? 2,
+        prompt: opts.prompt ?? "继续未完成的部分。",
+      },
+    });
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => cfg,
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(
+      msg({ message_id: "om_root", text: "/chat tasking 初始任务", create_time: "100" }),
+    );
+    await runner.waitForCall(1);
+    runner.finish(0, [toolEvent("edit config.ts"), textEvent("初始任务已完成，继续。")]);
+    await mgr.whenIdle();
+    return { feishu, runner, mgr };
+  }
+
+  function thread(mgr: DirectSessionManager, text: string, n: number): Promise<boolean> {
+    return mgr.handleThreadMessage(
+      msg({
+        message_id: `om_t${n}`,
+        root_id: "om_root",
+        parent_id: "om_root",
+        text,
+        create_time: String(100 + n),
+      }),
+    );
+  }
+
+  it("arms with /loop on and starts an auto turn only after the next task", async () => {
+    const { feishu, runner, mgr } = await setupLoopSession({ budget: 1 });
+    await thread(mgr, "/loop on 1", 1);
+    expect(runner.calls).toHaveLength(1);
+
+    await thread(mgr, "把剩余部分做完", 2);
+    await runner.waitForCall(2);
+    runner.finish(1, [toolEvent("edit config.ts"), textEvent("剩余部分已完成")]);
+    await runner.waitForCall(3);
+
+    expect(runner.calls[2]?.request.prompt).toBe("继续未完成的部分。");
+    expect(feishu.cardTexts("om_root").some((t) => t.includes("🔄 自动 1/1"))).toBe(true);
+    expect(store.getDirectSession("om_root")?.last_prompt).toBe("把剩余部分做完");
+
+    runner.finish(2, [toolEvent("edit config.ts"), textEvent("全部完成")]);
+    await mgr.whenIdle();
+    expect(feishu.sent("om_root").some((t) => t.includes("预算用完"))).toBe(true);
+  });
+
+  it("starts immediately with /loop start and keeps the original task prompt", async () => {
+    const { feishu, runner, mgr } = await setupLoopSession({ budget: 1 });
+    await thread(mgr, "/loop start 1", 1);
+    await runner.waitForCall(2);
+    expect(runner.calls[1]?.request.prompt).toBe("继续未完成的部分。");
+    expect(store.getDirectSession("om_root")?.last_prompt).toBe("初始任务");
+
+    runner.finish(1, [toolEvent("edit config.ts"), textEvent("继续完成")]);
+    await mgr.whenIdle();
+    expect(feishu.cardTexts("om_root").some((t) => t.includes("🔄 自动 1/1"))).toBe(true);
+  });
+
+  it("pauses after two low-work auto turns", async () => {
+    const { feishu, runner, mgr } = await setupLoopSession({ budget: 5 });
+    await thread(mgr, "/loop start", 1);
+    await runner.waitForCall(2);
+    runner.finish(1, []);
+    await runner.waitForCall(3);
+    runner.finish(2, []);
+    await mgr.whenIdle();
+
+    expect(runner.calls).toHaveLength(3);
+    expect(feishu.sent("om_root").some((t) => t.includes("低产出"))).toBe(true);
+  });
+
+  it("pauses on repeated summaries before low-work", async () => {
+    const { feishu, runner, mgr } = await setupLoopSession({ budget: 5 });
+    const repeated = "已完成配置重构，接下来补测试。";
+    await thread(mgr, "/loop start", 1);
+    await runner.waitForCall(2);
+    runner.finish(1, [textEvent(repeated)]);
+    await runner.waitForCall(3);
+    runner.finish(2, [textEvent(repeated)]);
+    await mgr.whenIdle();
+
+    expect(runner.calls).toHaveLength(3);
+    expect(feishu.sent("om_root").some((t) => t.includes("重复"))).toBe(true);
+  });
+
+  it("pauses immediately when the model asks a question", async () => {
+    const { feishu, runner, mgr } = await setupLoopSession({ budget: 5 });
+    await thread(mgr, "/loop start", 1);
+    await runner.waitForCall(2);
+    runner.finish(1, [textEvent("要保留旧 API 吗？")]);
+    await mgr.whenIdle();
+
+    expect(runner.calls).toHaveLength(2);
+    expect(feishu.sent("om_root").some((t) => t.includes("提问"))).toBe(true);
+  });
+
+  it("retries a timeout as a normal auto turn and stops at the budget", async () => {
+    const { feishu, runner, mgr } = await setupLoopSession({ budget: 2 });
+    await thread(mgr, "/loop start", 1);
+    await runner.waitForCall(2);
+    runner.finish(1, [], 124);
+    await runner.waitForCall(3);
+    expect(runner.calls[2]?.request.prompt).toBe("继续未完成的部分。");
+    runner.finish(2, [toolEvent("edit config.ts"), textEvent("重试后完成")]);
+    await mgr.whenIdle();
+
+    expect(runner.calls).toHaveLength(3);
+    expect(feishu.sent("om_root").some((t) => t.includes("预算用完"))).toBe(true);
+  });
+
+  it("does not retry a permission timeout", async () => {
+    const { feishu, runner, mgr } = await setupLoopSession({ budget: 3 });
+    await thread(mgr, "/loop start", 1);
+    await runner.waitForCall(2);
+    runner.finish(1, [], 0, undefined, {
+      status: "timed_out",
+      error: "permission_timeout",
+    });
+    await mgr.whenIdle();
+
+    expect(runner.calls).toHaveLength(2);
+    expect(feishu.sent("om_root").some((t) => t.includes("审批超时"))).toBe(true);
+  });
+
+  it("uses the persisted session prompt override for auto turns", async () => {
+    const { runner, mgr } = await setupLoopSession({ budget: 1 });
+    await thread(mgr, "/loop prompt 自定义继续", 1);
+    await thread(mgr, "/loop start 1", 2);
+    await runner.waitForCall(2);
+    expect(runner.calls[1]?.request.prompt).toBe("自定义继续");
+    expect(store.getDirectSession("om_root")?.loop_prompt).toBe("自定义继续");
+    runner.finish(1, [toolEvent("edit config.ts"), textEvent("完成")]);
+    await mgr.whenIdle();
+  });
+
+  it("stops continuing after /loop off during an auto turn", async () => {
+    const { feishu, runner, mgr } = await setupLoopSession({ budget: 5 });
+    await thread(mgr, "/loop start", 1);
+    await runner.waitForCall(2);
+    await thread(mgr, "/loop off", 2);
+    runner.finish(1, [toolEvent("edit config.ts"), textEvent("完成本轮")]);
+    await mgr.whenIdle();
+
+    expect(runner.calls).toHaveLength(2);
+    expect(feishu.cardTexts("om_root").some((t) => t.includes("已关闭"))).toBe(true);
+  });
+
+  it("hints /loop in the intake group without creating a session", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: directConfig,
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    const handled = await mgr.handleIntakeMessage(
+      msg({ message_id: "om_loop_intake", text: "/loop on" }),
+    );
+    expect(handled).toBe(true);
+    expect(feishu.sent("om_loop_intake").some((t) => t.includes("话题内"))).toBe(true);
+    expect(runner.calls).toHaveLength(0);
+    expect(store.getDirectSession("om_loop_intake")).toBeNull();
+  });
+});
+
+describe("DirectSessionManager auto-continue edge cases", () => {
+  it("rejects /loop start before any task", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    store.upsertDirectSession({
+      root_id: "om_empty",
+      chat_id: "oc",
+      project: null,
+      path: projectPath(),
+      session_id: null,
+      status: "idle",
+    });
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: directConfig,
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_empty_u", root_id: "om_empty", text: "/loop start" }),
+    );
+    expect(runner.calls).toHaveLength(0);
+    expect(feishu.cardTexts("om_empty").some((t) => t.includes("还没有任务"))).toBe(true);
+  });
+
+  it("resets the session prompt override", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: directConfig,
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_r0", text: "/chat tasking 任务" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [toolEvent("edit x.ts"), textEvent("完成")]);
+    await mgr.whenIdle();
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_r1", root_id: "om_r0", text: "/loop prompt 自定义" }),
+    );
+    expect(store.getDirectSession("om_r0")?.loop_prompt).toBe("自定义");
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_r2", root_id: "om_r0", text: "/loop prompt reset" }),
+    );
+    expect(store.getDirectSession("om_r0")?.loop_prompt).toBeNull();
+    expect(feishu.cardTexts("om_r0").some((t) => t.includes("已恢复配置默认提示词"))).toBe(true);
+  });
+
+  it("runs queued user turns before the next auto turn", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const cfg = directConfig({
+      verbosity: "summary",
+      auto_continue: { budget: 2, no_progress_streak: 2, prompt: "继续未完成的部分。" },
+    });
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => cfg,
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_q0", text: "/chat tasking 初始任务" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [toolEvent("edit x.ts"), textEvent("初始完成")]);
+    await mgr.whenIdle();
+
+    await mgr.handleThreadMessage(
+      msg({ message_id: "om_q1", root_id: "om_q0", text: "/loop start" }),
+    );
+    await runner.waitForCall(2);
+    await mgr.handleThreadMessage(
+      msg({
+        message_id: "om_q2",
+        root_id: "om_q0",
+        text: "先修 lint",
+        create_time: "1700000001",
+      }),
+    );
+    runner.finish(1, [toolEvent("edit x.ts"), textEvent("自动第一轮完成")]);
+    await runner.waitForCall(3);
+    expect(runner.calls[2]?.request.prompt).toBe("先修 lint");
+    expect(store.getDirectSession("om_q0")?.last_prompt).toBe("先修 lint");
+
+    runner.finish(2, [toolEvent("edit x.ts"), textEvent("lint 已修")]);
+    await runner.waitForCall(4);
+    expect(runner.calls[3]?.request.prompt).toBe("继续未完成的部分。");
+    runner.finish(3, [toolEvent("edit x.ts"), textEvent("自动第二轮完成")]);
+    await mgr.whenIdle();
+    expect(feishu.sent("om_q0").some((t) => t.includes("预算用完"))).toBe(true);
   });
 });

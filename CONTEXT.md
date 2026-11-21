@@ -23,7 +23,7 @@ A single dispatch of a Task to a worker; `null` on first dispatch, incremented o
 _Avoid_: Run, iteration
 
 **Turn**:
-One prompt-driven unit within an opencode session, submitted through the opencode v2 API — the Jira worker loops turns up to `max_turns`, while a direct session runs one turn per user message (or merged queue) and continues the same session.
+One prompt-driven unit within an opencode session, submitted through the opencode v2 API — the Jira worker loops turns up to `max_turns`, while a direct session runs a turn per user message (or merged queue) or per Auto-continue trigger, continuing the same session.
 _Avoid_: Step, request, run
 
 **Turn settlement (轮次结算)**:
@@ -235,6 +235,26 @@ _Avoid_: Directory lock, parallel chat, same-dir parallelism
 **Chat command (/chat)**:
 The intake-group root command that starts a direct session by project name or absolute path; all follow-ups happen inside the created thread, never in the group.
 _Avoid_: Run command, spawn command
+
+**Auto-continue (自动续跑)**:
+A direct-session mode in which tasking submits the next turn automatically after a turn ends, using the Auto-continue prompt, until a stop condition.
+_Avoid_: Loop, keep-going, auto mode
+
+**Auto-continue turn (自动续跑轮)**:
+A turn submitted by Auto-continue rather than by a user message; it counts against the mode's turn budget.
+_Avoid_: Loop turn, continuation turn
+
+**Auto-continue prompt (续跑提示词)**:
+The prompt tasking submits to start an Auto-continue turn; customizable per direct session.
+_Avoid_: Continue text, loop prompt
+
+**Auto-continue budget (自动续跑预算)**:
+The number of Auto-continue turns allowed in one arming; user turns do not consume it. Distinct from the Jira worker's `max_turns`.
+_Avoid_: Turn limit, loop count
+
+**Auto-continue pause (自动续跑暂停)**:
+The state in which Auto-continue has stopped scheduling turns after a no-progress, repetition, or need-input signal but remains armed; the next user turn runs, then Auto-continue resumes if budget remains.
+_Avoid_: Stop, disable, suspend
 
 **DirectSessionManager (直连会话管理器)**:
 The CommentBridge-sibling component that owns direct-session lifecycle — command intake, turn queueing, subprocess execution, expiry — reusing the worker's subprocess primitives and the bridge's durable store; the Jira path is untouched.
