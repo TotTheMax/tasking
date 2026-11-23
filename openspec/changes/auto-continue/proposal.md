@@ -34,6 +34,6 @@
 - 数据：`direct_sessions` 新增 `loop_prompt` 列（既有 `ALTER TABLE` 模式，旧库可迁移）；循环状态仅在内存。
 - 配置：新增 `feishu.direct.auto_continue` 块；无必填项，默认关闭（需 `/loop` 显式开启）。
 - 文档：`CONTEXT.md`（Auto-continue 术语已加入）、`docs/adr/0044-...`、`docs/{zh,en}/{usage,configuration,architecture}.md`、help 文案、spec delta。
-- 测试：新增 `tests/direct-auto-continue.test.ts`；扩展 `tests/direct-sessions.test.ts`、`tests/direct-card.test.ts`、`tests/commands.test.ts`、`tests/binding-store.test.ts`；`tests/translate-coverage.test.ts`、`tests/docs-links.test.ts`；`comment-bridge` 守卫 + `npm run test:e2e`；真实 API 可达时跑 `INTEGRATION=1 npm run test:integration`。
+- 测试：新增 `tests/direct-auto-continue.test.ts`；扩展 `tests/direct-sessions.test.ts`、`tests/direct-card.test.ts`、`tests/commands.test.ts`、`tests/binding-store.test.ts`；`tests/translate-coverage.test.ts`、`tests/docs-links.test.ts`；`comment-bridge` 守卫 + `npm run test:e2e`；真实 API 可达时跑 `npm run test:integration`。
 - 依赖：当前工作区有 `segment-turn-cards` 与 `stuck-turn-settlement` 两个在途变更；本提案基于它们之后的语义，不改 turn settlement 本身。
 - 非目标：外部 LLM 复核、`/accept` 验收命令、git 进度快照、结论卡/停止章、卡片按钮、Jira 路径自动续跑、循环状态跨重启恢复、结果消息抑制或内容改动。

@@ -58,5 +58,5 @@
 
 - [x] 7.1 `npm run lint` / `npm run typecheck` / `npm test` / `npm run build`
 - [x] 7.2 `npm run test:e2e`（bridge 守卫）
-- [x] 7.3 真实环境可达时 `INTEGRATION=1 npm run test:integration`
+- [x] 7.3 真实环境可达时 `npm run test:integration`
 - [ ] 7.4 人工冒烟：普通 `/chat`（不 `/loop`）；`/loop on` → 发任务；`/loop start`；自动轮中插话；暂停后恢复；`/loop prompt`；`/loop off`；`/stop`；daemon 重启（未执行：需要真人在飞书 UI 操作；自动化门禁与真实 API 集成已通过）

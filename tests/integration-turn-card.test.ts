@@ -12,7 +12,7 @@
  * test group as visual evidence (the root is timestamped per run); visual
  * correctness still needs a human look.
  *
- * Run through the integration script: `INTEGRATION=1 npm run test:integration`
+ * Run through the integration script: `npm run test:integration`
  * (plain `npm test` / `npm run test:e2e` skips it without touching Feishu).
  */
 import { describe, expect, it } from "vitest";

@@ -223,7 +223,7 @@ autoContinueBudget: number | null; // 会话偏好；null = 配置默认
 
 1. 新增 `direct_sessions.loop_prompt TEXT`（`ALTER TABLE`，已存在则忽略）；`updateDirectSession` 增加可选 patch 字段；`rowToDirectSession` 读取。
 2. 新增配置默认值与 resolver；旧 WORKFLOW.md 无需修改，缺失块使用默认值；功能仍默认关闭（必须 `/loop`）。
-3. 代码合并后先跑 `npm run lint` / `npm run typecheck` / `npm test` / `npm run build`；触及 bridge 时跑 `npm run test:e2e`；真实环境可达时跑 `INTEGRATION=1 npm run test:integration`。
+3. 代码合并后先跑 `npm run lint` / `npm run typecheck` / `npm test` / `npm run build`；触及 bridge 时跑 `npm run test:e2e`；真实环境可达时跑 `npm run test:integration`。
 4. 上线后用单个会话 `/loop on` 观察 `auto_continue_turn` / `auto_continue_stop` 日志一周，再决定是否调整常量或上 v2 复核。
 5. 回滚：删除 `/loop` 分支即可；`loop_prompt` 列保留无害；无循环状态需要清理。
 
