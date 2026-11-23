@@ -1,10 +1,12 @@
-import { type FSWatcher, watch } from "node:fs";
+import { type StatWatcher, type Stats, unwatchFile, watchFile } from "node:fs";
 import { dirname } from "node:path";
 import { type TaskingError, toTaskingError } from "../shared/errors.js";
 import type { WorkflowDefinition } from "../shared/types.js";
 import type { EffectiveConfig } from "./config-types.js";
 import { loadWorkflowFile } from "./loader.js";
 import { resolveConfig } from "./resolver.js";
+
+const WATCH_INTERVAL_MS = 300;
 
 export interface ConfigReloadResult {
   config: EffectiveConfig;
@@ -17,7 +19,8 @@ export class ConfigManager {
   private workflow: WorkflowDefinition;
   private config: EffectiveConfig;
   private configWarnings: string[] = [];
-  private watcher: FSWatcher | null = null;
+  private watcher: StatWatcher | null = null;
+  private watchListener: ((curr: Stats, prev: Stats) => void) | null = null;
   private reloadListeners: Array<(result: ConfigReloadResult) => void> = [];
   private reloadTimer: NodeJS.Timeout | null = null;
   private readonly startupTrackerKind: string;
@@ -67,14 +70,17 @@ export class ConfigManager {
 
   startWatch(): void {
     if (this.watcher) return;
-    try {
-      this.watcher = watch(this.workflow.path, () => {
+    this.watchListener = (curr, prev) => {
+      if (this.watcher === null) return;
+      if (curr.mtimeMs !== prev.mtimeMs || curr.size !== prev.size || curr.ino !== prev.ino) {
         this.scheduleReload();
-      });
-    } catch {
-      // Watch failed to arm: hot reload is unavailable for this process.
-      // There is no dispatch-time fallback; a restart is required.
-    }
+      }
+    };
+    this.watcher = watchFile(
+      this.workflow.path,
+      { interval: WATCH_INTERVAL_MS },
+      this.watchListener,
+    );
   }
 
   stopWatch(): void {
@@ -82,10 +88,11 @@ export class ConfigManager {
       clearTimeout(this.reloadTimer);
       this.reloadTimer = null;
     }
-    if (this.watcher) {
-      this.watcher.close();
-      this.watcher = null;
+    if (this.watchListener) {
+      unwatchFile(this.workflow.path, this.watchListener);
+      this.watchListener = null;
     }
+    this.watcher = null;
   }
 
   onReload(cb: (result: ConfigReloadResult) => void): void {

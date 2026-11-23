@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- WORKFLOW.md hot reload now survives editors that save atomically (write a
+  temp file, then rename): the watcher follows the path instead of a replaced
+  inode, so every save reloads instead of only the first one.
+
 ## 0.7.1
 
 ### Added
