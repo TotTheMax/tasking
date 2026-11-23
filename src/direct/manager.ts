@@ -1729,8 +1729,8 @@ export class DirectSessionManager {
           await this.sendAutoPause(rootId, decision.reason, outcome, rt);
           break;
         }
-        rt.autoContinue = null;
         await this.sendAutoStop(rootId, decision.reason, outcome, rt, decision.detail);
+        rt.autoContinue = null;
         break;
       }
     } finally {

@@ -5024,7 +5024,9 @@ describe("DirectSessionManager auto-continue", () => {
 
     runner.finish(2, [toolEvent("edit config.ts"), textEvent("全部完成")]);
     await mgr.whenIdle();
-    expect(feishu.sent("om_root").some((t) => t.includes("预算用完"))).toBe(true);
+    const stop = feishu.sent("om_root").find((t) => t.includes("预算用完"));
+    expect(stop).toBeDefined();
+    expect(stop).toContain("1/1");
   });
 
   it("starts immediately with /loop start and keeps the original task prompt", async () => {
@@ -5313,7 +5315,9 @@ describe("DirectSessionManager auto-continue telemetry and user timeout", () => 
     await mgr.whenIdle();
 
     expect(logs.some((l) => l.includes("auto_continue_turn"))).toBe(true);
-    expect(logs.some((l) => l.includes("auto_continue_stop"))).toBe(true);
+    const stopLog = logs.find((l) => l.includes("auto_continue_stop"));
+    expect(stopLog).toBeDefined();
+    expect(stopLog).toContain('"used":1');
   });
 });
 
