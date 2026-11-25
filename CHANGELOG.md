@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.2
+
+### Fixed
+
+- WORKFLOW.md hot reload now takes its stat baseline synchronously when the
+  watcher starts and polls the file itself, so an atomic save that lands
+  immediately after startup is never missed (the previous `fs.watchFile`
+  baseline could race under load).
+
 ## 0.8.1
 
 ### Fixed
