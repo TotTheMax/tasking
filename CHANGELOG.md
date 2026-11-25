@@ -1,16 +1,50 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
+
+Direct-session turn cards and auto-continue.
+
+### Added
+
+- **Auto-continue for direct sessions**: `/loop on [N]` arms the current or next
+  task, `/loop start [N]` starts one immediately, `/loop off` disables it, and
+  `/loop prompt [text|reset]` manages the continuation prompt. The budget counts
+  only auto turns (default 5, 1–20); user turns do not consume it. Two
+  consecutive low-output or repeated turns, or a turn that ends in a question,
+  soft-pause; budget exhaustion, failure, permission timeout, and `/stop` hard-stop.
+  `turn_timeout`/`inactivity_timeout` retry as ordinary auto turns under the same
+  budget. Process-card headers show `🔄 自动 n/N`; auto turns never overwrite the
+  card's retry prompt. Configured by `feishu.direct.auto_continue`
+  (`budget`, `no_progress_streak`, `prompt`); direct-only, Jira-bound topics get a
+  hint and never bridge.
+- Turn cards now render one ordered event stream (assistant text and tool calls
+  interleaved in source order) and spill into sealed Segment cards when a card
+  would exceed the payload/element budget; only the active segment keeps the
+  control buttons.
+- Turn-card density: the oldest tool panels degrade (15 lines → 3 lines → output
+  removed, inputs kept) before a new segment card is opened; one dense card is
+  preferred over short history segments, and shared input truncation counts
+  toward the one-card fit check. Multi-segment turns show `🔧 本段 X · 本轮 Y`.
 
 ### Changed
 
-- The auto-continue prompt is now displayed exactly as configured — the UI no
-  longer translates it — and the English WORKFLOW templates ship an English
-  default prompt. The built-in Chinese fallback remains and only applies when
-  the field is absent.
+- The auto-continue prompt is displayed exactly as configured — the UI no longer
+  translates it — and the English WORKFLOW templates ship an English default
+  prompt. The built-in Chinese fallback remains and only applies when the field
+  is absent.
 
 ### Fixed
 
+- Direct turns now settle from the session idle record plus an output guard
+  instead of the paged prompt anchor: tool-heavy turns that evict their own
+  prompt message no longer stay "running" indefinitely (one incident ran 12+
+  hours), and `inactivity_timeout_ms` starts at prompt submission.
+- Pending permissions no longer count as progress; a cumulative approval wait of
+  twice `permission_timeout_ms` settles the turn as `permission_timeout` and
+  interrupts the server-side turn.
+- Messages queued right after `/stop` now run once the aborted turn finishes
+  instead of being silently dropped.
+- Auto-continue stop text reports the real used count instead of `0/N`.
 - WORKFLOW.md hot reload now survives editors that save atomically (write a
   temp file, then rename): the watcher follows the path instead of a replaced
   inode, so every save reloads instead of only the first one.
