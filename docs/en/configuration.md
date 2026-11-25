@@ -210,7 +210,9 @@ Feishu direct-to-opencode session configuration. When `feishu.enabled` is true, 
 |------|------|--------|------|------|
 | `budget` | integer | `5` (1–20) | no | Auto-continue turn budget per `/loop` arming; only auto turns count, user turns do not |
 | `no_progress_streak` | integer | `2` | no | Consecutive low-output or repeated turns before pausing |
-| `prompt` | string | `继续未完成的部分。不要重复已完成的内容，也不要总结。` | no | Continuation prompt, ≤2000 chars; a session can override it with `/loop prompt <text>` |
+| `prompt` | string | built-in Chinese fallback (see below) | no | Continuation prompt, ≤2000 chars; **sent to the model verbatim and shown verbatim in the UI — never translated**; a session can override it with `/loop prompt <text>` |
+
+The built-in fallback for `prompt` is Chinese: `继续未完成的部分。不要重复已完成的内容，也不要总结。`. `tasking init --lang zh` writes that same sentence; `--lang en` writes `Continue the unfinished work. Do not repeat what is already done, and do not summarize.`. The fallback only applies when the field is absent; `interface_language` controls UI copy only and never changes this value.
 
 Auto-continue is off by default and must be enabled explicitly with `/loop`; `agent.max_turns` remains Jira-worker-only and is unaffected by this block.
 

@@ -25,6 +25,7 @@ import {
 import type { PromptInterface } from "../src/cli/prompts.js";
 import { createPromptInterface } from "../src/cli/prompts.js";
 import { createStyle } from "../src/cli/style.js";
+import { DEFAULTS } from "../src/config/config-types.js";
 import { parseWorkflowContent } from "../src/config/loader.js";
 import { setLocale } from "../src/translate/locale.js";
 
@@ -2012,6 +2013,16 @@ describe("package.json files include all example templates", () => {
 describe("runInit --lang (template language)", () => {
   const EN_MARKER = "<!-- tasking-workflow-lang: en -->";
   const repo = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+  const ZH_PROMPT = "继续未完成的部分。不要重复已完成的内容，也不要总结。";
+  const EN_PROMPT =
+    "Continue the unfinished work. Do not repeat what is already done, and do not summarize.";
+  const templatePrompt = (path: string): string | null => {
+    const config = parseWorkflowContent(readFileSync(path, "utf8"), path).config;
+    const feishu = config.feishu as
+      | { direct?: { auto_continue?: { prompt?: string } } }
+      | undefined;
+    return feishu?.direct?.auto_continue?.prompt ?? null;
+  };
 
   it("non-interactive --workflow minimal --lang en writes the English minimal template", async () => {
     const dir = tempDir();
@@ -2028,6 +2039,8 @@ describe("runInit --lang (template language)", () => {
       expect(wf).toContain(EN_MARKER);
       expect(wf).toContain("optional: defaults below");
       expect(wf).toContain("# interval_ms: 30000");
+      expect(wf).toContain(EN_PROMPT);
+      expect(wf).not.toContain(ZH_PROMPT);
     } finally {
       rmSync(dir, { recursive: true });
     }
@@ -2069,6 +2082,17 @@ describe("runInit --lang (template language)", () => {
     }
   });
 
+  it("ships a continuation prompt in each template's own language", () => {
+    const variants = ["minimal", "code-mr", "feishu-direct", "grill-openspec"];
+    for (const name of variants) {
+      const zhPath = join(process.cwd(), "assets", "workflows", `WORKFLOW.${name}.md.example`);
+      const enPath = join(process.cwd(), "assets", "workflows", `WORKFLOW.${name}.en.md.example`);
+      expect(templatePrompt(zhPath), `${name} zh prompt`).toBe(ZH_PROMPT);
+      expect(templatePrompt(enPath), `${name} en prompt`).toBe(EN_PROMPT);
+    }
+    expect(DEFAULTS.feishu.direct.auto_continue.prompt).toBe(ZH_PROMPT);
+  });
+
   it("omitting --lang generates the zh minimal template (trimmed, not byte-identical)", async () => {
     const dir = tempDir();
     try {
@@ -2077,6 +2101,8 @@ describe("runInit --lang (template language)", () => {
       expect(wf).toContain("kind: jira");
       expect(wf).not.toContain(EN_MARKER);
       expect(wf).toContain("改动才解注释");
+      expect(wf).toContain(ZH_PROMPT);
+      expect(wf).not.toContain(EN_PROMPT);
     } finally {
       rmSync(dir, { recursive: true });
     }

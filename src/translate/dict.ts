@@ -461,8 +461,6 @@ export const EXACT: Record<string, string> = {
     "Usage: /loop [on [N]|start [N]|off|prompt [text|reset]]",
   "请在 /chat 话题内使用 /loop。": "Use /loop inside a /chat topic.",
   "仅直连会话支持 /loop。": "/loop is only supported in direct sessions.",
-  "继续未完成的部分。不要重复已完成的内容，也不要总结。":
-    "Continue the unfinished work. Do not repeat what is already done, and do not summarize.",
   "`/loop on [N]` → 为下一条任务开启自动续跑；`/loop start` 立即继续；`/loop off` 关闭":
     "`/loop on [N]` → arm auto-continue for the next task; `/loop start` continues now; `/loop off` disables",
   "`/loop prompt <文本>` → 设置续跑提示词（`reset` 恢复默认）":

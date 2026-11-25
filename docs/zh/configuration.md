@@ -210,7 +210,9 @@ route agent 同一时刻最多一个运行(除非另行配置),不阻塞结构�
 |------|------|--------|------|------|
 | `budget` | integer | `5`（1–20） | 否 | 一次 `/loop` 的自动轮预算；只计自动轮，用户轮不消耗 |
 | `no_progress_streak` | integer | `2` | 否 | 连续多少轮低产出或重复后暂停 |
-| `prompt` | string | `继续未完成的部分。不要重复已完成的内容，也不要总结。` | 否 | 续跑提示词，≤2000 字；会话可用 `/loop prompt <文本>` 覆盖 |
+| `prompt` | string | 内置中文兜底（见下） | 否 | 续跑提示词，≤2000 字；**原样发送给模型，界面也显示原文、不做翻译**；会话可用 `/loop prompt <文本>` 覆盖 |
+
+`prompt` 的内置兜底是中文：`继续未完成的部分。不要重复已完成的内容，也不要总结。`。`tasking init --lang zh` 写入同一句，`--lang en` 写入英文：`Continue the unfinished work. Do not repeat what is already done, and do not summarize.`。只有配置里缺少该字段时才回落到内置中文兜底；`interface_language` 只影响界面文案，不影响这个值。
 
 自动续跑默认关闭，需 `/loop` 显式开启；`agent.max_turns` 仍是 Jira worker 专属，不受本块影响。
 

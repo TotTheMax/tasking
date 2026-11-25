@@ -4947,7 +4947,7 @@ describe("en lifecycle outbound sweep", () => {
         await mgr.whenIdle();
       }
       await new Promise((r) => setTimeout(r, 50));
-      const allowed = ["修个bug", "已修好，请查收"];
+      const allowed = ["修个bug", "已修好，请查收", DEFAULTS.feishu.direct.auto_continue.prompt];
       const strip = (t: string) => allowed.reduce((acc, s) => acc.split(s).join(""), t);
       const scan = (label: string, t: string) => {
         expect(strip(t), `${label} leaked Han: ${t}`).not.toMatch(/[\u4e00-\u9fff]/);
@@ -5199,6 +5199,60 @@ describe("DirectSessionManager auto-continue edge cases", () => {
     );
     expect(store.getDirectSession("om_r0")?.loop_prompt).toBeNull();
     expect(feishu.cardTexts("om_r0").some((t) => t.includes("已恢复配置默认提示词"))).toBe(true);
+  });
+
+  it("shows the effective continuation prompt verbatim in the English UI", async () => {
+    const feishu = new FakeFeishu();
+    const runner = new FakeRunner();
+    const cfg = directConfig({
+      verbosity: "summary",
+      auto_continue: { budget: 1, no_progress_streak: 2, prompt: "继续未完成的部分。" },
+    });
+    const mgr = new DirectSessionManager({
+      feishu,
+      store,
+      config: () => cfg,
+      logger: fakeLogger(),
+      turnDriver: runner.spawn,
+    });
+    await mgr.handleIntakeMessage(msg({ message_id: "om_v0", text: "/chat tasking 初始任务" }));
+    await runner.waitForCall(1);
+    runner.finish(0, [toolEvent("edit x.ts"), textEvent("初始完成")]);
+    await mgr.whenIdle();
+
+    setLocale("en");
+    try {
+      await mgr.handleThreadMessage(msg({ message_id: "om_v1", root_id: "om_v0", text: "/loop" }));
+      const status = feishu.cardTexts("om_v0").at(-1) ?? "";
+      expect(status).toContain("继续未完成的部分。");
+      expect(status).not.toContain("Continue the unfinished work");
+
+      await mgr.handleThreadMessage(
+        msg({
+          message_id: "om_v2",
+          root_id: "om_v0",
+          text: "/loop prompt Continue the unfinished work.",
+        }),
+      );
+      expect(feishu.cardTexts("om_v0").at(-1)).toContain("Continue the unfinished work.");
+
+      await mgr.handleThreadMessage(
+        msg({ message_id: "om_v3", root_id: "om_v0", text: "/loop start 1" }),
+      );
+      await runner.waitForCall(2);
+      expect(runner.calls[1]?.request.prompt).toBe("Continue the unfinished work.");
+      runner.finish(1, [toolEvent("edit x.ts"), textEvent("完成")]);
+      await mgr.whenIdle();
+
+      await mgr.handleThreadMessage(
+        msg({ message_id: "om_v4", root_id: "om_v0", text: "/loop prompt reset" }),
+      );
+      const reset = feishu.cardTexts("om_v0").at(-1) ?? "";
+      expect(reset).toContain("继续未完成的部分。");
+      expect(reset).not.toContain("Continue the unfinished work");
+    } finally {
+      setLocale("zh");
+    }
   });
 
   it("runs queued user turns before the next auto turn", async () => {

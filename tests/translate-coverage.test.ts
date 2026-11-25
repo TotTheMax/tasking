@@ -8,12 +8,18 @@ import { normalizeTemplate, unescapeLiteral } from "../src/translate/normalize.j
 const HAN = /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/;
 const CJK = /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/;
 
-const WHITELIST = new Set(["via 飞书", "${c.name}（${c.chat_id}）"]);
+const WHITELIST = new Set([
+  "via 飞书",
+  "${c.name}（${c.chat_id}）",
+  "继续未完成的部分。不要重复已完成的内容，也不要总结。",
+]);
 const WHITELIST_REASONS: Record<string, string> = {
   "via 飞书":
     "protocol string: legacy sentinel inside SENTINEL_PREFIX's dual matcher, never translated",
   "${c.name}（${c.chat_id}）":
     "CLI-only init group-picker formatting; its wildcard-heavy frame would collide with user content containing full-width parens",
+  "继续未完成的部分。不要重复已完成的内容，也不要总结。":
+    "auto-continue prompt is configuration content sent to the model verbatim and shown untranslated; en templates ship their own English value",
 };
 
 interface Literal {

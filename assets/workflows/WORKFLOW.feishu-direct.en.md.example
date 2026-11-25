@@ -251,7 +251,7 @@ feishu:
       budget: 5
       # Consecutive low-output/repeated turns before pausing
       no_progress_streak: 2
-      prompt: "继续未完成的部分。不要重复已完成的内容，也不要总结。"
+      prompt: "Continue the unfinished work. Do not repeat what is already done, and do not summarize."
 
 # ============================================================================
 # server: HTTP dashboard (optional)

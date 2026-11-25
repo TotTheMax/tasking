@@ -2830,11 +2830,6 @@ export class DirectSessionManager {
     return session.loop_prompt ?? this.deps.config().feishu.direct.auto_continue.prompt;
   }
 
-  private displayLoopPrompt(session: DirectSession): string {
-    if (session.loop_prompt !== null) return session.loop_prompt;
-    return translate(this.deps.config().feishu.direct.auto_continue.prompt);
-  }
-
   private loopPauseLabel(reason: AutoContinuePauseReason | null): string {
     if (reason === "question") return translate("模型在提问");
     if (reason === "repetition") return translate("回复重复且无文件改动");
@@ -2848,7 +2843,7 @@ export class DirectSessionManager {
     const streak = config.feishu.direct.auto_continue.no_progress_streak;
     const budget = this.autoBudget(rt);
     const used = state?.used ?? 0;
-    const prompt = this.displayLoopPrompt(session);
+    const prompt = this.effectiveLoopPrompt(session);
     const budgetSource =
       rt.autoContinueBudget === null ? translate("配置默认") : translate("会话设置");
     const promptSource =
@@ -2930,7 +2925,7 @@ export class DirectSessionManager {
       const lines = [
         `${translate("已开启，最多 ")}${budget}${translate(" 轮 Auto-continue。")}`,
         translate("下一条任务开始后生效；/loop start 可立即开干。"),
-        `${translate("续跑提示词")}: ${truncate(this.displayLoopPrompt(session), 200)}`,
+        `${translate("续跑提示词")}: ${truncate(this.effectiveLoopPrompt(session), 200)}`,
         translate("关闭：/loop off｜中断：/stop"),
       ];
       await this.replyInfoCard(
@@ -2965,7 +2960,7 @@ export class DirectSessionManager {
       const budget = this.autoBudget(rt);
       const lines = [
         `${translate("已开始，最多 ")}${budget}${translate(" 轮 Auto-continue。")}`,
-        `${translate("续跑提示词")}: ${truncate(this.displayLoopPrompt(session), 200)}`,
+        `${translate("续跑提示词")}: ${truncate(this.effectiveLoopPrompt(session), 200)}`,
         translate("中断：/stop｜关闭：/loop off"),
       ];
       await this.replyInfoCard(
@@ -2997,7 +2992,7 @@ export class DirectSessionManager {
         this.deps.store.updateDirectSession(session.root_id, { loop_prompt: null });
         const lines = [
           translate("已恢复配置默认提示词。"),
-          `${translate("当前提示词")}: ${truncate(translate(this.deps.config().feishu.direct.auto_continue.prompt), 200)}`,
+          `${translate("当前提示词")}: ${truncate(this.deps.config().feishu.direct.auto_continue.prompt, 200)}`,
         ];
         await this.replyInfoCard(
           session,
@@ -3007,7 +3002,7 @@ export class DirectSessionManager {
         return;
       }
       if (parsed.text === null) {
-        const prompt = this.displayLoopPrompt(session);
+        const prompt = this.effectiveLoopPrompt(session);
         const source = session.loop_prompt === null ? translate("配置来源") : translate("会话来源");
         const lines = [
           `${translate("当前提示词")} (${source}): ${truncate(prompt, 200)}`,

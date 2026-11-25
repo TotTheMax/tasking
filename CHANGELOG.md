@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- The auto-continue prompt is now displayed exactly as configured — the UI no
+  longer translates it — and the English WORKFLOW templates ship an English
+  default prompt. The built-in Chinese fallback remains and only applies when
+  the field is absent.
+
 ### Fixed
 
 - WORKFLOW.md hot reload now survives editors that save atomically (write a
