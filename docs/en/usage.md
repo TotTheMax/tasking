@@ -104,7 +104,7 @@ tasking init [workflow-path] [--force] [--non-interactive] [--workflow minimal|c
 In interactive mode the Q&A branches by task source:
 1. (When `--workflow` is not specified) **Task source** — a two-option question: 「只用飞书直连（默认）」(enter default) enters the Feishu flow; 「接 Jira」asks the variant follow-up (`minimal` / `code-mr` / `grill-openspec`) and enters the Jira flow
 2. (When `--lang` is not specified) Choose a template language (`中文` / `English`; press enter for 中文)
-3. **Feishu flow**: Feishu app_id → Feishu app_secret (**validated on the spot**; failures print a human-readable reason and re-ask the secret, persistent failures can be skipped) → on success the bot's chats are **listed for selection** as the intake group (empty/failure falls back to manual `oc_xxx` entry) → an optional common project name (enter to skip) + its absolute directory (existence-checked)
+3. **Feishu flow**: Feishu app_id → Feishu app_secret (**validated on the spot**; failures print a human-readable reason and re-ask the secret, persistent failures can be skipped) → on success the bot's chats are **listed for selection** as the intake group (an empty list or a listing failure still opens the picker: create one, refresh, or enter `oc_xxx` manually) → an optional common project name (enter to skip) + its absolute directory (existence-checked)
 4. **Jira flow**: Jira REST API endpoint → Jira API token → auth mode (basic/bearer) → Jira username (basic only) → Jira project key, then the optional Feishu Setup (enabling the bridge collects `app_id`/`app_secret`/`intake_chat_id`/`create_issue_type`)
 
 Once the Q&A completes:

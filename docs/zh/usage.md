@@ -104,7 +104,7 @@ tasking init [workflow-path] [--force] [--non-interactive] [--workflow minimal|c
 交互模式下依次问答(按任务来源分流):
 1. (未指定 `--workflow` 时)**任务来源**二选一:「只用飞书直连(回车默认)」→ 进入飞河流;「接 Jira」→ 追问变体三选一(`minimal` / `code-mr` / `grill-openspec`)→ 进入 Jira 流
 2. (未指定 `--lang` 时)选择模板语言(`中文` / `English`,回车默认中文)
-3. **飞河流**:Feishu app_id → Feishu app_secret(采完**当场连通验证**,失败人话报因并重输 secret,连续失败可跳过)→ 验证通过则**列机器人所在群编号帮选** intake 群(失败/为空回落手填 `oc_xxx`)→ 可选的常用项目名(回车跳过)+ 目录绝对路径(校验存在)
+3. **飞河流**:Feishu app_id → Feishu app_secret(采完**当场连通验证**,失败人话报因并重输 secret,连续失败可跳过)→ 验证通过则**列机器人所在群编号帮选** intake 群(为空/列群失败仍进选择器:可新建、刷新或手填 `oc_xxx`)→ 可选的常用项目名(回车跳过)+ 目录绝对路径(校验存在)
 4. **Jira 流**:Jira REST API endpoint → Jira API token → 认证模式(basic/bearer) → Jira 用户名(仅 basic) → Jira 项目 key,随后可选的 Feishu Setup(启用评论桥则采集 `app_id`/`app_secret`/`intake_chat_id`/`create_issue_type`)
 
 问答完成后:

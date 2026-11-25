@@ -1127,15 +1127,25 @@ async function pickOrCreateIntakeChat(
 ): Promise<string> {
   const CREATE_LABEL = "➕ 新建 intake 群（并拉你进群）";
   const REFRESH_LABEL = "⟳ 刷新群列表";
+  const MANUAL_LABEL = "✎ 手动输入群 ID";
   const CREATE_VALUE = "__create__";
   const REFRESH_VALUE = "__refresh__";
+  const MANUAL_VALUE = "__manual__";
   let chats = initialChats;
+  let warnedEmpty = false;
   for (;;) {
+    if (chats.length === 0 && !warnedEmpty) {
+      output.write(
+        style.boxLine(style.dim("  未找到机器人所在的群：可以先新建，或手动输入群 ID。")),
+      );
+      warnedEmpty = true;
+    }
     const nameCounts = new Map<string, number>();
     for (const c of chats) nameCounts.set(c.name, (nameCounts.get(c.name) ?? 0) + 1);
     const options = [
       { value: CREATE_VALUE, label: CREATE_LABEL },
       { value: REFRESH_VALUE, label: REFRESH_LABEL },
+      { value: MANUAL_VALUE, label: MANUAL_LABEL },
       ...chats.map((c) => ({
         value: c.chat_id,
         label: ((nameCounts.get(c.name) ?? 0) > 1 ? `${c.name}（${c.chat_id}）` : c.name) as string,
@@ -1147,6 +1157,18 @@ async function pickOrCreateIntakeChat(
       if (refreshed !== null) chats = refreshed;
       output.write(style.boxLine(style.dim(`  已刷新（${chats.length} 个群）`)));
       continue;
+    }
+    if (picked === MANUAL_VALUE) {
+      const manual = (
+        await prompts.ask(
+          `${style.bold("Feishu intake_chat_id")} (承载 /chat 与会话话题的群，oc_ 开头)`,
+        )
+      ).trim();
+      if (manual === "") {
+        output.write(style.boxLine(style.dim("  未输入群 ID，返回选择。")));
+        continue;
+      }
+      return manual;
     }
     if (picked === CREATE_VALUE) {
       const groupNameAnswer = await prompts.ask(
@@ -1211,8 +1233,7 @@ async function pickOrCreateIntakeChat(
       );
       continue;
     }
-    const pickedIndex = options.findIndex((o) => o.value === picked) - 2;
-    const chosen = chats[pickedIndex >= 0 ? pickedIndex : 0];
+    const chosen = chats.find((c) => c.chat_id === picked);
     output.write(
       style.boxLine(style.dim(`  已选群：${chosen?.name ?? ""}（${chosen?.chat_id ?? ""}）`)),
     );
@@ -1294,23 +1315,21 @@ async function collectFeishuDirectConfig(
   } else {
     const { item: chatsItem, chats } = await probeListChats(token, fetchImpl, app_id, edition);
     printProbeItem(output, style, chatsItem);
-    if (chats === null || chats.length === 0) {
-      printNextStepLinks(output, style, consoleLinks(app_id, edition));
-      intake_chat_id = await prompts.ask(
-        `${style.bold("Feishu intake_chat_id")} (承载 /chat 与会话话题的群，oc_ 开头)`,
-      );
-    } else {
-      intake_chat_id = await pickOrCreateIntakeChat(
-        prompts,
-        output,
-        style,
-        token,
-        chats,
-        app_id,
-        fetchImpl,
-        edition,
+    if (chats === null) {
+      output.write(
+        style.boxLine(style.dim("  列群失败：可直接手动输入群 ID，或修复权限后刷新列表。")),
       );
     }
+    intake_chat_id = await pickOrCreateIntakeChat(
+      prompts,
+      output,
+      style,
+      token,
+      chats ?? [],
+      app_id,
+      fetchImpl,
+      edition,
+    );
     if (intake_chat_id !== "") {
       printProbeItem(
         output,

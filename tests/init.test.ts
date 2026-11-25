@@ -2345,10 +2345,19 @@ describe("feishu-direct variant (trackerless init)", () => {
           feishuAsk++;
           return Promise.resolve(v);
         },
-        askSelect(question: string): Promise<string> {
+        askSelect(
+          question: string,
+          options: ReadonlyArray<{ value: string; label: string }>,
+        ): Promise<string> {
           asked.push(question);
-          if (question.toLowerCase().includes("language")) return Promise.resolve("zh");
-          if (question.includes("任务来源")) return Promise.resolve("feishu-direct");
+          const q = question.toLowerCase();
+          if (q.includes("language")) return Promise.resolve("zh");
+          if (q.includes("任务来源")) return Promise.resolve("feishu-direct");
+          if (question.includes("intake 群")) {
+            return Promise.resolve(
+              options.find((o) => o.label.includes("手动输入群 ID"))?.value ?? "Task",
+            );
+          }
           return Promise.resolve("Task");
         },
         close(): void {},
@@ -2482,7 +2491,7 @@ describe("feishu-first onboarding (validation & chat selection)", () => {
   it("re-asks the secret once on a credential error and proceeds", async () => {
     const dir = tempDir();
     try {
-      const prompts = feishuFlowStub({ asks: ["cli_a", "bad_secret", "good_secret"] });
+      const prompts = feishuFlowStub({ asks: ["cli_a", "bad_secret", "good_secret", "oc_after"] });
       const { stream, content } = mockOutput();
       const code = await runInit(dir, {
         force: false,
@@ -2497,6 +2506,7 @@ describe("feishu-first onboarding (validation & chat selection)", () => {
       expect(content()).toContain("App Secret 不正确");
       const wf = readFileSync(join(dir, "WORKFLOW.md"), "utf8");
       expect(wf).toContain("app_secret: good_secret");
+      expect(wf).toContain("intake_chat_id: oc_after");
     } finally {
       rmSync(dir, { recursive: true });
     }
@@ -2796,12 +2806,17 @@ describe("feishu-first onboarding (chat name collisions)", () => {
           askIdx++;
           return Promise.resolve(v);
         },
-        askSelect(question: string, options: string[]): Promise<string> {
+        askSelect(
+          question: string,
+          options: Array<{ value: string; label: string }>,
+        ): Promise<string> {
           asked.push(question);
           const q = question.toLowerCase();
           if (q.includes("language")) return Promise.resolve("zh");
           if (q.includes("任务来源")) return Promise.resolve("feishu-direct");
-          return Promise.resolve(options[3]?.value ?? "");
+          return Promise.resolve(
+            options.find((o) => o.label.includes("oc_y"))?.value ?? options[0]?.value ?? "",
+          );
         },
         close(): void {},
       };
@@ -3200,10 +3215,18 @@ describe("feishu setup 体检与建群", () => {
     chatPicks?: string[];
     groupNames?: string[];
     invite?: string;
+    manualChatId?: string;
+    onChatOptions?: (labels: string[]) => void;
   }): PromptInterface {
     let pickIdx = 0;
     let askIdx = 0;
-    const asks = ["cli_abc", "", ...(opts.groupNames ?? []), opts.invite ?? ""];
+    const asks = [
+      "cli_abc",
+      "",
+      ...(opts.manualChatId === undefined ? [] : [opts.manualChatId]),
+      ...(opts.groupNames ?? []),
+      opts.invite ?? "",
+    ];
     return {
       ask(question: string): Promise<string> {
         if (question.includes("常用项目名")) return Promise.resolve("");
@@ -3219,6 +3242,7 @@ describe("feishu setup 体检与建群", () => {
         if (q.includes("任务来源")) return Promise.resolve("feishu-direct");
         if (q.includes("language")) return Promise.resolve("zh");
         if (q.includes("intake 群")) {
+          opts.onChatOptions?.(options.map((o) => o.label));
           const pick = (opts.chatPicks ?? [])[pickIdx];
           pickIdx++;
           if (pick !== undefined) {
@@ -3480,6 +3504,79 @@ describe("feishu setup 体检与建群", () => {
       });
       expect(content()).toContain("已刷新（2 个群）");
       expect(readFileSync(join(dir, "WORKFLOW.md"), "utf8")).toContain("oc_manual");
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("keeps the create/refresh/manual picker when the bot has no chats", async () => {
+    const dir = tempDir();
+    try {
+      const fetchMock = makeFetch({
+        chatsGet: () =>
+          new Response(JSON.stringify({ data: { items: [] } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+      });
+      let labels: string[] = [];
+      const prompts = makeDirectPrompts({
+        chatPicks: ["✎ 手动输入群 ID"],
+        manualChatId: "oc_empty_manual",
+        onChatOptions: (options) => {
+          labels = options;
+        },
+      });
+      const { stream, content } = mockOutput();
+      const code = await runInit(dir, {
+        force: false,
+        output: stream,
+        fetchImpl: fetchMock,
+        promptInterface: prompts,
+      });
+      expect(code).toBe(0);
+      expect(labels).toEqual(
+        expect.arrayContaining([
+          "➕ 新建 intake 群（并拉你进群）",
+          "⟳ 刷新群列表",
+          "✎ 手动输入群 ID",
+        ]),
+      );
+      expect(content()).toContain("未找到机器人所在的群");
+      expect(readFileSync(join(dir, "WORKFLOW.md"), "utf8")).toContain(
+        "intake_chat_id: oc_empty_manual",
+      );
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("offers the picker with manual entry when listing chats fails", async () => {
+    const dir = tempDir();
+    try {
+      const fetchMock = makeFetch({
+        chatsGet: () => new Response("boom", { status: 500 }),
+      });
+      let labels: string[] = [];
+      const prompts = makeDirectPrompts({
+        chatPicks: ["✎ 手动输入群 ID"],
+        manualChatId: "oc_fallback",
+        onChatOptions: (options) => {
+          labels = options;
+        },
+      });
+      const { stream, content } = mockOutput();
+      await runInit(dir, {
+        force: false,
+        output: stream,
+        fetchImpl: fetchMock,
+        promptInterface: prompts,
+      });
+      expect(labels).toContain("✎ 手动输入群 ID");
+      expect(content()).toContain("列群失败");
+      expect(readFileSync(join(dir, "WORKFLOW.md"), "utf8")).toContain(
+        "intake_chat_id: oc_fallback",
+      );
     } finally {
       rmSync(dir, { recursive: true });
     }

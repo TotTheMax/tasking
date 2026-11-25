@@ -188,6 +188,12 @@ export const EXACT: Record<string, string> = {
   "❌ 失败": "❌ Failed",
   "➕ 新建 intake 群（并拉你进群）": "➕ Create a new intake group (and invite you)",
   "⟳ 刷新群列表": "⟳ Refresh group list",
+  "✎ 手动输入群 ID": "✎ Enter a chat ID manually",
+  "  未找到机器人所在的群：可以先新建，或手动输入群 ID。":
+    "  No group contains the bot: create one, or enter a chat ID manually.",
+  "  未输入群 ID，返回选择。": "  No chat ID entered; returning to the picker.",
+  "  列群失败：可直接手动输入群 ID，或修复权限后刷新列表。":
+    "  Chat listing failed: enter a chat ID manually, or fix the scope and refresh the list.",
   "💬 可在此话题回复": "💬 Reply in this thread",
   "📄 完整输出": "📄 Full output",
   "📋 状态": "📋 State",
