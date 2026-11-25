@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.1
+
+### Fixed
+
+- `tasking init` no longer skips the intake-chat picker when the bot belongs to
+  no groups (or chat listing fails): the picker stays available with
+  create/refresh and a new manual chat-ID option, so the `➕ 新建 intake 群` path
+  is reachable on a fresh Feishu setup.
+
 ## 0.8.0
 
 Direct-session turn cards and auto-continue.
