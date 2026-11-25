@@ -1,4 +1,4 @@
-import { type StatWatcher, type Stats, unwatchFile, watchFile } from "node:fs";
+import { type Stats, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { type TaskingError, toTaskingError } from "../shared/errors.js";
 import type { WorkflowDefinition } from "../shared/types.js";
@@ -19,8 +19,8 @@ export class ConfigManager {
   private workflow: WorkflowDefinition;
   private config: EffectiveConfig;
   private configWarnings: string[] = [];
-  private watcher: StatWatcher | null = null;
-  private watchListener: ((curr: Stats, prev: Stats) => void) | null = null;
+  private statTimer: NodeJS.Timeout | null = null;
+  private lastStat: Stats | null = null;
   private reloadListeners: Array<(result: ConfigReloadResult) => void> = [];
   private reloadTimer: NodeJS.Timeout | null = null;
   private readonly startupTrackerKind: string;
@@ -69,18 +69,36 @@ export class ConfigManager {
   }
 
   startWatch(): void {
-    if (this.watcher) return;
-    this.watchListener = (curr, prev) => {
-      if (this.watcher === null) return;
-      if (curr.mtimeMs !== prev.mtimeMs || curr.size !== prev.size || curr.ino !== prev.ino) {
-        this.scheduleReload();
-      }
-    };
-    this.watcher = watchFile(
-      this.workflow.path,
-      { interval: WATCH_INTERVAL_MS },
-      this.watchListener,
-    );
+    if (this.statTimer) return;
+    try {
+      this.lastStat = statSync(this.workflow.path);
+    } catch {
+      this.lastStat = null;
+    }
+    this.statTimer = setInterval(() => {
+      this.pollWorkflowFile();
+    }, WATCH_INTERVAL_MS);
+    this.statTimer.unref?.();
+  }
+
+  private pollWorkflowFile(): void {
+    let curr: Stats;
+    try {
+      curr = statSync(this.workflow.path);
+    } catch {
+      return;
+    }
+    const prev = this.lastStat;
+    this.lastStat = curr;
+    if (prev === null) return;
+    if (
+      curr.mtimeMs !== prev.mtimeMs ||
+      curr.ctimeMs !== prev.ctimeMs ||
+      curr.size !== prev.size ||
+      curr.ino !== prev.ino
+    ) {
+      this.scheduleReload();
+    }
   }
 
   stopWatch(): void {
@@ -88,11 +106,11 @@ export class ConfigManager {
       clearTimeout(this.reloadTimer);
       this.reloadTimer = null;
     }
-    if (this.watchListener) {
-      unwatchFile(this.workflow.path, this.watchListener);
-      this.watchListener = null;
+    if (this.statTimer) {
+      clearInterval(this.statTimer);
+      this.statTimer = null;
     }
-    this.watcher = null;
+    this.lastStat = null;
   }
 
   onReload(cb: (result: ConfigReloadResult) => void): void {
